@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cutlist-pro-v3';
+const CACHE_NAME = 'cutlist-pro-v4';
 const ASSETS = [
   '/',
   '/index.html',
@@ -29,6 +29,25 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+  // Network-first for the HTML page so updates always show immediately
+  const isNavigation = event.request.mode === 'navigate' ||
+    (url.origin === self.location.origin && (url.pathname === '/' || url.pathname.endsWith('.html')));
+
+  if (isNavigation) {
+    event.respondWith(
+      fetch(event.request).then(response => {
+        if (response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+        }
+        return response;
+      }).catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Cache-first for everything else (CDN libs, etc.)
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;
