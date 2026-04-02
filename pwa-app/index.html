@@ -512,17 +512,21 @@
     // ─── LUMBER CATALOG ───
     const ALL_SPECIES = ["Oak", "Pine", "Maple", "Basswood"];
     const ALL_LENGTHS = [{ key: "96", label: "8'" }, { key: "120", label: "10'" }, { key: "144", label: "12'" }];
-    function allOn(arr, prop) { const o = {}; arr.forEach(a => o[typeof a === "object" ? a[prop || "key"] : a] = true); return o; }
 
+    function makeAvailability() {
+      const a = {};
+      ALL_SPECIES.forEach(s => { a[s] = {}; ALL_LENGTHS.forEach(l => a[s][l.key] = true); });
+      return a;
+    }
     function defaultCatalog() {
       return {
         casingProfiles: CASING_PROFILES.map(p => ({
           label: p.label, code: p.code, width: p.width, pineOnly: p.pineOnly || false,
-          species: allOn(ALL_SPECIES), lengths: allOn(ALL_LENGTHS, "key")
+          availability: makeAvailability()
         })),
         jambStock: JAMB_STOCK_WIDTHS.map(j => ({
           label: j.label, width: j.width,
-          species: allOn(ALL_SPECIES), lengths: allOn(ALL_LENGTHS, "key")
+          availability: makeAvailability()
         })),
         stains: {},
         paints: {},
@@ -533,8 +537,9 @@
         const d = localStorage.getItem("cutlist_lumber_catalog");
         if (!d) return defaultCatalog();
         const parsed = JSON.parse(d);
-        // Migrate: if old flat format (casingProfiles is an object not array), reset to defaults
+        // Migrate: if old format (not array, or missing availability), reset to defaults
         if (parsed.casingProfiles && !Array.isArray(parsed.casingProfiles)) return defaultCatalog();
+        if (parsed.casingProfiles?.[0] && !parsed.casingProfiles[0].availability) return defaultCatalog();
         return parsed;
       } catch { return defaultCatalog(); }
     }
@@ -1043,6 +1048,7 @@
       const [pdfPreview, setPdfPreview] = useState(null); // { jobInfo, units } for review
       const [catalog, setCatalog] = useState(loadCatalog);
       const [offsets, setOffsetsState] = useState(loadOffsets);
+      const [customMode, setCustomMode] = useState({}); // tracks which fields are in "type custom" mode
       const pdfInputRef = useRef(null);
 
       useEffect(() => { setSavedJobs(loadSavedJobs()); }, [view]);
@@ -1090,22 +1096,6 @@
       const processJSONText = (text) => {
         const jsonData = JSON.parse(text);
         return parseRSuiteJSON(jsonData);
-      };
-
-      // ─── PASTE JSON HANDLER ───
-      const handlePasteJSON = () => {
-        const text = prompt("Paste the full JSON content from the rSuite DL Export file:");
-        if (!text || !text.trim()) return;
-        try {
-          const data = processJSONText(text.trim());
-          if (!data.units || !data.units.length) {
-            alert("No units found in the pasted JSON. Make sure you pasted the complete file contents.");
-            return;
-          }
-          setPdfPreview({ jobInfo: data.jobInfo || {}, units: data.units });
-        } catch (err) {
-          alert("Could not parse JSON: " + (err.message || String(err)));
-        }
       };
 
       // ─── FILE UPLOAD & PARSE (JSON or PDF) ───
@@ -1346,65 +1336,60 @@
       if (view === "lumber") {
         const updateCatalog = (updated) => { setCatalog(updated); saveCatalog(updated); };
 
-        const Chip = ({ label, on, onToggle }) => (
-          <div onClick={onToggle} style={{
-            padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
-            background: on ? "#6DB344" : "#E8E8E8", color: on ? "#fff" : "#888", transition: "all 0.15s",
-            userSelect: "none"
-          }}>{label}</div>
-        );
+        const toggleAvail = (section, index, species, lengthKey) => {
+          const arr = [...catalog[section]];
+          const item = { ...arr[index], availability: { ...arr[index].availability } };
+          item.availability[species] = { ...item.availability[species], [lengthKey]: !item.availability[species]?.[lengthKey] };
+          arr[index] = item;
+          updateCatalog({ ...catalog, [section]: arr });
+        };
 
-        const MaterialCard = ({ item, index, section, onDelete }) => (
+        const AvailGrid = ({ item, index, section }) => (
           <div style={{ background: "#fff", borderRadius: 8, padding: "14px 16px", marginBottom: 8, border: "1px solid #E8E8E8" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: "#333" }}>{item.label}</div>
-              <button onClick={onDelete} style={{ background: "none", border: "none", fontSize: 14, color: "#c0392b", cursor: "pointer" }}>Delete</button>
+              <button onClick={() => {
+                if (!confirm("Delete " + item.label + "?")) return;
+                updateCatalog({ ...catalog, [section]: catalog[section].filter((_, i) => i !== index) });
+              }} style={{ background: "none", border: "none", fontSize: 13, color: "#c0392b", cursor: "pointer" }}>Delete</button>
             </div>
-            <div style={{ marginBottom: 6 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Species</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {ALL_SPECIES.map(s => <Chip key={s} label={s} on={item.species?.[s] !== false}
-                  onToggle={() => {
-                    const arr = [...catalog[section]];
-                    arr[index] = { ...arr[index], species: { ...arr[index].species, [s]: !(arr[index].species?.[s] !== false) } };
-                    updateCatalog({ ...catalog, [section]: arr });
-                  }} />)}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Lengths</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {ALL_LENGTHS.map(l => <Chip key={l.key} label={l.label} on={item.lengths?.[l.key] !== false}
-                  onToggle={() => {
-                    const arr = [...catalog[section]];
-                    arr[index] = { ...arr[index], lengths: { ...arr[index].lengths, [l.key]: !(arr[index].lengths?.[l.key] !== false) } };
-                    updateCatalog({ ...catalog, [section]: arr });
-                  }} />)}
-              </div>
-            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", padding: "4px 8px", fontSize: 11, color: "#888", fontWeight: 600 }}></th>
+                  {ALL_LENGTHS.map(l => <th key={l.key} style={{ padding: "4px 8px", fontSize: 11, color: "#888", fontWeight: 600, textAlign: "center" }}>{l.label}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {ALL_SPECIES.map(sp => (
+                  <tr key={sp} style={{ borderTop: "1px solid #f0f0f0" }}>
+                    <td style={{ padding: "6px 8px", fontWeight: 600, color: "#333" }}>{sp}</td>
+                    {ALL_LENGTHS.map(l => {
+                      const on = item.availability?.[sp]?.[l.key] !== false;
+                      return (
+                        <td key={l.key} style={{ textAlign: "center", padding: "6px 8px" }}>
+                          <div onClick={() => toggleAvail(section, index, sp, l.key)} style={{
+                            width: 28, height: 28, borderRadius: 6, margin: "0 auto", cursor: "pointer",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: on ? "#6DB344" : "#E8E8E8", color: on ? "#fff" : "#ccc",
+                            fontSize: 14, fontWeight: 700, transition: "all 0.15s", userSelect: "none"
+                          }}>{on ? "✓" : ""}</div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         );
 
-        const addCasing = () => {
-          const name = prompt("New casing profile name (e.g. '3\" Craftsman'):");
+        const addMaterial = (section, promptLabel, promptWidth) => {
+          const name = prompt(promptLabel);
           if (!name) return;
-          const width = parseFloat(prompt("Profile width in inches (e.g. 2.5):") || "2.5");
+          const width = parseFloat(prompt(promptWidth) || "2.5");
           const code = name.replace(/[^a-zA-Z0-9]/g, "-");
-          const arr = [...(catalog.casingProfiles || []), { label: name, code, width, pineOnly: false, species: allOn(ALL_SPECIES), lengths: allOn(ALL_LENGTHS, "key") }];
-          updateCatalog({ ...catalog, casingProfiles: arr });
-        };
-
-        const addJamb = () => {
-          const name = prompt("New jamb stock label (e.g. '1x3'):");
-          if (!name) return;
-          const width = parseFloat(prompt("Actual width in inches (e.g. 2.5):") || "2.5");
-          const arr = [...(catalog.jambStock || []), { label: name, width, species: allOn(ALL_SPECIES), lengths: allOn(ALL_LENGTHS, "key") }];
-          updateCatalog({ ...catalog, jambStock: arr });
-        };
-
-        const deleteMaterial = (section, index) => {
-          if (!confirm("Delete " + catalog[section][index].label + "?")) return;
-          const arr = catalog[section].filter((_, i) => i !== index);
+          const arr = [...(catalog[section] || []), { label: name, code, width, pineOnly: false, availability: makeAvailability() }];
           updateCatalog({ ...catalog, [section]: arr });
         };
 
@@ -1417,16 +1402,12 @@
               </div>
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Casing Profiles</div>
-              {(catalog.casingProfiles || []).map((item, i) =>
-                <MaterialCard key={item.code + i} item={item} index={i} section="casingProfiles" onDelete={() => deleteMaterial("casingProfiles", i)} />
-              )}
-              <button onClick={addCasing} style={{ width: "100%", padding: "12px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 20 }}>+ Add Casing Profile</button>
+              {(catalog.casingProfiles || []).map((item, i) => <AvailGrid key={item.code+i} item={item} index={i} section="casingProfiles" />)}
+              <button onClick={() => addMaterial("casingProfiles", "New casing profile name:", "Profile width in inches (e.g. 2.5):")} style={{ width: "100%", padding: "12px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 24 }}>+ Add Casing Profile</button>
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Jamb Stock</div>
-              {(catalog.jambStock || []).map((item, i) =>
-                <MaterialCard key={item.label + i} item={item} index={i} section="jambStock" onDelete={() => deleteMaterial("jambStock", i)} />
-              )}
-              <button onClick={addJamb} style={{ width: "100%", padding: "12px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 20 }}>+ Add Jamb Stock</button>
+              {(catalog.jambStock || []).map((item, i) => <AvailGrid key={item.label+i} item={item} index={i} section="jambStock" />)}
+              <button onClick={() => addMaterial("jambStock", "New jamb stock label (e.g. 1x3):", "Actual width in inches (e.g. 2.5):")} style={{ width: "100%", padding: "12px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 24 }}>+ Add Jamb Stock</button>
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Stain Colors</div>
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
@@ -1435,14 +1416,13 @@
                     <span style={{ fontSize: 14 }}>{s}</span>
                     <button onClick={() => {
                       const custom = (catalog.customStains || []).filter(c => c !== s);
-                      const stains = { ...catalog.stains, [s]: undefined };
-                      updateCatalog({ ...catalog, customStains: custom, stains });
+                      updateCatalog({ ...catalog, customStains: custom });
                     }} style={{ background: "none", border: "none", fontSize: 12, color: "#c0392b", cursor: "pointer" }}>✕</button>
                   </div>
                 ))}
               </div>
               <button onClick={() => { const n = prompt("New stain color name:"); if (n) updateCatalog({ ...catalog, customStains: [...(catalog.customStains || []), n] }); }}
-                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 20 }}>+ Add Stain</button>
+                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 24 }}>+ Add Stain</button>
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Paint Colors</div>
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
@@ -1451,14 +1431,13 @@
                     <span style={{ fontSize: 14 }}>{p}</span>
                     <button onClick={() => {
                       const custom = (catalog.customPaints || []).filter(c => c !== p);
-                      const paints = { ...catalog.paints, [p]: undefined };
-                      updateCatalog({ ...catalog, customPaints: custom, paints });
+                      updateCatalog({ ...catalog, customPaints: custom });
                     }} style={{ background: "none", border: "none", fontSize: 12, color: "#c0392b", cursor: "pointer" }}>✕</button>
                   </div>
                 ))}
               </div>
               <button onClick={() => { const n = prompt("New paint color name:"); if (n) updateCatalog({ ...catalog, customPaints: [...(catalog.customPaints || []), n] }); }}
-                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 20 }}>+ Add Paint Color</button>
+                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 24 }}>+ Add Paint Color</button>
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Other Items</div>
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
@@ -1466,13 +1445,13 @@
                 {(catalog.otherItems || []).map((item, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
                     <span style={{ fontSize: 14 }}>{item}</span>
-                    <button onClick={() => updateCatalog({ ...catalog, otherItems: catalog.otherItems.filter((_, j) => j !== i) })}
+                    <button onClick={() => updateCatalog({ ...catalog, otherItems: (catalog.otherItems || []).filter((_, j) => j !== i) })}
                       style={{ background: "none", border: "none", fontSize: 12, color: "#c0392b", cursor: "pointer" }}>✕</button>
                   </div>
                 ))}
               </div>
               <button onClick={() => { const n = prompt("New item name:"); if (n) updateCatalog({ ...catalog, otherItems: [...(catalog.otherItems || []), n] }); }}
-                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 20 }}>+ Add Other Item</button>
+                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 24 }}>+ Add Other Item</button>
             </div>
           </div>
         );
@@ -1634,18 +1613,11 @@
                   <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>Import Job File</div>
                   <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Auto-fills customer, address, trim, and all units</div>
                 </div>
-                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                  <button onClick={() => pdfInputRef.current.click()} disabled={pdfParsing} style={{
-                    padding: "10px 18px", border: "none", borderRadius: 6,
-                    background: "#6DB344", fontSize: 14, fontWeight: 700,
-                    color: "#fff", cursor: pdfParsing ? "wait" : "pointer"
-                  }}>{pdfParsing ? "Extracting..." : "Upload File"}</button>
-                  <button onClick={handlePasteJSON} style={{
-                    padding: "10px 14px", border: "1px solid #ddd", borderRadius: 6,
-                    background: "#fff", fontSize: 13, fontWeight: 600,
-                    color: "#666", cursor: "pointer"
-                  }}>Paste JSON</button>
-                </div>
+                <button onClick={() => pdfInputRef.current.click()} disabled={pdfParsing} style={{
+                  padding: "10px 18px", border: "none", borderRadius: 6,
+                  background: "#6DB344", fontSize: 14, fontWeight: 700,
+                  color: "#fff", cursor: pdfParsing ? "wait" : "pointer", flexShrink: 0
+                }}>{pdfParsing ? "Extracting..." : "Upload File"}</button>
               </div>
               <input ref={pdfInputRef} type="file" accept=".pdf,.json" onChange={handleFileUpload} style={{ display: "none" }} />
             </div>
@@ -1732,21 +1704,18 @@
                       </select>
                     </div>
                     <div>
-                      <label style={lbl}>Casing Profile</label>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <select style={{ ...sel, width: "auto", flex: "1 1 50%" }}
-                          value={getAvailableProfiles(globalTrim.species).some(p => p.label === globalTrim.casingProfile) ? globalTrim.casingProfile : ""}
-                          onChange={e => { if (e.target.value) updateGlobalTrim("casingProfile", e.target.value); }}>
-                          <option value="">— pick —</option>
-                          {getAvailableProfiles(globalTrim.species).map(p => (
-                            <option key={p.label} value={p.label}>{p.label}</option>
-                          ))}
-                        </select>
-                        <input style={{ ...inp, width: "auto", flex: "1 1 50%" }}
-                          value={globalTrim.casingProfile}
-                          onChange={e => updateGlobalTrim("casingProfile", e.target.value)}
-                          placeholder="Custom..." />
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <label style={lbl}>Casing Profile</label>
+                        <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                          <input type="checkbox" checked={!!customMode.globalCasing} onChange={() => setCustomMode(p => ({ ...p, globalCasing: !p.globalCasing }))} style={{ width: 13, height: 13 }} /> Custom
+                        </label>
                       </div>
+                      {customMode.globalCasing
+                        ? <input style={inp} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)} placeholder="Type custom profile..." />
+                        : <select style={sel} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)}>
+                            {getAvailableProfiles(globalTrim.species).map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                          </select>
+                      }
                     </div>
                     <div>
                       <label style={lbl}>Finish Type</label>
@@ -1765,22 +1734,21 @@
                       </select>
                     </div>
                     <div>
-                      <label style={lbl}>{globalTrim.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <select style={{ ...sel, width: "auto", flex: "1 1 50%" }}
-                          value={(globalTrim.finishType === "Stain" ? STAINS.some(s => s.label === globalTrim.finish) : PAINTS.includes(globalTrim.finish)) ? globalTrim.finish : ""}
-                          onChange={e => { if (e.target.value) updateGlobalTrim("finish", e.target.value); }}>
-                          <option value="">— pick —</option>
-                          {globalTrim.finishType === "Stain"
-                            ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
-                            : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
-                          }
-                        </select>
-                        <input style={{ ...inp, width: "auto", flex: "1 1 50%" }}
-                          value={globalTrim.finish}
-                          onChange={e => updateGlobalTrim("finish", e.target.value)}
-                          placeholder="Custom..." />
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <label style={lbl}>{globalTrim.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
+                        <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                          <input type="checkbox" checked={!!customMode.globalFinish} onChange={() => setCustomMode(p => ({ ...p, globalFinish: !p.globalFinish }))} style={{ width: 13, height: 13 }} /> Custom
+                        </label>
                       </div>
+                      {customMode.globalFinish
+                        ? <input style={inp} value={globalTrim.finish} onChange={e => updateGlobalTrim("finish", e.target.value)} placeholder="Type custom color..." />
+                        : <select style={sel} value={globalTrim.finish} onChange={e => updateGlobalTrim("finish", e.target.value)}>
+                            {globalTrim.finishType === "Stain"
+                              ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
+                              : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
+                            }
+                          </select>
+                      }
                     </div>
                   </div>
                 </div>
@@ -1821,7 +1789,7 @@
                       alignItems: "center", background: "#fff"
                     }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ width: 9, height: 9, borderRadius: "50%", background: complete ? "#4caf50" : "#ccc", flexShrink: 0 }} />
+                        <div style={{ width: 9, height: 9, borderRadius: "50%", background: complete ? "#6DB344" : "#ccc", flexShrink: 0 }} />
                         <div>
                           <span style={{ fontWeight: 700, fontSize: 15, color: "#6DB344" }}>{unit.label}</span>
                           <span style={{ fontSize: 12, color: "#888", marginLeft: 8 }}>
@@ -1865,21 +1833,18 @@
                           )}
                           {!sameTrim && (
                             <div>
-                              <label style={lbl}>Casing Profile</label>
-                              <div style={{ display: "flex", gap: 6 }}>
-                                <select style={{ ...sel, width: "auto", flex: "1 1 50%" }}
-                                  value={getAvailableProfiles(unit.species).some(p => p.label === unit.casingProfile) ? unit.casingProfile : ""}
-                                  onChange={e => { if (e.target.value) updateUnit(idx, "casingProfile", e.target.value); }}>
-                                  <option value="">— pick —</option>
-                                  {getAvailableProfiles(unit.species).map(p => (
-                                    <option key={p.label} value={p.label}>{p.label}</option>
-                                  ))}
-                                </select>
-                                <input style={{ ...inp, width: "auto", flex: "1 1 50%" }}
-                                  value={unit.casingProfile}
-                                  onChange={e => updateUnit(idx, "casingProfile", e.target.value)}
-                                  placeholder="Custom..." />
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <label style={lbl}>Casing Profile</label>
+                                <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                                  <input type="checkbox" checked={!!customMode["casing_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["casing_"+idx]: !p["casing_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
+                                </label>
                               </div>
+                              {customMode["casing_"+idx]
+                                ? <input style={inp} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)} placeholder="Type custom profile..." />
+                                : <select style={sel} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)}>
+                                    {getAvailableProfiles(unit.species).map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                                  </select>
+                              }
                             </div>
                           )}
                           {!sameTrim && (
@@ -1896,22 +1861,21 @@
                           )}
                           {!sameTrim && (
                             <div>
-                              <label style={lbl}>{unit.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
-                              <div style={{ display: "flex", gap: 6 }}>
-                                <select style={{ ...sel, width: "auto", flex: "1 1 50%" }}
-                                  value={(unit.finishType === "Stain" ? STAINS.some(s => s.label === unit.finish) : PAINTS.includes(unit.finish)) ? unit.finish : ""}
-                                  onChange={e => { if (e.target.value) updateUnit(idx, "finish", e.target.value); }}>
-                                  <option value="">— pick —</option>
-                                  {unit.finishType === "Stain"
-                                    ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
-                                    : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
-                                  }
-                                </select>
-                                <input style={{ ...inp, width: "auto", flex: "1 1 50%" }}
-                                  value={unit.finish}
-                                  onChange={e => updateUnit(idx, "finish", e.target.value)}
-                                  placeholder="Custom..." />
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <label style={lbl}>{unit.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
+                                <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                                  <input type="checkbox" checked={!!customMode["finish_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["finish_"+idx]: !p["finish_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
+                                </label>
                               </div>
+                              {customMode["finish_"+idx]
+                                ? <input style={inp} value={unit.finish} onChange={e => updateUnit(idx, "finish", e.target.value)} placeholder="Type custom color..." />
+                                : <select style={sel} value={unit.finish} onChange={e => updateUnit(idx, "finish", e.target.value)}>
+                                    {unit.finishType === "Stain"
+                                      ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
+                                      : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
+                                    }
+                                  </select>
+                              }
                             </div>
                           )}
                           {needsThreshold && (
@@ -1995,7 +1959,7 @@
                         {/* Manual Materials */}
                         <div style={{ marginTop: 12 }}>
                           {(unit.manualMaterials || []).length > 0 && (
-                            <div style={{ fontSize: 12, fontWeight: 700, color: "#2e5a7c", marginBottom: 6 }}>Custom Materials</div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#888", marginBottom: 6 }}>Extra Materials</div>
                           )}
                           {(unit.manualMaterials || []).map((mm, mi) => (
                             <div key={mi} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
@@ -2156,7 +2120,7 @@
                       updateJob("extraMaterials", updated);
                     }} />
                   <button onClick={() => {
-                    const updated = job.extraMaterials.filter((_, i) => i !== idx);
+                    const updated = (job.extraMaterials || []).filter((_, i) => i !== idx);
                     updateJob("extraMaterials", updated);
                   }} style={{ background: "none", border: "none", fontSize: 18, color: "#c0392b", cursor: "pointer", padding: "0 4px", flexShrink: 0 }}>✕</button>
                 </div>
@@ -2167,8 +2131,8 @@
                   background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
                 }}>+ Add Coil</button>
                 <button onClick={() => updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Other", description: "", quantity: 1 }])} style={{
-                  flex: 1, padding: "10px 0", border: "2px dashed #a0b8c4", borderRadius: 10,
-                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#2e5a7c", cursor: "pointer"
+                  flex: 1, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
                 }}>+ Add Other</button>
               </div>
             </div>
