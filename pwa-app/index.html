@@ -1320,77 +1320,6 @@
               }}>· · ·</button>
             </div>
 
-            {/* PDF Preview Modal */}
-            {pdfPreview && (
-              <div style={{
-                position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-                background: "rgba(0,0,0,0.5)", zIndex: 9999,
-                display: "flex", alignItems: "center", justifyContent: "center", padding: 16
-              }}>
-                <div style={{
-                  background: "#fff", borderRadius: 16, width: "100%", maxWidth: 500,
-                  maxHeight: "80vh", display: "flex", flexDirection: "column", overflow: "hidden",
-                  boxShadow: "0 8px 40px rgba(0,0,0,0.25)"
-                }}>
-                  <div style={{ padding: "16px 20px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div>
-                      <div style={{ fontSize: 17, fontWeight: 700, color: "#1a1a1a" }}>Extracted Units</div>
-                      <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
-                        {pdfPreview.units.length} unit{pdfPreview.units.length !== 1 ? "s" : ""} found
-                        {pdfPreview.jobInfo?.customerName ? ` — ${pdfPreview.jobInfo.customerName}` : ""}
-                      </div>
-                      {pdfPreview.jobInfo && (
-                        <div style={{ fontSize: 12, color: "#6DB344", marginTop: 2, fontWeight: 600 }}>
-                          {pdfPreview.jobInfo.trimStyle || "Picture Frame"}
-                          {pdfPreview.jobInfo.species ? ` | ${pdfPreview.jobInfo.species}` : ""}
-                          {pdfPreview.jobInfo.casingProfile ? ` | ${pdfPreview.jobInfo.casingProfile.split(" (")[0]}` : ""}
-                          {pdfPreview.jobInfo.finishNote ? ` | ${pdfPreview.jobInfo.finishNote}` : ""}
-                        </div>
-                      )}
-                    </div>
-                    <button onClick={() => setPdfPreview(null)} style={{
-                      background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#999", padding: "0 4px"
-                    }}>✕</button>
-                  </div>
-                  <div style={{ flex: 1, overflowY: "auto", padding: "12px 20px" }}>
-                    {pdfPreview.units.map((u, i) => (
-                      <div key={i} style={{
-                        padding: "10px 12px", marginBottom: 8, borderRadius: 10,
-                        border: "1px solid #e5e5e5", background: "#fafbfa"
-                      }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                          <span style={{ fontWeight: 700, fontSize: 14, color: "#2e5a7c" }}>
-                            {u.label || `Unit ${i + 1}`}
-                            {u.location ? <span style={{ fontWeight: 400, color: "#888", marginLeft: 6 }}>{u.location}</span> : null}
-                          </span>
-                          <span style={{
-                            fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
-                            background: u.unitType === "Window" ? "rgba(109,179,68,0.08)" : u.unitType === "Entry Door" ? "#fdf2e9" : "#e8eef5",
-                            color: u.unitType === "Window" ? "#6DB344" : u.unitType === "Entry Door" ? "#b87333" : "#2e5a7c"
-                          }}>{u.unitType || "Window"}</span>
-                        </div>
-                        <div style={{ fontSize: 13, color: "#555", display: "flex", gap: 12, flexWrap: "wrap" }}>
-                          <span>W: <b>{u.widthWhole || 0}{u.widthFrac ? `-${u.widthFrac}"` : `"`}</b></span>
-                          <span>H: <b>{u.heightWhole || 0}{u.heightFrac ? `-${u.heightFrac}"` : `"`}</b></span>
-                          {u.jambDepthWhole != null && <span>Jamb: <b>{u.jambDepthWhole}{u.jambDepthFrac ? `-${u.jambDepthFrac}"` : `"`}</b></span>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ padding: "12px 20px", borderTop: "1px solid #eee", display: "flex", gap: 10 }}>
-                    <button onClick={() => setPdfPreview(null)} style={{
-                      flex: 1, padding: "12px 0", borderRadius: 10, border: "1px solid #ddd",
-                      background: "#fff", fontSize: 14, fontWeight: 600, color: "#666", cursor: "pointer"
-                    }}>Cancel</button>
-                    <button onClick={confirmPdfUnits} style={{
-                      flex: 2, padding: "12px 0", borderRadius: 10, border: "none",
-                      background: "#6DB344", fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer"
-                    }}>Add {pdfPreview.units.length} Unit{pdfPreview.units.length !== 1 ? "s" : ""}</button>
-                  </div>
-                </div>
-              </div>
-            )}
-
           </div>
         );
       }
@@ -2238,6 +2167,77 @@
               {allComplete ? "Generate Report →" : "Complete all units to generate report"}
             </button>
           </div>
+
+          {/* Preview Modal — renders on editor view */}
+          {pdfPreview && (
+            <div style={{
+              position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+              background: "rgba(0,0,0,0.5)", zIndex: 9999,
+              display: "flex", alignItems: "center", justifyContent: "center", padding: 16
+            }}>
+              <div style={{
+                background: "#fff", borderRadius: 16, width: "100%", maxWidth: 500,
+                maxHeight: "80vh", display: "flex", flexDirection: "column", overflow: "hidden",
+                boxShadow: "0 8px 40px rgba(0,0,0,0.25)"
+              }}>
+                <div style={{ padding: "16px 20px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: "#1a1a1a" }}>Extracted Units</div>
+                    <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
+                      {pdfPreview.units.length} unit{pdfPreview.units.length !== 1 ? "s" : ""} found
+                      {pdfPreview.jobInfo?.customerName ? ` — ${pdfPreview.jobInfo.customerName}` : ""}
+                    </div>
+                    {pdfPreview.jobInfo && (
+                      <div style={{ fontSize: 12, color: "#6DB344", marginTop: 2, fontWeight: 600 }}>
+                        {pdfPreview.jobInfo.trimStyle || "Picture Frame"}
+                        {pdfPreview.jobInfo.species ? ` | ${pdfPreview.jobInfo.species}` : ""}
+                        {pdfPreview.jobInfo.casingProfile ? ` | ${pdfPreview.jobInfo.casingProfile.split(" (")[0]}` : ""}
+                        {pdfPreview.jobInfo.finishNote ? ` | ${pdfPreview.jobInfo.finishNote}` : ""}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={() => setPdfPreview(null)} style={{
+                    background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#999", padding: "0 4px"
+                  }}>✕</button>
+                </div>
+                <div style={{ flex: 1, overflowY: "auto", padding: "12px 20px" }}>
+                  {pdfPreview.units.map((u, i) => (
+                    <div key={i} style={{
+                      padding: "10px 12px", marginBottom: 8, borderRadius: 10,
+                      border: "1px solid #e5e5e5", background: "#fafbfa"
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ fontWeight: 700, fontSize: 14, color: "#2e5a7c" }}>
+                          {u.label || `Unit ${i + 1}`}
+                          {u.location ? <span style={{ fontWeight: 400, color: "#888", marginLeft: 6 }}>{u.location}</span> : null}
+                        </span>
+                        <span style={{
+                          fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
+                          background: u.unitType === "Window" ? "rgba(109,179,68,0.08)" : u.unitType === "Entry Door" ? "#fdf2e9" : "#e8eef5",
+                          color: u.unitType === "Window" ? "#6DB344" : u.unitType === "Entry Door" ? "#b87333" : "#2e5a7c"
+                        }}>{u.unitType || "Window"}</span>
+                      </div>
+                      <div style={{ fontSize: 13, color: "#555", display: "flex", gap: 12, flexWrap: "wrap" }}>
+                        <span>W: <b>{u.widthWhole || 0}{u.widthFrac ? `-${u.widthFrac}"` : `"`}</b></span>
+                        <span>H: <b>{u.heightWhole || 0}{u.heightFrac ? `-${u.heightFrac}"` : `"`}</b></span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ padding: "12px 20px", borderTop: "1px solid #eee", display: "flex", gap: 10 }}>
+                  <button onClick={() => setPdfPreview(null)} style={{
+                    flex: 1, padding: "12px 0", borderRadius: 10, border: "1px solid #ddd",
+                    background: "#fff", fontSize: 14, fontWeight: 600, color: "#666", cursor: "pointer"
+                  }}>Cancel</button>
+                  <button onClick={confirmPdfUnits} style={{
+                    flex: 2, padding: "12px 0", borderRadius: 10, border: "none",
+                    background: "#6DB344", fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer"
+                  }}>Add {pdfPreview.units.length} Unit{pdfPreview.units.length !== 1 ? "s" : ""}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
       );
     }
