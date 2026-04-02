@@ -855,13 +855,13 @@
     }
 
     // ─── RBA MARK SVG ───
-    function RBaMark({ size = 180 }) {
+    function RBaMark({ size = 180, bgColor = "#1C1C1C" }) {
       return (
         <svg viewBox="0 0 200 100" width={size} height={size / 2} xmlns="http://www.w3.org/2000/svg">
           <polygon points="0,0 100,0 0,100" fill="#6DB344"/>
-          <polygon points="100,0 100,100 0,100" fill="#1C1C1C"/>
+          <polygon points="100,0 100,100 0,100" fill={bgColor}/>
           <polygon points="100,0 200,0 200,100" fill="#6DB344"/>
-          <polygon points="100,0 200,100 100,100" fill="#1C1C1C"/>
+          <polygon points="100,0 200,100 100,100" fill="#ffffff"/>
         </svg>
       );
     }
@@ -1233,7 +1233,10 @@
             boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
           }}>
             <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
-            <img src={LOGO_FULL} alt="RbA" style={{ height: 36 }} />
+            <div style={{ textAlign: "center", lineHeight: 1 }}>
+              <RBaMark size={44} />
+              <div style={{ fontSize: 8, fontWeight: 700, color: "#6DB344", letterSpacing: 2.5, textTransform: "uppercase", marginTop: 2 }}>Lake Superior Region</div>
+            </div>
             <button onClick={saveJob} style={{
               background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.25)",
               color: "#fff", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer"
@@ -1293,6 +1296,19 @@
                 Trim Selection
               </div>
 
+              <div style={{ marginBottom: 14, padding: "10px 14px", background: "#F5F5F4", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>Have an Installer Package PDF?</div>
+                  <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Auto-fills trim settings and all units</div>
+                </div>
+                <button onClick={() => pdfInputRef.current.click()} disabled={pdfParsing} style={{
+                  padding: "8px 14px", border: "none", borderRadius: 6,
+                  background: "#6DB344", fontSize: 13, fontWeight: 700,
+                  color: "#fff", cursor: pdfParsing ? "wait" : "pointer", flexShrink: 0
+                }}>{pdfParsing ? "Extracting..." : "Upload PDF"}</button>
+                <input ref={pdfInputRef} type="file" accept=".pdf" onChange={handlePDFUpload} style={{ display: "none" }} />
+              </div>
+
               {sameTrim === null && (
                 <div>
                   <div style={{ fontSize: 15, fontWeight: 600, color: "#333", marginBottom: 12 }}>Do all units have the same trim?</div>
@@ -1324,11 +1340,20 @@
                     </div>
                     <div>
                       <label style={lbl}>Casing Profile</label>
-                      <select style={sel} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)}>
-                        {getAvailableProfiles(globalTrim.species).map(p => (
-                          <option key={p.label} value={p.label}>{p.label}</option>
-                        ))}
-                      </select>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <select style={{ ...sel, width: "auto", flex: "1 1 50%" }}
+                          value={getAvailableProfiles(globalTrim.species).some(p => p.label === globalTrim.casingProfile) ? globalTrim.casingProfile : ""}
+                          onChange={e => { if (e.target.value) updateGlobalTrim("casingProfile", e.target.value); }}>
+                          <option value="">— pick —</option>
+                          {getAvailableProfiles(globalTrim.species).map(p => (
+                            <option key={p.label} value={p.label}>{p.label}</option>
+                          ))}
+                        </select>
+                        <input style={{ ...inp, width: "auto", flex: "1 1 50%" }}
+                          value={globalTrim.casingProfile}
+                          onChange={e => updateGlobalTrim("casingProfile", e.target.value)}
+                          placeholder="Custom..." />
+                      </div>
                     </div>
                     <div>
                       <label style={lbl}>Finish Type</label>
@@ -1348,12 +1373,21 @@
                     </div>
                     <div>
                       <label style={lbl}>{globalTrim.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
-                      <select style={sel} value={globalTrim.finish} onChange={e => updateGlobalTrim("finish", e.target.value)}>
-                        {globalTrim.finishType === "Stain"
-                          ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
-                          : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
-                        }
-                      </select>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <select style={{ ...sel, width: "auto", flex: "1 1 50%" }}
+                          value={(globalTrim.finishType === "Stain" ? STAINS.some(s => s.label === globalTrim.finish) : PAINTS.includes(globalTrim.finish)) ? globalTrim.finish : ""}
+                          onChange={e => { if (e.target.value) updateGlobalTrim("finish", e.target.value); }}>
+                          <option value="">— pick —</option>
+                          {globalTrim.finishType === "Stain"
+                            ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
+                            : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
+                          }
+                        </select>
+                        <input style={{ ...inp, width: "auto", flex: "1 1 50%" }}
+                          value={globalTrim.finish}
+                          onChange={e => updateGlobalTrim("finish", e.target.value)}
+                          placeholder="Custom..." />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1391,7 +1425,7 @@
                     {/* Header */}
                     <div onClick={() => setExpandedUnit(expanded ? -1 : idx)} style={{
                       padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between",
-                      alignItems: "center", background: expanded ? "rgba(109,179,68,0.08)" : "#fafbfa"
+                      alignItems: "center", background: "#fff"
                     }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <div style={{ width: 9, height: 9, borderRadius: "50%", background: complete ? "#4caf50" : "#ccc", flexShrink: 0 }} />
@@ -1439,11 +1473,20 @@
                           {!sameTrim && (
                             <div>
                               <label style={lbl}>Casing Profile</label>
-                              <select style={sel} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)}>
-                                {getAvailableProfiles(unit.species).map(p => (
-                                  <option key={p.label} value={p.label}>{p.label}</option>
-                                ))}
-                              </select>
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <select style={{ ...sel, width: "auto", flex: "1 1 50%" }}
+                                  value={getAvailableProfiles(unit.species).some(p => p.label === unit.casingProfile) ? unit.casingProfile : ""}
+                                  onChange={e => { if (e.target.value) updateUnit(idx, "casingProfile", e.target.value); }}>
+                                  <option value="">— pick —</option>
+                                  {getAvailableProfiles(unit.species).map(p => (
+                                    <option key={p.label} value={p.label}>{p.label}</option>
+                                  ))}
+                                </select>
+                                <input style={{ ...inp, width: "auto", flex: "1 1 50%" }}
+                                  value={unit.casingProfile}
+                                  onChange={e => updateUnit(idx, "casingProfile", e.target.value)}
+                                  placeholder="Custom..." />
+                              </div>
                             </div>
                           )}
                           {!sameTrim && (
@@ -1461,12 +1504,21 @@
                           {!sameTrim && (
                             <div>
                               <label style={lbl}>{unit.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
-                              <select style={sel} value={unit.finish} onChange={e => updateUnit(idx, "finish", e.target.value)}>
-                                {unit.finishType === "Stain"
-                                  ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
-                                  : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
-                                }
-                              </select>
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <select style={{ ...sel, width: "auto", flex: "1 1 50%" }}
+                                  value={(unit.finishType === "Stain" ? STAINS.some(s => s.label === unit.finish) : PAINTS.includes(unit.finish)) ? unit.finish : ""}
+                                  onChange={e => { if (e.target.value) updateUnit(idx, "finish", e.target.value); }}>
+                                  <option value="">— pick —</option>
+                                  {unit.finishType === "Stain"
+                                    ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
+                                    : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
+                                  }
+                                </select>
+                                <input style={{ ...inp, width: "auto", flex: "1 1 50%" }}
+                                  value={unit.finish}
+                                  onChange={e => updateUnit(idx, "finish", e.target.value)}
+                                  placeholder="Custom..." />
+                              </div>
                             </div>
                           )}
                           {needsThreshold && (
@@ -1584,7 +1636,7 @@
                           }} style={{
                             width: "100%", padding: "7px 0", border: "1px dashed #a0b8c4", borderRadius: 8,
                             background: "transparent", fontSize: 12, fontWeight: 600, color: "#2e5a7c", cursor: "pointer"
-                          }}>+ Add Custom Material</button>
+                          }}>+ Add Extra Material</button>
                         </div>
 
                         {/* Actions */}
@@ -1611,12 +1663,6 @@
                   flex: 1, padding: "14px 0", border: "2px dashed rgba(109,179,68,0.4)", borderRadius: 8,
                   background: "transparent", fontSize: 15, fontWeight: 700, color: "#6DB344", cursor: "pointer"
                 }}>+ Add Unit</button>
-                <button onClick={() => pdfInputRef.current.click()} disabled={pdfParsing} style={{
-                  flex: 1, padding: "14px 0", border: "2px dashed #a0b8c4", borderRadius: 8,
-                  background: pdfParsing ? "#e8eef2" : "transparent", fontSize: 15, fontWeight: 700,
-                  color: pdfParsing ? "#8899a4" : "#2e5a7c", cursor: pdfParsing ? "wait" : "pointer"
-                }}>{pdfParsing ? "Extracting..." : "Upload PDF"}</button>
-                <input ref={pdfInputRef} type="file" accept=".pdf" onChange={handlePDFUpload} style={{ display: "none" }} />
               </div>
             </div>
 
