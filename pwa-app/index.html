@@ -448,12 +448,15 @@
         species: "Oak",
         trimStyle: "Traditional",
         thresholdSpecies: "Oak",
-    casingProfile: "2-1/2\" Colonial (C115)",
-    finishType: "Stain",
-    finish: "Dark Walnut (Minwax)",
-        height: "",
-        width: "",
-        jambDepth: "",
+        casingProfile: '2-1/2" Colonial (C115)',
+        finishType: "Stain",
+        finish: "Dark Walnut (Minwax)",
+        widthWhole: "",
+        widthFrac: 0,
+        heightWhole: "",
+        heightFrac: 0,
+        jambDepthWhole: "",
+        jambDepthFrac: 0,
         prefinishNote: "",
         manualMaterials: [],
       };
@@ -1183,6 +1186,7 @@
         }
         setPdfPreview(null);
         setExpandedUnit(0);
+        setView("editor");
       };
 
       const allComplete = units.every(isUnitComplete);
@@ -1450,20 +1454,51 @@
               )}
               <button onClick={addJamb} style={{ width: "100%", padding: "12px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 20 }}>+ Add Jamb Stock</button>
 
-              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 6 }}>Stain Colors</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {STAINS.map(s => <Chip key={s.label} label={s.label} on={catalog.stains?.[s.label] !== false}
-                    onToggle={() => updateCatalog({ ...catalog, stains: { ...catalog.stains, [s.label]: !(catalog.stains?.[s.label] !== false) } })} />)}
-                </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Stain Colors</div>
+              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
+                {(catalog.customStains || []).concat(STAINS.map(s => s.label)).filter((v, i, a) => a.indexOf(v) === i).map(s => (
+                  <div key={s} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+                    <span style={{ fontSize: 14 }}>{s}</span>
+                    <button onClick={() => {
+                      const custom = (catalog.customStains || []).filter(c => c !== s);
+                      const stains = { ...catalog.stains, [s]: undefined };
+                      updateCatalog({ ...catalog, customStains: custom, stains });
+                    }} style={{ background: "none", border: "none", fontSize: 12, color: "#c0392b", cursor: "pointer" }}>✕</button>
+                  </div>
+                ))}
               </div>
-              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 6 }}>Paint Colors</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {PAINTS.map(p => <Chip key={p} label={p} on={catalog.paints?.[p] !== false}
-                    onToggle={() => updateCatalog({ ...catalog, paints: { ...catalog.paints, [p]: !(catalog.paints?.[p] !== false) } })} />)}
-                </div>
+              <button onClick={() => { const n = prompt("New stain color name:"); if (n) updateCatalog({ ...catalog, customStains: [...(catalog.customStains || []), n] }); }}
+                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 20 }}>+ Add Stain</button>
+
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Paint Colors</div>
+              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
+                {(catalog.customPaints || []).concat(PAINTS).filter((v, i, a) => a.indexOf(v) === i).map(p => (
+                  <div key={p} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+                    <span style={{ fontSize: 14 }}>{p}</span>
+                    <button onClick={() => {
+                      const custom = (catalog.customPaints || []).filter(c => c !== p);
+                      const paints = { ...catalog.paints, [p]: undefined };
+                      updateCatalog({ ...catalog, customPaints: custom, paints });
+                    }} style={{ background: "none", border: "none", fontSize: 12, color: "#c0392b", cursor: "pointer" }}>✕</button>
+                  </div>
+                ))}
               </div>
+              <button onClick={() => { const n = prompt("New paint color name:"); if (n) updateCatalog({ ...catalog, customPaints: [...(catalog.customPaints || []), n] }); }}
+                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 20 }}>+ Add Paint Color</button>
+
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Other Items</div>
+              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
+                {(catalog.otherItems || []).length === 0 && <div style={{ fontSize: 13, color: "#999", padding: "6px 0" }}>No custom items yet</div>}
+                {(catalog.otherItems || []).map((item, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+                    <span style={{ fontSize: 14 }}>{item}</span>
+                    <button onClick={() => updateCatalog({ ...catalog, otherItems: catalog.otherItems.filter((_, j) => j !== i) })}
+                      style={{ background: "none", border: "none", fontSize: 12, color: "#c0392b", cursor: "pointer" }}>✕</button>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => { const n = prompt("New item name:"); if (n) updateCatalog({ ...catalog, otherItems: [...(catalog.otherItems || []), n] }); }}
+                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 20 }}>+ Add Other Item</button>
             </div>
           </div>
         );
@@ -1615,6 +1650,24 @@
           </div>
 
           <div style={{ maxWidth: 900, margin: "0 auto", padding: "16px 16px 0" }}>
+            {/* File Upload — top of editor */}
+            <div style={{
+              background: "#fff", borderRadius: 8, padding: "14px 18px", marginBottom: 14,
+              boxShadow: "0 2px 10px rgba(0,0,0,0.05)", border: "1px solid #E8E8E8",
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12
+            }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>Import Job File</div>
+                <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Upload rSuite export (.json) or Installer Package (.pdf) to auto-fill everything</div>
+              </div>
+              <button onClick={() => pdfInputRef.current.click()} disabled={pdfParsing} style={{
+                padding: "10px 18px", border: "none", borderRadius: 6,
+                background: "#6DB344", fontSize: 14, fontWeight: 700,
+                color: "#fff", cursor: pdfParsing ? "wait" : "pointer", flexShrink: 0
+              }}>{pdfParsing ? "Extracting..." : "Upload File"}</button>
+              <input ref={pdfInputRef} type="file" accept=".pdf,.json" onChange={handleFileUpload} style={{ display: "none" }} />
+            </div>
+
             {/* Job Info */}
             <div style={{
               background: "#fff", borderRadius: 8, padding: 18, marginBottom: 14,
@@ -1665,19 +1718,6 @@
               <div style={{ fontSize: 13, fontWeight: 700, color: "#6DB344", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ width: 22, height: 22, background: "#6DB344", color: "#fff", borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>2</span>
                 Trim Selection
-              </div>
-
-              <div style={{ marginBottom: 14, padding: "10px 14px", background: "#F5F5F4", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>Import from rSuite or Installer Package</div>
-                  <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Upload .json (DL Export) or .pdf — auto-fills everything</div>
-                </div>
-                <button onClick={() => pdfInputRef.current.click()} disabled={pdfParsing} style={{
-                  padding: "8px 14px", border: "none", borderRadius: 6,
-                  background: "#6DB344", fontSize: 13, fontWeight: 700,
-                  color: "#fff", cursor: pdfParsing ? "wait" : "pointer", flexShrink: 0
-                }}>{pdfParsing ? "Extracting..." : "Upload File"}</button>
-                <input ref={pdfInputRef} type="file" accept=".pdf,.json" onChange={handleFileUpload} style={{ display: "none" }} />
               </div>
 
               {sameTrim === null && (
