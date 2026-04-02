@@ -526,8 +526,14 @@
       };
     }
     function loadCatalog() {
-      try { const d = localStorage.getItem("cutlist_lumber_catalog"); return d ? JSON.parse(d) : defaultCatalog(); }
-      catch { return defaultCatalog(); }
+      try {
+        const d = localStorage.getItem("cutlist_lumber_catalog");
+        if (!d) return defaultCatalog();
+        const parsed = JSON.parse(d);
+        // Migrate: if old flat format (casingProfiles is an object not array), reset to defaults
+        if (parsed.casingProfiles && !Array.isArray(parsed.casingProfiles)) return defaultCatalog();
+        return parsed;
+      } catch { return defaultCatalog(); }
     }
     function saveCatalog(catalog) {
       try { localStorage.setItem("cutlist_lumber_catalog", JSON.stringify(catalog)); } catch {}
