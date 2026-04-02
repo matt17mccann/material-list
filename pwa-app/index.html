@@ -1024,6 +1024,8 @@
       const [savedJobs, setSavedJobs] = useState([]);
       const [pdfParsing, setPdfParsing] = useState(false);
       const [pdfPreview, setPdfPreview] = useState(null); // { jobInfo, units } for review
+      const [catalog, setCatalog] = useState(loadCatalog);
+      const [offsets, setOffsetsState] = useState(loadOffsets);
       const pdfInputRef = useRef(null);
 
       useEffect(() => { setSavedJobs(loadSavedJobs()); }, [view]);
@@ -1350,7 +1352,6 @@
 
       // ─── AVAILABLE LUMBER ───
       if (view === "lumber") {
-        const [catalog, setCatalog] = useState(loadCatalog);
         const toggle = (section, key) => {
           const updated = { ...catalog, [section]: { ...catalog[section], [key]: !catalog[section][key] } };
           setCatalog(updated);
@@ -1405,7 +1406,6 @@
 
       // ─── OFFSETS ───
       if (view === "offsets") {
-        const [offsets, setOffsetsState] = useState(loadOffsets);
         const updateOffset = (section, key, val) => {
           const updated = { ...offsets, [section]: { ...offsets[section], [key]: parseFloat(val) || 0 } };
           setOffsetsState(updated);
