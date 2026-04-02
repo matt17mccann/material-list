@@ -931,13 +931,19 @@
       const handlePDFUpload = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        pdfInputRef.current.value = "";
 
         setPdfParsing(true);
         try {
+          if (pdfInputRef.current) pdfInputRef.current.value = "";
+
+          if (typeof pdfjsLib === "undefined") {
+            throw new Error("PDF library failed to load. Check your internet connection and reload the page.");
+          }
+
           // Extract text from all pages using pdf.js
           const arrayBuffer = await file.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+          const pdf = await loadingTask.promise;
           let fullText = "";
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
@@ -945,6 +951,7 @@
             // Reconstruct text preserving line breaks via Y-position changes
             let lastY = null, pageText = "";
             for (const item of content.items) {
+              if (!item.str) continue;
               const y = item.transform[5];
               if (lastY !== null && Math.abs(y - lastY) > 3) pageText += "\n";
               pageText += item.str + (item.str.endsWith(" ") ? "" : " ");
@@ -956,13 +963,14 @@
           // Parse locally — no API call needed
           const data = parseInstallerPackageText(fullText);
           if (!data.units || !data.units.length) {
-            alert("No window or door sizes found in the PDF. Try entering units manually.");
+            alert("No window or door sizes found in this PDF.\n\nMake sure you're uploading an RBA Installer Package (not the contract or proposal). If correct, enter units manually.");
             setPdfParsing(false);
             return;
           }
           setPdfPreview({ jobInfo: data.jobInfo || {}, units: data.units });
         } catch (err) {
-          alert("Error reading PDF: " + err.message);
+          alert("PDF upload error: " + (err.message || String(err)));
+          console.error("PDF upload error:", err);
         }
         setPdfParsing(false);
       };
