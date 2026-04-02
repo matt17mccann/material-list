@@ -252,38 +252,55 @@
       for (const f of finishes) { if (text.includes(f)) { jobInfo.finishNote = f; break; } }
 
       // --- Units ---
-      // Match size pattern anywhere in text: "95-7/8" W 59-1/4" H" or "95" W 59" H"
-      const sizeRe = /(\d+(?:-\d+\/\d+)?)"?\s+W\s+(\d+(?:-\d+\/\d+)?)"?\s+H/g;
+      // Match size pairs: "95-7/8" 59-1/4"" or "96" 59"" (two adjacent quoted dimensions)
+      // Also try W/H format as fallback: "95-7/8" W 59-1/4" H"
+      const sizeRe = /(\d+(?:-\d+\/\d+)?)"\s+(\d+(?:-\d+\/\d+)?)"/g;
+      const sizeReAlt = /(\d+(?:-\d+\/\d+)?)"?\s+W\s+(\d+(?:-\d+\/\d+)?)"?\s+H/g;
       const found = new Map();
-      let sm;
-      while ((sm = sizeRe.exec(text)) !== null) {
-        const w = parseFraction(sm[1]), h = parseFraction(sm[2]);
-        // Look back up to 600 chars for the nearest unit ID (100–899)
-        const before = text.substring(Math.max(0, sm.index - 600), sm.index);
-        const idM = [...before.matchAll(/\b([1-8]\d\d)\b/g)].pop();
-        if (!idM) continue;
-        const uid = idM[1];
-        if (parseInt(uid) >= 900) continue;
 
-        // Unit type: scan nearby text
-        const ctx = before.slice(-300) + text.substring(sm.index, sm.index + 200);
-        let unitType = "Window";
-        if (/entry[\s-]?door/i.test(ctx)) unitType = "Entry Door";
-        else if (/patio[\s-]?door/i.test(ctx)) unitType = "Patio Door";
+      function extractUnitsFromRegex(re) {
+        let sm;
+        // Use a stricter ID pattern: 3-digit number NOT inside a phone number
+        const idPat = /(?:^|\n)\s*([1-8]\d\d)\b/g;
+        while ((sm = re.exec(text)) !== null) {
+          const w = parseFraction(sm[1]), h = parseFraction(sm[2]);
+          // Skip tiny/zero dimensions (headers, misc lines)
+          if (w.whole + w.frac < 10 || h.whole + h.frac < 10) continue;
+          // Look back 600 chars AND forward 400 chars for the nearest unit ID (100–899)
+          const before = text.substring(Math.max(0, sm.index - 600), sm.index);
+          const after = text.substring(sm.index, Math.min(text.length, sm.index + 400));
+          const idsBefore = [...before.matchAll(idPat)];
+          const idsAfter = [...after.matchAll(idPat)];
+          // Pick closest ID: last one before, or first one after
+          const idM = idsBefore.length > 0 ? idsBefore[idsBefore.length - 1] : idsAfter.length > 0 ? idsAfter[0] : null;
+          if (!idM) continue;
+          const uid = idM[1];
+          if (parseInt(uid) >= 900) continue;
 
-        // Room: look for common room names nearby
-        let location = "";
-        const rooms = ["Living","Dining","Kitchen","Master Bedroom","Bedroom","Bathroom","Bath","Office","Family","Garage","Basement","Sunroom","Laundry","Hallway","Entry","Foyer","Den","Loft"];
-        for (const r of rooms) {
-          if (new RegExp("\\b" + r + "\\b", "i").test(ctx)) { location = r; break; }
-        }
+          // Unit type: scan nearby text
+          const ctx = before.slice(-300) + text.substring(sm.index, sm.index + 200);
+          let unitType = "Window";
+          if (/entry[\s-]?door/i.test(ctx)) unitType = "Entry Door";
+          else if (/patio[\s-]?door/i.test(ctx)) unitType = "Patio Door";
 
-        // Prefer fractional sizes over whole-inch sizes
-        const hasFrac = w.frac > 0 || h.frac > 0;
-        if (!found.has(uid) || hasFrac) {
-          found.set(uid, { unitType, label: uid, location, widthWhole: w.whole, widthFrac: w.frac, heightWhole: h.whole, heightFrac: h.frac, jambDepthWhole: null, jambDepthFrac: null });
+          // Room: look for common room names nearby
+          let location = "";
+          const rooms = ["Living","Dining","Kitchen","Master Bedroom","Bedroom","Bathroom","Bath","Office","Family","Garage","Basement","Sunroom","Laundry","Hallway","Entry","Foyer","Den","Loft"];
+          for (const r of rooms) {
+            if (new RegExp("\\b" + r + "\\b", "i").test(ctx)) { location = r; break; }
+          }
+
+          // Prefer fractional sizes over whole-inch sizes
+          const hasFrac = w.frac > 0 || h.frac > 0;
+          if (!found.has(uid) || hasFrac) {
+            found.set(uid, { unitType, label: uid, location, widthWhole: w.whole, widthFrac: w.frac, heightWhole: h.whole, heightFrac: h.frac, jambDepthWhole: null, jambDepthFrac: null });
+          }
         }
       }
+
+      // Try primary format first (adjacent quoted dimensions), then W/H format as fallback
+      extractUnitsFromRegex(sizeRe);
+      if (found.size === 0) extractUnitsFromRegex(sizeReAlt);
 
       const units = Array.from(found.values()).sort((a, b) => parseInt(a.label) - parseInt(b.label));
       return { jobInfo, units };
