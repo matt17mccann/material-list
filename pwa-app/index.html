@@ -199,6 +199,94 @@
       return neg ? `-${result}` : result;
     }
 
+    // ─── PDF TEXT PARSER (RBA Installer Package) ───
+    function parseFraction(str) {
+      // "95-7/8" -> { whole: 95, frac: 0.875 }  |  "95" -> { whole: 95, frac: 0 }
+      const m = String(str).match(/^(\d+)-(\d+)\/(\d+)$/);
+      if (m) return { whole: parseInt(m[1]), frac: parseInt(m[2]) / parseInt(m[3]) };
+      return { whole: parseInt(str) || 0, frac: 0 };
+    }
+
+    function parseInstallerPackageText(text) {
+      const jobInfo = { customerName: "", address: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
+
+      // --- Customer name: appears after "dba:" or "RENEWAL BY ANDERSEN" header line ---
+      const nameM = text.match(/(?:dba:|RENEWAL BY ANDERSEN)[^\n]*\n\s*([A-Z][a-z]+(?: [A-Z][a-z]+)+)/);
+      if (nameM) jobInfo.customerName = nameM[1].trim();
+
+      // --- Address: street number + street name + city/state/zip ---
+      const addrM = text.match(/(\d+\s+[^\n,]{5,60}(?:Road|Rd|Avenue|Ave|Street|St|Drive|Dr|Lane|Ln|Way|Court|Ct|Blvd|County Road|Cty Rd)[^\n]*)\s*\n\s*([A-Za-z][\w\s]+,\s*[A-Z]{2}\s+\d{5})/i);
+      if (addrM) jobInfo.address = `${addrM[1].trim()}, ${addrM[2].trim()}`;
+
+      // --- Species (from 900 line) ---
+      const specM = text.match(/\b(oak|pine|maple|basswood)\b/i);
+      if (specM) jobInfo.species = specM[1].charAt(0).toUpperCase() + specM[1].slice(1).toLowerCase();
+
+      // --- Casing profile (from 900 line) ---
+      const casingMap = [
+        [/\bC115\b/, '2-1/2" Colonial (C115)'],
+        [/\bC118\b/, '2-1/2" Colonial (C118)'],
+        [/\bH115\b/, '2-1/4" Colonial (H115)'],
+        [/lakeside/i, '2-1/2" Lakeside Colonial (RBA-Lside-2.5)'],
+        [/3.?1\/4.{0,6}colonial/i, '3-1/4" Colonial (RBA-Col-3.25)'],
+        [/2.?1\/2.{0,6}flat/i, '2-1/2" Flat (RBA-Flat-2.5)'],
+        [/3.?1\/4.{0,6}flat/i, '3-1/4" Flat (RBA-Flat-3.25)'],
+        [/2.?1\/2.{0,6}ranch/i, '2-1/2" Ranch'],
+        [/2.?1\/4.{0,6}ranch/i, '2-1/4" Ranch'],
+        [/knotty.?pine/i, '1x4 Knotty Pine'],
+        [/1x4.*s4s/i, '1x4 (RBA-S4S-3.5)'],
+        [/1x3.*s4s/i, '1x3 (RBA-S4S-2.5)'],
+      ];
+      for (const [pat, label] of casingMap) {
+        if (pat.test(text)) { jobInfo.casingProfile = label; break; }
+      }
+
+      // --- Trim style ---
+      if (/picture[\s-]?frame/i.test(text)) jobInfo.trimStyle = "Picture Frame";
+      else if (/traditional/i.test(text)) jobInfo.trimStyle = "Traditional";
+
+      // --- Finish note ---
+      const finishes = ["Premium Teak","Dark Walnut","Golden Oak","Provincial","Colonial Maple","Clear Poly","Golden Hickory","Honey Maple","Fruitwood","Aged Bourbon","River Stream","Dark River Stream","Honey Lite","RBA White","RBA Black","RBA Canvas"];
+      for (const f of finishes) { if (text.includes(f)) { jobInfo.finishNote = f; break; } }
+
+      // --- Units ---
+      // Match size pattern anywhere in text: "95-7/8" W 59-1/4" H" or "95" W 59" H"
+      const sizeRe = /(\d+(?:-\d+\/\d+)?)"?\s+W\s+(\d+(?:-\d+\/\d+)?)"?\s+H/g;
+      const found = new Map();
+      let sm;
+      while ((sm = sizeRe.exec(text)) !== null) {
+        const w = parseFraction(sm[1]), h = parseFraction(sm[2]);
+        // Look back up to 600 chars for the nearest unit ID (100–899)
+        const before = text.substring(Math.max(0, sm.index - 600), sm.index);
+        const idM = [...before.matchAll(/\b([1-8]\d\d)\b/g)].pop();
+        if (!idM) continue;
+        const uid = idM[1];
+        if (parseInt(uid) >= 900) continue;
+
+        // Unit type: scan nearby text
+        const ctx = before.slice(-300) + text.substring(sm.index, sm.index + 200);
+        let unitType = "Window";
+        if (/entry[\s-]?door/i.test(ctx)) unitType = "Entry Door";
+        else if (/patio[\s-]?door/i.test(ctx)) unitType = "Patio Door";
+
+        // Room: look for common room names nearby
+        let location = "";
+        const rooms = ["Living","Dining","Kitchen","Master Bedroom","Bedroom","Bathroom","Bath","Office","Family","Garage","Basement","Sunroom","Laundry","Hallway","Entry","Foyer","Den","Loft"];
+        for (const r of rooms) {
+          if (new RegExp("\\b" + r + "\\b", "i").test(ctx)) { location = r; break; }
+        }
+
+        // Prefer fractional sizes over whole-inch sizes
+        const hasFrac = w.frac > 0 || h.frac > 0;
+        if (!found.has(uid) || hasFrac) {
+          found.set(uid, { unitType, label: uid, location, widthWhole: w.whole, widthFrac: w.frac, heightWhole: h.whole, heightFrac: h.frac, jambDepthWhole: null, jambDepthFrac: null });
+        }
+      }
+
+      const units = Array.from(found.values()).sort((a, b) => parseInt(a.label) - parseInt(b.label));
+      return { jobInfo, units };
+    }
+
     function calcMaterials(unit) {
       const h = combineMeasurement(unit.heightWhole, unit.heightFrac);
       const w = combineMeasurement(unit.widthWhole, unit.widthFrac);
@@ -833,41 +921,34 @@
 
         setPdfParsing(true);
         try {
-          // Load PDF and render pages to images
+          // Extract text from all pages using pdf.js
           const arrayBuffer = await file.arrayBuffer();
           const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-          const images = [];
+          let fullText = "";
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
-            const viewport = page.getViewport({ scale: 2 });
-            const canvas = document.createElement("canvas");
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            const ctx = canvas.getContext("2d");
-            await page.render({ canvasContext: ctx, viewport }).promise;
-            const dataUrl = canvas.toDataURL("image/png");
-            images.push(dataUrl.split(",")[1]); // base64 only
+            const content = await page.getTextContent();
+            // Reconstruct text preserving line breaks via Y-position changes
+            let lastY = null, pageText = "";
+            for (const item of content.items) {
+              const y = item.transform[5];
+              if (lastY !== null && Math.abs(y - lastY) > 3) pageText += "\n";
+              pageText += item.str + (item.str.endsWith(" ") ? "" : " ");
+              lastY = y;
+            }
+            fullText += pageText + "\n\n";
           }
 
-          // Send to serverless function
-          const resp = await fetch("/.netlify/functions/parse-pdf", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ images }),
-          });
-          if (!resp.ok) {
-            const err = await resp.json();
-            throw new Error(err.error || "Failed to parse PDF");
-          }
-          const data = await resp.json();
+          // Parse locally — no API call needed
+          const data = parseInstallerPackageText(fullText);
           if (!data.units || !data.units.length) {
-            alert("No window or door sizes found in the PDF.");
+            alert("No window or door sizes found in the PDF. Try entering units manually.");
             setPdfParsing(false);
             return;
           }
           setPdfPreview({ jobInfo: data.jobInfo || {}, units: data.units });
         } catch (err) {
-          alert("Error parsing PDF: " + err.message);
+          alert("Error reading PDF: " + err.message);
         }
         setPdfParsing(false);
       };
