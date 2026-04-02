@@ -76,7 +76,7 @@
           <label style={labelStyle}>{label}</label>
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             <input
-              style={{ width: "50%", padding: "12px 8px", border: "1px solid rgba(109,179,68,0.3)", borderRadius: "8px 0 0 8px", fontSize: 20, fontWeight: 800, textAlign: "center", boxSizing: "border-box", outline: "none" }}
+              style={{ width: "50%", padding: "12px 8px", border: "1px solid #ddd", borderRadius: "6px 0 0 6px", fontSize: 20, fontWeight: 800, textAlign: "center", boxSizing: "border-box", outline: "none" }}
               type="number"
               inputMode="numeric"
               min="0"
@@ -85,7 +85,7 @@
               placeholder={placeholder || "0"}
             />
             <select
-              style={{ width: "50%", padding: "12px 4px", border: "1px solid rgba(109,179,68,0.3)", borderLeft: "none", borderRadius: "0 8px 8px 0", fontSize: 15, fontWeight: 600, textAlign: "center", boxSizing: "border-box", background: "#fff", appearance: "auto", outline: "none" }}
+              style={{ width: "50%", padding: "12px 4px", border: "1px solid #ddd", borderLeft: "none", borderRadius: "0 6px 6px 0", fontSize: 15, fontWeight: 600, textAlign: "center", boxSizing: "border-box", background: "#fff", appearance: "auto", outline: "none" }}
               value={fracValue}
               onChange={e => onFracChange(e.target.value)}
             >
@@ -1053,7 +1053,7 @@
         setSavedJobs(loadSavedJobs());
       };
 
-      const inp = { width: "100%", padding: "11px 14px", border: "1px solid rgba(109,179,68,0.3)", borderRadius: 8, fontSize: 16, background: "#fff", boxSizing: "border-box" };
+      const inp = { width: "100%", padding: "11px 14px", border: "1px solid #ddd", borderRadius: 6, fontSize: 16, background: "#fff", boxSizing: "border-box" };
       const sel = { ...inp, appearance: "auto" };
       const lbl = { fontSize: 11, fontWeight: 700, color: "#777", marginBottom: 5, display: "block", letterSpacing: 0.8, textTransform: "uppercase" };
 
@@ -1322,11 +1322,11 @@
                   <div style={{ fontSize: 15, fontWeight: 600, color: "#333", marginBottom: 12 }}>Do all units have the same trim?</div>
                   <div style={{ display: "flex", gap: 10 }}>
                     <button onClick={handleSameTrimYes} style={{
-                      flex: 1, padding: "14px 0", border: "2px solid #6DB344", borderRadius: 10,
+                      flex: 1, padding: "14px 0", border: "2px solid #6DB344", borderRadius: 8,
                       background: "#fff", fontSize: 15, fontWeight: 700, color: "#6DB344", cursor: "pointer"
                     }}>Yes — Same for all</button>
                     <button onClick={() => setSameTrim(false)} style={{
-                      flex: 1, padding: "14px 0", border: "2px solid #999", borderRadius: 10,
+                      flex: 1, padding: "14px 0", border: "2px solid #999", borderRadius: 8,
                       background: "#fff", fontSize: 15, fontWeight: 700, color: "#666", cursor: "pointer"
                     }}>No — Different per unit</button>
                   </div>
@@ -1427,7 +1427,7 @@
                   <div key={unit.id} style={{
                     background: "#fff", borderRadius: 8, marginBottom: 8,
                     boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
-                    border: `1px solid ${complete ? "#a8d4a0" : "#E8E8E8"}`,
+                    border: `1px solid ${complete ? "#6DB344" : "#E8E8E8"}`,
                     overflow: "hidden", transition: "all 0.2s"
                   }}>
                     {/* Header */}
@@ -1642,20 +1642,20 @@
                             const updated = [...(unit.manualMaterials || []), { description: "", qty: 1, length: 0 }];
                             updateUnit(idx, "manualMaterials", updated);
                           }} style={{
-                            width: "100%", padding: "7px 0", border: "1px dashed #a0b8c4", borderRadius: 8,
-                            background: "transparent", fontSize: 12, fontWeight: 600, color: "#2e5a7c", cursor: "pointer"
+                            width: "100%", padding: "7px 0", border: "1px dashed #ccc", borderRadius: 6,
+                            background: "transparent", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer"
                           }}>+ Add Extra Material</button>
                         </div>
 
                         {/* Actions */}
                         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                           <button onClick={() => duplicateUnit(idx)} style={{
-                            flex: 1, padding: "9px 0", border: "1px solid rgba(109,179,68,0.3)", borderRadius: 8,
-                            background: "#fff", fontSize: 13, fontWeight: 600, color: "#5A9637", cursor: "pointer"
+                            flex: 1, padding: "9px 0", border: "1px solid #E8E8E8", borderRadius: 6,
+                            background: "#fff", fontSize: 13, fontWeight: 600, color: "#6DB344", cursor: "pointer"
                           }}>Duplicate</button>
                           {units.length > 1 && (
                             <button onClick={() => removeUnit(idx)} style={{
-                              flex: 1, padding: "9px 0", border: "1px solid #e0b0b0", borderRadius: 8,
+                              flex: 1, padding: "9px 0", border: "1px solid #E8E8E8", borderRadius: 6,
                               background: "#fff", fontSize: 13, fontWeight: 600, color: "#c0392b", cursor: "pointer"
                             }}>Remove</button>
                           )}
@@ -1668,7 +1668,7 @@
 
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 <button onClick={addUnit} style={{
-                  flex: 1, padding: "14px 0", border: "2px dashed rgba(109,179,68,0.4)", borderRadius: 8,
+                  flex: 1, padding: "14px 0", border: "1px dashed #ccc", borderRadius: 6,
                   background: "transparent", fontSize: 15, fontWeight: 700, color: "#6DB344", cursor: "pointer"
                 }}>+ Add Unit</button>
               </div>
@@ -1778,7 +1778,7 @@
               ))}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 <button onClick={() => updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Coil", description: "Coil - Terratone", quantity: 1 }])} style={{
-                  flex: 1, padding: "10px 0", border: "2px dashed rgba(109,179,68,0.4)", borderRadius: 10,
+                  flex: 1, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
                   background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
                 }}>+ Add Coil</button>
                 <button onClick={() => updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Other", description: "", quantity: 1 }])} style={{
