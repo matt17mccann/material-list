@@ -1183,6 +1183,22 @@
         const pdfCasing = (jobInfo?.casingProfile && CASING_PROFILES.find(p => p.label === jobInfo.casingProfile))
           ? jobInfo.casingProfile : '2-1/2" Colonial (C115)';
 
+        // Determine finish type and color from the 900 line item
+        let pdfFinishType = "Stain";
+        let pdfFinish = "Dark Walnut (Minwax)";
+        if (jobInfo?.finishNote) {
+          const isStain = STAINS.find(s => s.label === jobInfo.finishNote);
+          const isPaint = PAINTS.includes(jobInfo.finishNote);
+          if (isStain) { pdfFinishType = "Stain"; pdfFinish = jobInfo.finishNote; }
+          else if (isPaint) { pdfFinishType = "Paint"; pdfFinish = jobInfo.finishNote; }
+          else { pdfFinishType = "Stain"; pdfFinish = jobInfo.finishNote; } // custom stain
+        }
+
+        // Auto-set global trim from imported data
+        const importedTrim = { species: pdfSpecies, casingProfile: pdfCasing, finishType: pdfFinishType, finish: pdfFinish };
+        setGlobalTrim(importedTrim);
+        setSameTrim(true);
+
         const startNum = units.length + 1;
         const newUnits = pdfUnits.map((u, i) => {
           let nu = emptyUnit(startNum + i);
@@ -1192,6 +1208,8 @@
           nu.trimStyle = pdfTrimStyle;
           nu.species = pdfSpecies;
           nu.casingProfile = pdfCasing;
+          nu.finishType = pdfFinishType;
+          nu.finish = pdfFinish;
           if (u.widthWhole != null) nu.widthWhole = u.widthWhole;
           if (u.widthFrac != null) nu.widthFrac = u.widthFrac;
           if (u.heightWhole != null) nu.heightWhole = u.heightWhole;
