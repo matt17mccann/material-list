@@ -1086,6 +1086,28 @@
         setUnits(prev => prev.map(u => ({ ...u, species: globalTrim.species, casingProfile: globalTrim.casingProfile, finishType: globalTrim.finishType, finish: globalTrim.finish })));
       };
 
+      // ─── PROCESS JSON TEXT (shared by file upload and paste) ───
+      const processJSONText = (text) => {
+        const jsonData = JSON.parse(text);
+        return parseRSuiteJSON(jsonData);
+      };
+
+      // ─── PASTE JSON HANDLER ───
+      const handlePasteJSON = () => {
+        const text = prompt("Paste the full JSON content from the rSuite DL Export file:");
+        if (!text || !text.trim()) return;
+        try {
+          const data = processJSONText(text.trim());
+          if (!data.units || !data.units.length) {
+            alert("No units found in the pasted JSON. Make sure you pasted the complete file contents.");
+            return;
+          }
+          setPdfPreview({ jobInfo: data.jobInfo || {}, units: data.units });
+        } catch (err) {
+          alert("Could not parse JSON: " + (err.message || String(err)));
+        }
+      };
+
       // ─── FILE UPLOAD & PARSE (JSON or PDF) ───
       const handleFileUpload = async (e) => {
         const file = e.target.files[0];
@@ -1099,10 +1121,14 @@
           let data;
 
           if (ext === "json") {
-            // ── JSON (rSuite DL Export) ──
-            const text = await file.text();
-            const jsonData = JSON.parse(text);
-            data = parseRSuiteJSON(jsonData);
+            // ── JSON (rSuite DL Export) — use FileReader for max Safari compatibility ──
+            const text = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = () => reject(new Error("Failed to read file"));
+              reader.readAsText(file);
+            });
+            data = processJSONText(text);
           } else {
             // ── PDF (Installer Package) ──
             if (typeof pdfjsLib === "undefined") {
@@ -1653,18 +1679,26 @@
             {/* File Upload — top of editor */}
             <div style={{
               background: "#fff", borderRadius: 8, padding: "14px 18px", marginBottom: 14,
-              boxShadow: "0 2px 10px rgba(0,0,0,0.05)", border: "1px solid #E8E8E8",
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12
+              boxShadow: "0 2px 10px rgba(0,0,0,0.05)", border: "1px solid #E8E8E8"
             }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>Import Job File</div>
-                <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Upload rSuite export (.json) or Installer Package (.pdf) to auto-fill everything</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>Import Job File</div>
+                  <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Auto-fills customer, address, trim, and all units</div>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                  <button onClick={() => pdfInputRef.current.click()} disabled={pdfParsing} style={{
+                    padding: "10px 18px", border: "none", borderRadius: 6,
+                    background: "#6DB344", fontSize: 14, fontWeight: 700,
+                    color: "#fff", cursor: pdfParsing ? "wait" : "pointer"
+                  }}>{pdfParsing ? "Extracting..." : "Upload File"}</button>
+                  <button onClick={handlePasteJSON} style={{
+                    padding: "10px 14px", border: "1px solid #ddd", borderRadius: 6,
+                    background: "#fff", fontSize: 13, fontWeight: 600,
+                    color: "#666", cursor: "pointer"
+                  }}>Paste JSON</button>
+                </div>
               </div>
-              <button onClick={() => pdfInputRef.current.click()} disabled={pdfParsing} style={{
-                padding: "10px 18px", border: "none", borderRadius: 6,
-                background: "#6DB344", fontSize: 14, fontWeight: 700,
-                color: "#fff", cursor: pdfParsing ? "wait" : "pointer", flexShrink: 0
-              }}>{pdfParsing ? "Extracting..." : "Upload File"}</button>
               <input ref={pdfInputRef} type="file" accept=".pdf,.json" onChange={handleFileUpload} style={{ display: "none" }} />
             </div>
 
