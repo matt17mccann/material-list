@@ -201,6 +201,86 @@
       return neg ? `-${result}` : result;
     }
 
+    // ─── JSON PARSER (rSuite DL Export) ───
+    function fractionStringToDecimal(str) {
+      if (!str) return 0;
+      const m = String(str).match(/^(\d+)\/(\d+)$/);
+      return m ? parseInt(m[1]) / parseInt(m[2]) : 0;
+    }
+
+    function parseRSuiteJSON(data) {
+      const jobInfo = { customerName: "", address: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
+
+      // Customer name
+      const contact = (data.contactList || [])[0];
+      if (contact) jobInfo.customerName = ((contact.FirstName || "") + " " + (contact.LastName || "")).trim();
+
+      // Address
+      const acct = data.account || {};
+      const parts = [acct.ShippingStreet, acct.ShippingCity, acct.ShippingStateCode, acct.ShippingPostalCode].filter(Boolean).map(s => String(s).trim());
+      jobInfo.address = parts.join(", ");
+
+      // Order items
+      const oiList = data?.opptyContainer?.anOrderContainer?.oiContainerList || [];
+      const units = [];
+      let miscNotes = "";
+
+      for (const item of oiList) {
+        const oi = item.oi || {};
+        if (oi.Product_Class__c !== "Master Product") continue;
+        const uid = oi.Unit_Id__c;
+        if (!uid) continue;
+
+        // 900 = job misc (species/casing/finish info)
+        if (uid === "900") {
+          miscNotes = oi.Notes__c || "";
+          continue;
+        }
+
+        // Map product type
+        let unitType = "Window";
+        const pt = (oi.rSuite_Product_Type__c || "").toLowerCase();
+        if (pt.includes("entry") || pt.includes("door") && !pt.includes("patio")) unitType = "Entry Door";
+        else if (pt.includes("patio")) unitType = "Patio Door";
+
+        units.push({
+          unitType,
+          label: uid,
+          location: oi.Room__c || "",
+          widthWhole: oi.Width_Inches__c || 0,
+          widthFrac: fractionStringToDecimal(oi.Width_Fraction__c),
+          heightWhole: oi.Height_Inches__c || 0,
+          heightFrac: fractionStringToDecimal(oi.Height_Fraction__c),
+          jambDepthWhole: null,
+          jambDepthFrac: null,
+        });
+      }
+
+      // Parse 900 notes for species, casing, trim, finish
+      if (miscNotes) {
+        const specM = miscNotes.match(/\b(oak|pine|maple|basswood)\b/i);
+        if (specM) jobInfo.species = specM[1].charAt(0).toUpperCase() + specM[1].slice(1).toLowerCase();
+
+        const casingMap = [
+          [/\bC115\b/, '2-1/2" Colonial (C115)'], [/\bC118\b/, '2-1/2" Colonial (C118)'],
+          [/\bH115\b/, '2-1/4" Colonial (H115)'], [/lakeside/i, '2-1/2" Lakeside Colonial (RBA-Lside-2.5)'],
+          [/3.?1\/4.{0,6}colonial/i, '3-1/4" Colonial (RBA-Col-3.25)'],
+          [/2.?1\/2.{0,6}flat/i, '2-1/2" Flat (RBA-Flat-2.5)'], [/3.?1\/4.{0,6}flat/i, '3-1/4" Flat (RBA-Flat-3.25)'],
+          [/2.?1\/2.{0,6}ranch/i, '2-1/2" Ranch'], [/2.?1\/4.{0,6}ranch/i, '2-1/4" Ranch'],
+          [/knotty.?pine/i, '1x4 Knotty Pine'], [/1x4.*s4s/i, '1x4 (RBA-S4S-3.5)'], [/1x3.*s4s/i, '1x3 (RBA-S4S-2.5)'],
+        ];
+        for (const [pat, label] of casingMap) { if (pat.test(miscNotes)) { jobInfo.casingProfile = label; break; } }
+
+        if (/picture[\s-]?frame/i.test(miscNotes)) jobInfo.trimStyle = "Picture Frame";
+        else if (/traditional/i.test(miscNotes)) jobInfo.trimStyle = "Traditional";
+
+        const finishes = ["Premium Teak","Dark Walnut","Golden Oak","Provincial","Colonial Maple","Clear Poly","Golden Hickory","Honey Maple","Fruitwood","Aged Bourbon","River Stream","Dark River Stream","Honey Lite","RBA White","RBA Black","RBA Canvas"];
+        for (const f of finishes) { if (miscNotes.includes(f)) { jobInfo.finishNote = f; break; } }
+      }
+
+      return { jobInfo, units: units.sort((a, b) => parseInt(a.label) - parseInt(b.label)) };
+    }
+
     // ─── PDF TEXT PARSER (RBA Installer Package) ───
     function parseFraction(str) {
       // "95-7/8" -> { whole: 95, frac: 0.875 }  |  "95" -> { whole: 95, frac: 0 }
@@ -310,43 +390,50 @@
       const h = combineMeasurement(unit.heightWhole, unit.heightFrac);
       const w = combineMeasurement(unit.widthWhole, unit.widthFrac);
       const jd = combineMeasurement(unit.jambDepthWhole, unit.jambDepthFrac);
+      const off = loadOffsets();
+      const t = off.thickness;
       const materials = [];
 
       if (unit.unitType === "Window") {
         const isPF = unit.trimStyle === "Picture Frame";
         if (isPF) {
-          // Picture Frame: symmetrical - top/bottom jambs same as head, top/bottom casing same as head
+          const o = off.window_pf;
+          const jw = jd + o.jamb_width;
           materials.push(
-            { name: "Side Jamb Extension", qty: 2, length: h - 1.25, width: jd - 2.75, thickness: 0.625, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jd - 2.75) },
-            { name: "Top/Bottom Jamb Extension", qty: 2, length: w, width: jd - 2.75, thickness: 0.625, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jd - 2.75) },
-            { name: "Side Casing", qty: 2, length: h - 1, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-            { name: "Top/Bottom Casing", qty: 2, length: w, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
+            { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            { name: "Top/Bottom Jamb Extension", qty: 2, length: w + o.topBottomJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Top/Bottom Casing", qty: 2, length: w + o.topBottomCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
           );
         } else {
-          // Traditional: stool with +10 and +2 width, apron, head jamb/casing
+          const o = off.window_trad;
+          const jw = jd + o.jamb_width;
           materials.push(
-            { name: "Side Jamb Extension", qty: 2, length: h - 1.25, width: jd - 2.75, thickness: 0.625, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jd - 2.75) },
-            { name: "Head Jamb Extension", qty: 1, length: w, width: jd - 2.75, thickness: 0.625, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jd - 2.75) },
-            { name: "Sill / Stool", qty: 1, length: w + 10, width: jd - 2.75 + 2, thickness: 0.625, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jd - 2.75 + 2) },
-            { name: "Side Casing", qty: 2, length: h - 1, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-            { name: "Head Casing", qty: 1, length: w, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-            { name: "Apron", qty: 1, length: w + 10, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
+            { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            { name: "Sill / Stool", qty: 1, length: w + o.stool_length, width: jw + o.stool_width_extra, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw + o.stool_width_extra) },
+            { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Apron", qty: 1, length: w + o.apron_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
           );
         }
       } else if (unit.unitType === "Entry Door") {
+        const o = off.entry_door;
         materials.push(
-          { name: "Side Casing", qty: 2, length: h + 6, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-          { name: "Head Casing", qty: 1, length: w + 8, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-          { name: "Threshold", qty: 1, length: w + 8, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" }
+          { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+          { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+          { name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" }
         );
       } else if (unit.unitType === "Patio Door") {
+        const o = off.patio_door;
+        const jw = jd + o.jamb_width;
         materials.push(
-          { name: "Side Jamb Extension", qty: 2, length: h + 2, width: jd - 4.5625, thickness: 0.625, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jd - 4.5625) },
-          { name: "Head Jamb Extension", qty: 1, length: w + 2, width: jd - 4.5625, thickness: 0.625, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jd - 4.5625) },
-          { name: "Sill Jamb Extension", qty: 1, length: w + 2, width: jd - 4.5625, thickness: 0.625, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jd - 4.5625) },
-          { name: "Side Casing", qty: 2, length: h + 6, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-          { name: "Head Casing", qty: 1, length: w + 8, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-          { name: "Threshold", qty: 1, length: w + 8, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" }
+          { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+          { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+          { name: "Sill Jamb Extension", qty: 1, length: w + o.sillJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+          { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+          { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+          { name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" }
         );
       }
       return materials;
@@ -401,6 +488,42 @@
       } catch {}
     }
 
+
+    // ─── DEFAULT OFFSETS ───
+    const DEFAULT_OFFSETS = {
+      window_pf: { sideJamb_length: -1.25, topBottomJamb_length: 0, jamb_width: -2.75, sideCasing_length: -1, topBottomCasing_length: 0 },
+      window_trad: { sideJamb_length: -1.25, headJamb_length: 0, jamb_width: -2.75, stool_length: 10, stool_width_extra: 2, sideCasing_length: -1, headCasing_length: 0, apron_length: 10 },
+      entry_door: { sideCasing_length: 6, headCasing_length: 8, threshold_length: 8 },
+      patio_door: { sideJamb_length: 2, headJamb_length: 2, sillJamb_length: 2, jamb_width: -4.5625, sideCasing_length: 6, headCasing_length: 8, threshold_length: 8 },
+      thickness: 0.625,
+    };
+
+    function loadOffsets() {
+      try { const d = localStorage.getItem("cutlist_offsets"); return d ? { ...DEFAULT_OFFSETS, ...JSON.parse(d) } : { ...DEFAULT_OFFSETS }; }
+      catch { return { ...DEFAULT_OFFSETS }; }
+    }
+    function saveOffsets(offsets) {
+      try { localStorage.setItem("cutlist_offsets", JSON.stringify(offsets)); } catch {}
+    }
+
+    // ─── LUMBER CATALOG ───
+    function defaultCatalog() {
+      const c = { species: {}, casingProfiles: {}, jambStock: {}, boardLengths: {}, stains: {}, paints: {} };
+      SPECIES.forEach(s => c.species[s] = true);
+      CASING_PROFILES.forEach(p => c.casingProfiles[p.code] = true);
+      ["1x4","1x6","1x8","1x10","1x12"].forEach(s => c.jambStock[s] = true);
+      [96,120,144].forEach(l => c.boardLengths[l] = true);
+      STAINS.forEach(s => c.stains[s.label] = true);
+      PAINTS.forEach(p => c.paints[p] = true);
+      return c;
+    }
+    function loadCatalog() {
+      try { const d = localStorage.getItem("cutlist_lumber_catalog"); return d ? JSON.parse(d) : defaultCatalog(); }
+      catch { return defaultCatalog(); }
+    }
+    function saveCatalog(catalog) {
+      try { localStorage.setItem("cutlist_lumber_catalog", JSON.stringify(catalog)); } catch {}
+    }
 
     // ─── BOARD OPTIMIZER ───
     // Groups cuts by material type + species + finish, then bin-packs into standard lengths
@@ -944,50 +1067,57 @@
         setUnits(prev => prev.map(u => ({ ...u, species: globalTrim.species, casingProfile: globalTrim.casingProfile, finishType: globalTrim.finishType, finish: globalTrim.finish })));
       };
 
-      // ─── PDF UPLOAD & PARSE ───
-      const handlePDFUpload = async (e) => {
+      // ─── FILE UPLOAD & PARSE (JSON or PDF) ───
+      const handleFileUpload = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
         setPdfParsing(true);
         try {
           if (pdfInputRef.current) pdfInputRef.current.value = "";
+          const ext = file.name.split(".").pop().toLowerCase();
 
-          if (typeof pdfjsLib === "undefined") {
-            throw new Error("PDF library failed to load. Check your internet connection and reload the page.");
-          }
+          let data;
 
-          // Extract text from all pages using pdf.js
-          const arrayBuffer = await file.arrayBuffer();
-          const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-          const pdf = await loadingTask.promise;
-          let fullText = "";
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const content = await page.getTextContent();
-            // Reconstruct text preserving line breaks via Y-position changes
-            let lastY = null, pageText = "";
-            for (const item of content.items) {
-              if (!item.str) continue;
-              const y = item.transform[5];
-              if (lastY !== null && Math.abs(y - lastY) > 3) pageText += "\n";
-              pageText += item.str + (item.str.endsWith(" ") ? "" : " ");
-              lastY = y;
+          if (ext === "json") {
+            // ── JSON (rSuite DL Export) ──
+            const text = await file.text();
+            const jsonData = JSON.parse(text);
+            data = parseRSuiteJSON(jsonData);
+          } else {
+            // ── PDF (Installer Package) ──
+            if (typeof pdfjsLib === "undefined") {
+              throw new Error("PDF library failed to load. Check your internet connection and reload the page.");
             }
-            fullText += pageText + "\n\n";
+            const arrayBuffer = await file.arrayBuffer();
+            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+            const pdf = await loadingTask.promise;
+            let fullText = "";
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const content = await page.getTextContent();
+              let lastY = null, pageText = "";
+              for (const item of content.items) {
+                if (!item.str) continue;
+                const y = item.transform[5];
+                if (lastY !== null && Math.abs(y - lastY) > 3) pageText += "\n";
+                pageText += item.str + (item.str.endsWith(" ") ? "" : " ");
+                lastY = y;
+              }
+              fullText += pageText + "\n\n";
+            }
+            data = parseInstallerPackageText(fullText);
           }
 
-          // Parse locally — no API call needed
-          const data = parseInstallerPackageText(fullText);
           if (!data.units || !data.units.length) {
-            alert("No window or door sizes found in this PDF.\n\nMake sure you're uploading an RBA Installer Package (not the contract or proposal). If correct, enter units manually.");
+            alert("No units found in this file.\n\nSupported formats:\n• rSuite DL Export (.json)\n• RBA Installer Package (.pdf)");
             setPdfParsing(false);
             return;
           }
           setPdfPreview({ jobInfo: data.jobInfo || {}, units: data.units });
         } catch (err) {
-          alert("PDF upload error: " + (err.message || String(err)));
-          console.error("PDF upload error:", err);
+          alert("Upload error: " + (err.message || String(err)));
+          console.error("Upload error:", err);
         }
         setPdfParsing(false);
       };
@@ -1121,6 +1251,19 @@
                 background: "rgba(255,255,255,0.06)", fontSize: 14, fontWeight: 600,
                 color: "rgba(255,255,255,0.7)", cursor: "pointer", letterSpacing: 0.3
               }}>Saved Jobs ({savedJobs.length})</button>
+
+              <div style={{ display: "flex", gap: 8, width: "100%", marginTop: 10 }}>
+                <button onClick={() => setView("lumber")} style={{
+                  flex: 1, padding: "12px 0", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6,
+                  background: "rgba(255,255,255,0.04)", fontSize: 12, fontWeight: 600,
+                  color: "rgba(255,255,255,0.5)", cursor: "pointer", letterSpacing: 0.3
+                }}>Available Lumber</button>
+                <button onClick={() => setView("offsets")} style={{
+                  flex: 1, padding: "12px 0", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6,
+                  background: "rgba(255,255,255,0.04)", fontSize: 12, fontWeight: 600,
+                  color: "rgba(255,255,255,0.5)", cursor: "pointer", letterSpacing: 0.3
+                }}>Offsets</button>
+              </div>
             </div>
 
             <div style={{ textAlign: "center", paddingBottom: 8 }}>
@@ -1201,6 +1344,144 @@
               </div>
             )}
 
+          </div>
+        );
+      }
+
+      // ─── AVAILABLE LUMBER ───
+      if (view === "lumber") {
+        const [catalog, setCatalog] = useState(loadCatalog);
+        const toggle = (section, key) => {
+          const updated = { ...catalog, [section]: { ...catalog[section], [key]: !catalog[section][key] } };
+          setCatalog(updated);
+          saveCatalog(updated);
+        };
+        const ToggleRow = ({ label, on, onToggle }) => (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #E8E8E8" }}>
+            <span style={{ fontSize: 14, color: "#333" }}>{label}</span>
+            <div onClick={onToggle} style={{
+              width: 44, height: 24, borderRadius: 12, cursor: "pointer", transition: "background 0.2s",
+              background: on ? "#6DB344" : "#ccc", position: "relative"
+            }}>
+              <div style={{ width: 20, height: 20, borderRadius: 10, background: "#fff", position: "absolute", top: 2, left: on ? 22 : 2, transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+            </div>
+          </div>
+        );
+        const SectionCard = ({ title, children }) => (
+          <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 6 }}>{title}</div>
+            {children}
+          </div>
+        );
+        return (
+          <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "20px 16px" }}>
+            <div style={{ maxWidth: 900, margin: "0 auto" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+                <button onClick={() => setView("home")} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#6DB344" }}>←</button>
+                <h2 style={{ fontSize: 22, color: "#1C1C1C", margin: 0 }}>Available Lumber</h2>
+              </div>
+              <SectionCard title="Species">
+                {SPECIES.map(s => <ToggleRow key={s} label={s} on={catalog.species[s] !== false} onToggle={() => toggle("species", s)} />)}
+              </SectionCard>
+              <SectionCard title="Casing Profiles">
+                {CASING_PROFILES.map(p => <ToggleRow key={p.code} label={p.label} on={catalog.casingProfiles[p.code] !== false} onToggle={() => toggle("casingProfiles", p.code)} />)}
+              </SectionCard>
+              <SectionCard title="Jamb Stock Sizes">
+                {["1x4","1x6","1x8","1x10","1x12"].map(s => <ToggleRow key={s} label={s} on={catalog.jambStock[s] !== false} onToggle={() => toggle("jambStock", s)} />)}
+              </SectionCard>
+              <SectionCard title="Board Lengths">
+                {[{k:"96",l:"8'"},{k:"120",l:"10'"},{k:"144",l:"12'"}].map(b => <ToggleRow key={b.k} label={b.l} on={catalog.boardLengths[b.k] !== false} onToggle={() => toggle("boardLengths", b.k)} />)}
+              </SectionCard>
+              <SectionCard title="Stain Colors">
+                {STAINS.map(s => <ToggleRow key={s.label} label={`${s.label} (${s.brand})`} on={catalog.stains[s.label] !== false} onToggle={() => toggle("stains", s.label)} />)}
+              </SectionCard>
+              <SectionCard title="Paint Colors">
+                {PAINTS.map(p => <ToggleRow key={p} label={p} on={catalog.paints[p] !== false} onToggle={() => toggle("paints", p)} />)}
+              </SectionCard>
+            </div>
+          </div>
+        );
+      }
+
+      // ─── OFFSETS ───
+      if (view === "offsets") {
+        const [offsets, setOffsetsState] = useState(loadOffsets);
+        const updateOffset = (section, key, val) => {
+          const updated = { ...offsets, [section]: { ...offsets[section], [key]: parseFloat(val) || 0 } };
+          setOffsetsState(updated);
+          saveOffsets(updated);
+        };
+        const resetSection = (section) => {
+          const updated = { ...offsets, [section]: { ...DEFAULT_OFFSETS[section] } };
+          setOffsetsState(updated);
+          saveOffsets(updated);
+        };
+        const OffsetRow = ({ label, desc, value, onChange }) => (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #E8E8E8", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#333" }}>{label}</div>
+              <div style={{ fontSize: 11, color: "#888" }}>{desc}</div>
+            </div>
+            <input type="number" step="0.0625" value={value} onChange={e => onChange(e.target.value)}
+              style={{ width: 80, padding: "6px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 15, fontWeight: 700, textAlign: "center" }} />
+          </div>
+        );
+        const OffsetCard = ({ title, section, fields }) => (
+          <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase" }}>{title}</div>
+              <button onClick={() => resetSection(section)} style={{ background: "none", border: "none", fontSize: 11, color: "#999", cursor: "pointer", textDecoration: "underline" }}>Reset defaults</button>
+            </div>
+            {fields.map(f => <OffsetRow key={f.key} label={f.label} desc={f.desc} value={offsets[section]?.[f.key] ?? 0} onChange={v => updateOffset(section, f.key, v)} />)}
+          </div>
+        );
+        return (
+          <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "20px 16px" }}>
+            <div style={{ maxWidth: 900, margin: "0 auto" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+                <button onClick={() => setView("home")} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#6DB344" }}>←</button>
+                <h2 style={{ fontSize: 22, color: "#1C1C1C", margin: 0 }}>Offsets</h2>
+              </div>
+              <div style={{ fontSize: 13, color: "#888", marginBottom: 16, padding: "0 4px" }}>These values are added to Width (W), Height (H), or Jamb Depth (JD) when calculating cut lengths. Negative = subtract.</div>
+
+              <OffsetCard title="Windows — Picture Frame" section="window_pf" fields={[
+                { key: "sideJamb_length", label: "Side Jamb Length", desc: "H + value" },
+                { key: "topBottomJamb_length", label: "Top/Bottom Jamb Length", desc: "W + value" },
+                { key: "jamb_width", label: "Jamb Width", desc: "JD + value" },
+                { key: "sideCasing_length", label: "Side Casing Length", desc: "H + value" },
+                { key: "topBottomCasing_length", label: "Top/Bottom Casing Length", desc: "W + value" },
+              ]} />
+              <OffsetCard title="Windows — Traditional" section="window_trad" fields={[
+                { key: "sideJamb_length", label: "Side Jamb Length", desc: "H + value" },
+                { key: "headJamb_length", label: "Head Jamb Length", desc: "W + value" },
+                { key: "jamb_width", label: "Jamb Width", desc: "JD + value" },
+                { key: "stool_length", label: "Sill/Stool Length", desc: "W + value" },
+                { key: "stool_width_extra", label: "Stool Width Extra", desc: "Added to jamb width" },
+                { key: "sideCasing_length", label: "Side Casing Length", desc: "H + value" },
+                { key: "headCasing_length", label: "Head Casing Length", desc: "W + value" },
+                { key: "apron_length", label: "Apron Length", desc: "W + value" },
+              ]} />
+              <OffsetCard title="Entry Doors" section="entry_door" fields={[
+                { key: "sideCasing_length", label: "Side Casing Length", desc: "H + value" },
+                { key: "headCasing_length", label: "Head Casing Length", desc: "W + value" },
+                { key: "threshold_length", label: "Threshold Length", desc: "W + value" },
+              ]} />
+              <OffsetCard title="Patio Doors" section="patio_door" fields={[
+                { key: "sideJamb_length", label: "Side Jamb Length", desc: "H + value" },
+                { key: "headJamb_length", label: "Head Jamb Length", desc: "W + value" },
+                { key: "sillJamb_length", label: "Sill Jamb Length", desc: "W + value" },
+                { key: "jamb_width", label: "Jamb Width", desc: "JD + value" },
+                { key: "sideCasing_length", label: "Side Casing Length", desc: "H + value" },
+                { key: "headCasing_length", label: "Head Casing Length", desc: "W + value" },
+                { key: "threshold_length", label: "Threshold Length", desc: "W + value" },
+              ]} />
+
+              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>Jamb Thickness</div>
+                <OffsetRow label="Extension Thickness" desc="Applied to all jamb extensions" value={offsets.thickness ?? 0.625}
+                  onChange={v => { const u = { ...offsets, thickness: parseFloat(v) || 0 }; setOffsetsState(u); saveOffsets(u); }} />
+              </div>
+            </div>
           </div>
         );
       }
@@ -1323,15 +1604,15 @@
 
               <div style={{ marginBottom: 14, padding: "10px 14px", background: "#F5F5F4", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>Have an Installer Package PDF?</div>
-                  <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Auto-fills trim settings and all units</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>Import from rSuite or Installer Package</div>
+                  <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Upload .json (DL Export) or .pdf — auto-fills everything</div>
                 </div>
                 <button onClick={() => pdfInputRef.current.click()} disabled={pdfParsing} style={{
                   padding: "8px 14px", border: "none", borderRadius: 6,
                   background: "#6DB344", fontSize: 13, fontWeight: 700,
                   color: "#fff", cursor: pdfParsing ? "wait" : "pointer", flexShrink: 0
-                }}>{pdfParsing ? "Extracting..." : "Upload PDF"}</button>
-                <input ref={pdfInputRef} type="file" accept=".pdf" onChange={handlePDFUpload} style={{ display: "none" }} />
+                }}>{pdfParsing ? "Extracting..." : "Upload File"}</button>
+                <input ref={pdfInputRef} type="file" accept=".pdf,.json" onChange={handleFileUpload} style={{ display: "none" }} />
               </div>
 
               {sameTrim === null && (
