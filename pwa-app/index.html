@@ -681,6 +681,7 @@
       const STOCK_LABELS = { 96: "8'", 120: "10'", 144: "12'" };
 
       const MIN_CUTOFF = 5; // minimum 5" off each end of board
+      const KERF = 0.125; // 1/8" saw blade kerf between cuts
 
       // Collect all cuts from all units
       const allCuts = [];
@@ -752,7 +753,8 @@
             let bestRemaining = Infinity;
 
             boards.forEach(board => {
-              const newRemaining = board.remaining - cut.length;
+              const needed = cut.length + KERF; // kerf between this cut and previous
+              const newRemaining = board.remaining - needed;
               if (newRemaining >= 0 && newRemaining < bestRemaining) {
                 bestBoard = board;
                 bestRemaining = newRemaining;
@@ -761,7 +763,7 @@
 
             if (bestBoard) {
               bestBoard.cuts.push(cut);
-              bestBoard.remaining -= cut.length;
+              bestBoard.remaining -= (cut.length + KERF);
             } else {
               // New board needed - pick best stock length
               let stockLength;
@@ -789,7 +791,8 @@
 
           // Downsize boards where possible
           boards.forEach(board => {
-            const totalUsed = board.cuts.reduce((sum, c) => sum + c.length, 0);
+            const kerfTotal = Math.max(0, board.cuts.length - 1) * KERF;
+            const totalUsed = board.cuts.reduce((sum, c) => sum + c.length, 0) + kerfTotal;
             for (const sl of STOCK_LENGTHS) {
               if (sl >= totalUsed) {
                 board.stockLength = sl;
@@ -871,7 +874,7 @@
                     {board.cuts.map((c, j) => (
                       <span key={j}>
                         {j > 0 && ", "}
-                        {toFraction(c.rawLength)}" <span style={{ color: "#888" }}>({c.source})</span>
+                        {toFraction(c.rawLength)}" — {c.source}
                       </span>
                     ))}
                   </td>
@@ -994,20 +997,25 @@
         return { extraRows: rows, boardRows: sortedGroups, hasExtras };
       };
 
-      // ─── Report header (shared) ───
+      // ─── Report header (shared by both report types) ───
       const ReportHeader = ({ subtitle }) => (
-        <div data-pdf-section="header" style={{ paddingBottom: 16, marginBottom: 28 }}>
-          <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'DM Sans', Arial, sans-serif", color: "#1a1a1a", marginBottom: 4 }}>Materials Checklist</div>
+        <div data-pdf-section="header" style={{ borderBottom: "3px solid #6DB344", paddingBottom: 16, marginBottom: 28 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div style={{ fontSize: 14, lineHeight: 1.8, color: "#333" }}>
-              <div><strong>{job.customerName || "—"}</strong></div>
-              <div>{job.address || "—"}</div>
-              <div>PO#: {job.poNumber || "—"}</div>
-              <div>Measured by: {job.techMeasurer || "—"}</div>
+            <div>
+              <img src={LOGO_FULL} alt="Renewal by Andersen" style={{ height: 50, marginBottom: 4 }} />
+              <div style={{ fontSize: 11, color: "#888", letterSpacing: 2, textTransform: "uppercase" }}>{subtitle}</div>
             </div>
             <div style={{ textAlign: "right", fontSize: 13, color: "#555" }}>
               <div><strong>{job.date}</strong></div>
               <div>{units.length} unit{units.length !== 1 ? "s" : ""}</div>
+            </div>
+          </div>
+          <div style={{ marginTop: 14, fontSize: 14, lineHeight: 1.6 }}>
+            <div><strong>Customer:</strong> {job.customerName || "—"}</div>
+            <div><strong>Address:</strong> {job.address || "—"}</div>
+            <div style={{ display: "flex", gap: 32 }}>
+              <span><strong>PO #:</strong> {job.poNumber || "—"}</span>
+              <span><strong>Tech Measurer:</strong> {job.techMeasurer || "—"}</span>
             </div>
           </div>
         </div>
@@ -1090,26 +1098,7 @@
       // ─── DETAILED REPORT (per-unit cut list — existing style) ───
       const DetailedReport = () => (
         <div ref={reportRef} style={{ padding: "32px 28px", maxWidth: 900, margin: "0 auto", fontFamily: "Georgia, 'Times New Roman', serif" }}>
-          <div data-pdf-section="header" style={{ borderBottom: "3px solid #6DB344", paddingBottom: 16, marginBottom: 28 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <img src={LOGO_FULL} alt="Renewal by Andersen" style={{ height: 50, marginBottom: 4 }} />
-                <div style={{ fontSize: 11, color: "#888", letterSpacing: 2, textTransform: "uppercase" }}>Detailed Cut List</div>
-              </div>
-              <div style={{ textAlign: "right", fontSize: 13, color: "#555" }}>
-                <div><strong>{job.date}</strong></div>
-                <div>{units.length} unit{units.length !== 1 ? "s" : ""}</div>
-              </div>
-            </div>
-            <div style={{ marginTop: 14, fontSize: 14, lineHeight: 1.6 }}>
-              <div><strong>Customer:</strong> {job.customerName || "—"}</div>
-              <div><strong>Address:</strong> {job.address || "—"}</div>
-              <div style={{ display: "flex", gap: 32 }}>
-                <span><strong>PO #:</strong> {job.poNumber || "—"}</span>
-                <span><strong>Tech Measurer:</strong> {job.techMeasurer || "—"}</span>
-              </div>
-            </div>
-          </div>
+          <ReportHeader subtitle="Detailed Cut List" />
 
           {units.map((unit, i) => {
             const mats = calcMaterials(unit);
