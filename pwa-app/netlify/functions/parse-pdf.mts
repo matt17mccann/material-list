@@ -1,31 +1,26 @@
-exports.handler = async (event) => {
-  const headers = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Content-Type": "application/json",
-  };
+import type { Context, Config } from "@netlify/functions";
 
-  if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 204, headers, body: "" };
+export default async (req: Request, context: Context) => {
+  if (req.method === "OPTIONS") {
+    return new Response("", { status: 204 });
   }
 
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, headers, body: JSON.stringify({ error: "Method not allowed" }) };
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405 });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = Netlify.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {
-    return { statusCode: 500, headers, body: JSON.stringify({ error: "API key not configured" }) };
+    return new Response(JSON.stringify({ error: "API key not configured" }), { status: 500 });
   }
 
   try {
-    const { images } = JSON.parse(event.body);
+    const { images } = await req.json();
     if (!images || !images.length) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: "No images provided" }) };
+      return new Response(JSON.stringify({ error: "No images provided" }), { status: 400 });
     }
 
-    const content = [];
+    const content: any[] = [];
     for (const img of images) {
       content.push({
         type: "image",
@@ -102,7 +97,7 @@ Example:
 
     if (!response.ok) {
       const errText = await response.text();
-      return { statusCode: response.status, headers, body: JSON.stringify({ error: `Anthropic API error: ${errText}` }) };
+      return new Response(JSON.stringify({ error: `Anthropic API error: ${errText}` }), { status: response.status });
     }
 
     const result = await response.json();
@@ -117,10 +112,14 @@ Example:
 
     // Handle both formats: {jobInfo, units} or plain array
     if (Array.isArray(parsed)) {
-      return { statusCode: 200, headers, body: JSON.stringify({ units: parsed }) };
+      return new Response(JSON.stringify({ units: parsed }));
     }
-    return { statusCode: 200, headers, body: JSON.stringify({ jobInfo: parsed.jobInfo || {}, units: parsed.units || [] }) };
-  } catch (err) {
-    return { statusCode: 500, headers, body: JSON.stringify({ error: err.message }) };
+    return new Response(JSON.stringify({ jobInfo: parsed.jobInfo || {}, units: parsed.units || [] }));
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
+};
+
+export const config: Config = {
+  path: "/api/parse-pdf",
 };

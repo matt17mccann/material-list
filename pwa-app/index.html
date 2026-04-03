@@ -168,6 +168,37 @@
       return CASING_PROFILES.filter(p => !p.pineOnly || species === "Pine");
     }
 
+    // Catalog-aware filtering: checks if a profile/stock has any length available for a species
+    function isProfileAvailableInCatalog(catalog, profileLabel, species) {
+      if (!catalog?.casingProfiles) return true;
+      const entry = catalog.casingProfiles.find(p => p.label === profileLabel);
+      if (!entry || !entry.availability?.[species]) return true; // not in catalog = assume available
+      return ALL_LENGTHS.some(l => entry.availability[species][l.key] !== false);
+    }
+
+    function isSpeciesAvailableInCatalog(catalog, species) {
+      if (!catalog?.casingProfiles) return true;
+      // A species is available if at least one profile or jamb stock has a length available
+      const hasProfile = (catalog.casingProfiles || []).some(p =>
+        ALL_LENGTHS.some(l => p.availability?.[species]?.[l.key] !== false)
+      );
+      const hasStock = (catalog.jambStock || []).some(j =>
+        ALL_LENGTHS.some(l => j.availability?.[species]?.[l.key] !== false)
+      );
+      return hasProfile || hasStock;
+    }
+
+    function getAvailableLengthsForSpecies(catalog, species, section) {
+      if (!catalog?.[section]) return ALL_LENGTHS.map(l => parseInt(l.key));
+      const lengths = new Set();
+      (catalog[section] || []).forEach(item => {
+        ALL_LENGTHS.forEach(l => {
+          if (item.availability?.[species]?.[l.key] !== false) lengths.add(parseInt(l.key));
+        });
+      });
+      return lengths.size > 0 ? [...lengths] : ALL_LENGTHS.map(l => parseInt(l.key));
+    }
+
     function getProfileWidth(profileLabel) {
       const p = CASING_PROFILES.find(pr => pr.label === profileLabel);
       return p ? p.width : 2.5;
@@ -442,7 +473,7 @@
     function emptyUnit(num) {
       return {
         id: Date.now() + Math.random(),
-        label: `Unit ${num}`,
+        label: "",
         location: "",
         unitType: "Window",
         species: "Oak",
@@ -489,6 +520,102 @@
         const jobs = loadSavedJobs().filter(j => j.id !== jobId);
         localStorage.setItem("cutlist_jobs", JSON.stringify(jobs));
       } catch {}
+    }
+
+    // ─── SHARED STORAGE API (Netlify Blobs) ───
+    // All API calls try the server first, fall back to localStorage when offline.
+    let _isOnline = navigator.onLine;
+    window.addEventListener("online", () => { _isOnline = true; });
+    window.addEventListener("offline", () => { _isOnline = false; });
+
+    async function apiRequest(path, method = "GET", body = null) {
+      const opts = { method, headers: {} };
+      if (body) {
+        opts.headers["Content-Type"] = "application/json";
+        opts.body = JSON.stringify(body);
+      }
+      const res = await fetch(path, opts);
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      return res.json();
+    }
+
+    // Jobs API
+    async function fetchJobsFromAPI() {
+      try {
+        const jobs = await apiRequest("/api/jobs");
+        // Cache to localStorage for offline fallback
+        if (Array.isArray(jobs)) {
+          localStorage.setItem("cutlist_jobs", JSON.stringify(jobs.slice(0, 50)));
+        }
+        return jobs || [];
+      } catch {
+        return loadSavedJobs(); // offline fallback
+      }
+    }
+    async function saveJobToAPI(jobData) {
+      // Always save to localStorage as backup
+      saveJobToStorage(jobData);
+      try {
+        await apiRequest("/api/jobs", "POST", jobData);
+        return true;
+      } catch {
+        return false; // saved locally only
+      }
+    }
+    async function deleteJobFromAPI(jobId) {
+      deleteJobFromStorage(jobId);
+      try {
+        await apiRequest("/api/jobs?id=" + encodeURIComponent(jobId), "DELETE");
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    // Catalog API
+    async function fetchCatalogFromAPI() {
+      try {
+        const data = await apiRequest("/api/catalog");
+        if (data) {
+          localStorage.setItem("cutlist_lumber_catalog", JSON.stringify(data));
+          return data;
+        }
+        return null; // not yet seeded on server
+      } catch {
+        return null; // offline — caller uses localStorage
+      }
+    }
+    async function saveCatalogToAPI(catalog) {
+      saveCatalog(catalog);
+      try {
+        await apiRequest("/api/catalog", "PUT", catalog);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    // Offsets API
+    async function fetchOffsetsFromAPI() {
+      try {
+        const data = await apiRequest("/api/offsets");
+        if (data) {
+          localStorage.setItem("cutlist_offsets", JSON.stringify(data));
+          return data;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    }
+    async function saveOffsetsToAPI(offsets) {
+      saveOffsets(offsets);
+      try {
+        await apiRequest("/api/offsets", "PUT", offsets);
+        return true;
+      } catch {
+        return false;
+      }
     }
 
 
@@ -549,8 +676,8 @@
 
     // ─── BOARD OPTIMIZER ───
     // Groups cuts by material type + species + finish, then bin-packs into standard lengths
-    function optimizeBoards(units) {
-      const STOCK_LENGTHS = [96, 120, 144]; // 8ft, 10ft, 12ft in inches
+    function optimizeBoards(units, catalog) {
+      const ALL_STOCK_LENGTHS = [96, 120, 144]; // 8ft, 10ft, 12ft in inches
       const STOCK_LABELS = { 96: "8'", 120: "10'", 144: "12'" };
 
       const MIN_CUTOFF = 5; // minimum 5" off each end of board
@@ -602,6 +729,14 @@
       const allBoards = [];
       Object.values(groups).forEach(group => {
         const sorted = [...group.cuts].sort((a, b) => b.length - a.length);
+
+        // Determine available stock lengths for this group's species from catalog
+        const section = group.materialType === "Casing" ? "casingProfiles" : "jambStock";
+        let STOCK_LENGTHS = catalog ? getAvailableLengthsForSpecies(catalog, group.species, section) : ALL_STOCK_LENGTHS;
+        // Safety: if nothing available, fall back to all lengths
+        if (!STOCK_LENGTHS.length) STOCK_LENGTHS = ALL_STOCK_LENGTHS;
+        STOCK_LENGTHS = STOCK_LENGTHS.filter(l => ALL_STOCK_LENGTHS.includes(l)).sort((a, b) => a - b);
+        if (!STOCK_LENGTHS.length) STOCK_LENGTHS = ALL_STOCK_LENGTHS;
 
         // Try each stock length strategy and pick the best
         let bestBoards = null;
@@ -691,8 +826,8 @@
       return { boards: allBoards, summary, STOCK_LABELS };
     }
 
-    function BoardSummary({ units }) {
-      const { boards, summary, STOCK_LABELS } = optimizeBoards(units);
+    function BoardSummary({ units, catalog }) {
+      const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog);
       if (boards.length === 0) return null;
 
       const totalBoards = boards.length;
@@ -752,7 +887,7 @@
     }
 
     // ─── REPORT VIEW ───
-    function ReportView({ job, units, onBack }) {
+    function ReportView({ job, units, catalog, onBack }) {
       const reportRef = useRef();
 
       const handlePDF = async () => {
@@ -962,7 +1097,7 @@
               );
             })}
 
-            <div data-pdf-section="board-summary"><BoardSummary units={units} /></div>
+            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} /></div>
 
             {/* Prefinishing Notes */}
             {(job.prefinishNotes || units.some(u => u.prefinishNote)) && (
@@ -1017,6 +1152,7 @@
     }
 
     // ─── RBA MARK SVG ───
+    // ─── RBA MARK SVG ───
     function RBaMark({ size = 180, bgColor = "#1C1C1C" }) {
       return (
         <svg viewBox="0 0 200 100" width={size} height={size / 2} xmlns="http://www.w3.org/2000/svg">
@@ -1049,9 +1185,61 @@
       const [catalog, setCatalog] = useState(loadCatalog);
       const [offsets, setOffsetsState] = useState(loadOffsets);
       const [customMode, setCustomMode] = useState({}); // tracks which fields are in "type custom" mode
+      const [isOnline, setIsOnline] = useState(navigator.onLine);
+      const [syncing, setSyncing] = useState(false);
+      const [boardCalcKey, setBoardCalcKey] = useState(0); // bump to force board recalculation
+      const [recalculating, setRecalculating] = useState(false);
+      const [savedTab, setSavedTab] = useState("quick"); // "quick" or "edit"
+      const [savedSearch, setSavedSearch] = useState("");
+      const [reportFrom, setReportFrom] = useState("editor"); // where to go back from report view
       const pdfInputRef = useRef(null);
 
-      useEffect(() => { setSavedJobs(loadSavedJobs()); }, [view]);
+      // Online/offline tracking
+      useEffect(() => {
+        const goOnline = () => setIsOnline(true);
+        const goOffline = () => setIsOnline(false);
+        window.addEventListener("online", goOnline);
+        window.addEventListener("offline", goOffline);
+        return () => { window.removeEventListener("online", goOnline); window.removeEventListener("offline", goOffline); };
+      }, []);
+
+      // Load shared data from API on mount
+      useEffect(() => {
+        (async () => {
+          setSyncing(true);
+          try {
+            // Fetch catalog from API, seed defaults if not yet on server
+            const apiCatalog = await fetchCatalogFromAPI();
+            if (apiCatalog) {
+              setCatalog(apiCatalog);
+            } else {
+              // First time — seed server with local defaults
+              const def = loadCatalog();
+              setCatalog(def);
+              saveCatalogToAPI(def);
+            }
+
+            // Fetch offsets from API, seed defaults if not yet on server
+            const apiOffsets = await fetchOffsetsFromAPI();
+            if (apiOffsets) {
+              setOffsetsState(prev => ({ ...DEFAULT_OFFSETS, ...apiOffsets }));
+            } else {
+              const def = loadOffsets();
+              setOffsetsState(def);
+              saveOffsetsToAPI(def);
+            }
+          } catch {}
+          setSyncing(false);
+        })();
+      }, []);
+
+      // Load saved jobs from API when switching to views that need them
+      useEffect(() => {
+        (async () => {
+          const jobs = await fetchJobsFromAPI();
+          setSavedJobs(jobs);
+        })();
+      }, [view]);
 
       const updateJob = (f, v) => setJob(p => ({ ...p, [f]: v }));
       const updateUnit = (idx, f, v) => setUnits(p => p.map((u, i) => i === idx ? { ...u, [f]: v } : u));
@@ -1234,11 +1422,14 @@
         setView("editor");
       };
 
-      const saveJob = () => {
-        const data = { id: jobId, job, units, savedAt: new Date().toISOString() };
-        saveJobToStorage(data);
-        setSavedJobs(loadSavedJobs());
-        alert("Job saved!");
+      const saveJob = async () => {
+        // Preserve existing status/starred if this job was previously saved
+        const existing = savedJobs.find(j => j.id === jobId);
+        const data = { id: jobId, job, units, savedAt: new Date().toISOString(), status: existing?.status || "in_progress", starred: existing?.starred || false };
+        const synced = await saveJobToAPI(data);
+        const jobs = await fetchJobsFromAPI();
+        setSavedJobs(jobs);
+        alert(synced ? "Job saved!" : "Job saved locally (offline)");
       };
 
       const loadJob = (saved) => {
@@ -1249,9 +1440,25 @@
         setView("editor");
       };
 
-      const deleteJob = (id) => {
-        deleteJobFromStorage(id);
-        setSavedJobs(loadSavedJobs());
+      const deleteJob = async (id) => {
+        await deleteJobFromAPI(id);
+        const jobs = await fetchJobsFromAPI();
+        setSavedJobs(jobs);
+      };
+
+      const updateJobMeta = async (savedJob, updates) => {
+        const updated = { ...savedJob, ...updates };
+        await saveJobToAPI(updated);
+        const jobs = await fetchJobsFromAPI();
+        setSavedJobs(jobs);
+      };
+
+      const loadJobForReport = (saved) => {
+        setJobId(saved.id);
+        setJob(saved.job);
+        setUnits(saved.units);
+        setReportFrom("saved");
+        setView("report");
       };
 
       const inp = { width: "100%", padding: "11px 14px", border: "1px solid #ddd", borderRadius: 6, fontSize: 16, background: "#fff", boxSizing: "border-box" };
@@ -1291,7 +1498,11 @@
                 <div style={{ width: 40, height: 2, background: "#6DB344", margin: "12px auto 10px" }} />
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 2.5, textTransform: "uppercase" }}>Lake Superior Region</div>
                 <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.45)", letterSpacing: 1.5, textTransform: "uppercase", marginTop: 4 }}>Material Cut List</div>
-                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.2)", marginTop: 8 }}>v2.0 — Apr 2 2026</div>
+                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.2)", marginTop: 8 }}>v2.1 — Apr 3 2026</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 6 }}>
+                  <div style={{ width: 7, height: 7, borderRadius: "50%", background: isOnline ? "#6DB344" : "#f39c12", boxShadow: isOnline ? "0 0 6px rgba(109,179,68,0.5)" : "0 0 6px rgba(243,156,18,0.5)" }} />
+                  <span style={{ fontSize: 10, color: isOnline ? "rgba(109,179,68,0.7)" : "rgba(243,156,18,0.7)" }}>{syncing ? "Syncing..." : isOnline ? "Connected" : "Offline"}</span>
+                </div>
               </div>
 
               <button onClick={startNewJob} style={{
@@ -1334,7 +1545,7 @@
 
       // ─── AVAILABLE LUMBER ───
       if (view === "lumber") {
-        const updateCatalog = (updated) => { setCatalog(updated); saveCatalog(updated); };
+        const updateCatalog = (updated) => { setCatalog(updated); saveCatalogToAPI(updated); };
 
         const toggleAvail = (section, index, species, lengthKey) => {
           const arr = [...catalog[section]];
@@ -1344,45 +1555,67 @@
           updateCatalog({ ...catalog, [section]: arr });
         };
 
-        const AvailGrid = ({ item, index, section }) => (
-          <div style={{ background: "#fff", borderRadius: 8, padding: "14px 16px", marginBottom: 8, border: "1px solid #E8E8E8" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#333" }}>{item.label}</div>
-              <button onClick={() => {
-                if (!confirm("Delete " + item.label + "?")) return;
-                updateCatalog({ ...catalog, [section]: catalog[section].filter((_, i) => i !== index) });
-              }} style={{ background: "none", border: "none", fontSize: 13, color: "#c0392b", cursor: "pointer" }}>Delete</button>
+        const AvailGrid = ({ item, index, section }) => {
+          const [open, setOpen] = useState(false);
+          // Build a summary of available species/lengths
+          const summary = ALL_SPECIES.map(sp => {
+            const lengths = ALL_LENGTHS.filter(l => item.availability?.[sp]?.[l.key] !== false).map(l => l.label);
+            return lengths.length > 0 ? `${sp}: ${lengths.join("/")}` : null;
+          }).filter(Boolean).join(" · ");
+
+          return (
+            <div style={{ background: "#fff", borderRadius: 8, marginBottom: 8, border: "1px solid #E8E8E8", overflow: "hidden" }}>
+              <div onClick={() => setOpen(!open)} style={{
+                padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center"
+              }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#333" }}>{item.label}</div>
+                  {!open && <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{summary || "No availability set"}</div>}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button onClick={(e) => {
+                    e.stopPropagation();
+                    if (!confirm("Delete " + item.label + "?")) return;
+                    updateCatalog({ ...catalog, [section]: catalog[section].filter((_, i) => i !== index) });
+                  }} style={{ background: "none", border: "none", fontSize: 13, color: "#c0392b", cursor: "pointer" }}>Delete</button>
+                  <span style={{ fontSize: 16, color: "#999", transition: "transform 0.2s", transform: open ? "rotate(180deg)" : "none" }}>▾</span>
+                </div>
+              </div>
+              {open && (
+                <div style={{ padding: "0 16px 14px" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: "left", padding: "4px 8px", fontSize: 11, color: "#888", fontWeight: 600 }}></th>
+                        {ALL_LENGTHS.map(l => <th key={l.key} style={{ padding: "4px 8px", fontSize: 11, color: "#888", fontWeight: 600, textAlign: "center" }}>{l.label}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ALL_SPECIES.map(sp => (
+                        <tr key={sp} style={{ borderTop: "1px solid #f0f0f0" }}>
+                          <td style={{ padding: "6px 8px", fontWeight: 600, color: "#333" }}>{sp}</td>
+                          {ALL_LENGTHS.map(l => {
+                            const on = item.availability?.[sp]?.[l.key] !== false;
+                            return (
+                              <td key={l.key} style={{ textAlign: "center", padding: "6px 8px" }}>
+                                <div onClick={() => toggleAvail(section, index, sp, l.key)} style={{
+                                  width: 28, height: 28, borderRadius: 6, margin: "0 auto", cursor: "pointer",
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  background: on ? "#6DB344" : "#E8E8E8", color: on ? "#fff" : "#ccc",
+                                  fontSize: 14, fontWeight: 700, transition: "all 0.15s", userSelect: "none"
+                                }}>{on ? "✓" : ""}</div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: "4px 8px", fontSize: 11, color: "#888", fontWeight: 600 }}></th>
-                  {ALL_LENGTHS.map(l => <th key={l.key} style={{ padding: "4px 8px", fontSize: 11, color: "#888", fontWeight: 600, textAlign: "center" }}>{l.label}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {ALL_SPECIES.map(sp => (
-                  <tr key={sp} style={{ borderTop: "1px solid #f0f0f0" }}>
-                    <td style={{ padding: "6px 8px", fontWeight: 600, color: "#333" }}>{sp}</td>
-                    {ALL_LENGTHS.map(l => {
-                      const on = item.availability?.[sp]?.[l.key] !== false;
-                      return (
-                        <td key={l.key} style={{ textAlign: "center", padding: "6px 8px" }}>
-                          <div onClick={() => toggleAvail(section, index, sp, l.key)} style={{
-                            width: 28, height: 28, borderRadius: 6, margin: "0 auto", cursor: "pointer",
-                            display: "flex", alignItems: "center", justifyContent: "center",
-                            background: on ? "#6DB344" : "#E8E8E8", color: on ? "#fff" : "#ccc",
-                            fontSize: 14, fontWeight: 700, transition: "all 0.15s", userSelect: "none"
-                          }}>{on ? "✓" : ""}</div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
+          );
+        };
 
         const addMaterial = (section, promptLabel, promptWidth) => {
           const name = prompt(promptLabel);
@@ -1462,12 +1695,12 @@
         const updateOffset = (section, key, val) => {
           const updated = { ...offsets, [section]: { ...offsets[section], [key]: parseFloat(val) || 0 } };
           setOffsetsState(updated);
-          saveOffsets(updated);
+          saveOffsetsToAPI(updated);
         };
         const resetSection = (section) => {
           const updated = { ...offsets, [section]: { ...DEFAULT_OFFSETS[section] } };
           setOffsetsState(updated);
-          saveOffsets(updated);
+          saveOffsetsToAPI(updated);
         };
         const OffsetRow = ({ label, desc, value, onChange }) => (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #E8E8E8", gap: 12 }}>
@@ -1532,7 +1765,7 @@
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>Jamb Thickness</div>
                 <OffsetRow label="Extension Thickness" desc="Applied to all jamb extensions" value={offsets.thickness ?? 0.625}
-                  onChange={v => { const u = { ...offsets, thickness: parseFloat(v) || 0 }; setOffsetsState(u); saveOffsets(u); }} />
+                  onChange={v => { const u = { ...offsets, thickness: parseFloat(v) || 0 }; setOffsetsState(u); saveOffsetsToAPI(u); }} />
               </div>
             </div>
           </div>
@@ -1541,36 +1774,125 @@
 
       // ─── SAVED JOBS ───
       if (view === "saved") {
+        const STATUS_OPTIONS = [
+          { key: "in_progress", label: "In Progress", color: "#f39c12", bg: "rgba(243,156,18,0.1)" },
+          { key: "ready_to_install", label: "Ready to Install", color: "#6DB344", bg: "rgba(109,179,68,0.1)" },
+          { key: "complete", label: "Complete", color: "#888", bg: "rgba(136,136,136,0.1)" },
+        ];
+
+        const searchLower = savedSearch.toLowerCase().trim();
+        const filteredJobs = savedJobs
+          .filter(s => {
+            if (!searchLower) return true;
+            return (s.job.customerName || "").toLowerCase().includes(searchLower)
+              || (s.job.address || "").toLowerCase().includes(searchLower)
+              || (s.job.poNumber || "").toLowerCase().includes(searchLower);
+          })
+          .sort((a, b) => {
+            // Starred first, then by date
+            if ((b.starred ? 1 : 0) !== (a.starred ? 1 : 0)) return (b.starred ? 1 : 0) - (a.starred ? 1 : 0);
+            return (b.savedAt || "").localeCompare(a.savedAt || "");
+          });
+
+        const JobCard = ({ s, onClickJob }) => {
+          const status = STATUS_OPTIONS.find(o => o.key === (s.status || "in_progress")) || STATUS_OPTIONS[0];
+          return (
+            <div style={{
+              background: "#fff", borderRadius: 8, marginBottom: 10,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${s.starred ? "#f39c12" : "#E8E8E8"}`,
+              overflow: "hidden"
+            }}>
+              <div style={{ display: "flex", alignItems: "stretch" }}>
+                {/* Star */}
+                <div onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { starred: !s.starred }); }} style={{
+                  width: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                  background: s.starred ? "rgba(243,156,18,0.08)" : "transparent", flexShrink: 0,
+                  fontSize: 20, color: s.starred ? "#f39c12" : "#ddd", transition: "all 0.15s"
+                }}>
+                  {s.starred ? "★" : "☆"}
+                </div>
+
+                {/* Main content */}
+                <div onClick={() => onClickJob(s)} style={{ cursor: "pointer", flex: 1, padding: "12px 12px 8px" }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, color: "#333" }}>{s.job.customerName || "Untitled Job"}</div>
+                  <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
+                    {s.job.date} • {s.units.length} unit{s.units.length !== 1 ? "s" : ""}
+                    {s.job.techMeasurer ? ` • ${s.job.techMeasurer}` : ""}
+                  </div>
+                  {s.job.address && <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>{s.job.address}</div>}
+                </div>
+
+                {/* Delete */}
+                <div style={{ display: "flex", alignItems: "center", paddingRight: 8 }}>
+                  <button onClick={(e) => { e.stopPropagation(); if (confirm("Delete this job?")) deleteJob(s.id); }} style={{
+                    background: "none", border: "none", fontSize: 16, color: "#c0392b", cursor: "pointer", padding: 8
+                  }}>✕</button>
+                </div>
+              </div>
+
+              {/* Status pills */}
+              <div style={{ display: "flex", gap: 6, padding: "0 12px 10px 56px" }}>
+                {STATUS_OPTIONS.map(opt => {
+                  const active = (s.status || "in_progress") === opt.key;
+                  return (
+                    <button key={opt.key} onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { status: opt.key }); }} style={{
+                      padding: "4px 10px", borderRadius: 12, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                      border: active ? `1.5px solid ${opt.color}` : "1px solid #E8E8E8",
+                      background: active ? opt.bg : "#fff",
+                      color: active ? opt.color : "#bbb",
+                      transition: "all 0.15s"
+                    }}>{opt.label}</button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        };
+
         return (
           <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "20px 16px" }}>
             <div style={{ maxWidth: 900, margin: "0 auto" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-                <button onClick={() => setView("home")} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#6DB344" }}>←</button>
-                <h2 style={{ fontSize: 22, color: "#6DB344", margin: 0 }}>Saved Jobs</h2>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                <button onClick={() => { setView("home"); setSavedSearch(""); }} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#6DB344" }}>←</button>
+                <h2 style={{ fontSize: 22, color: "#333", margin: 0 }}>Saved Jobs</h2>
+                <span style={{ fontSize: 13, color: "#999", marginLeft: "auto" }}>{filteredJobs.length} job{filteredJobs.length !== 1 ? "s" : ""}</span>
               </div>
 
-              {savedJobs.length === 0 ? (
+              {/* Search */}
+              <input
+                type="text" value={savedSearch} onChange={e => setSavedSearch(e.target.value)}
+                placeholder="Search by name, address, or PO#..."
+                style={{
+                  width: "100%", padding: "11px 14px", border: "1px solid #ddd", borderRadius: 8, fontSize: 15,
+                  background: "#fff", boxSizing: "border-box", marginBottom: 14
+                }}
+              />
+
+              {/* Tabs */}
+              <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 8, overflow: "hidden", border: "1px solid #E8E8E8" }}>
+                {[{ key: "quick", label: "Quick View" }, { key: "edit", label: "Edit Jobs" }].map(tab => (
+                  <button key={tab.key} onClick={() => setSavedTab(tab.key)} style={{
+                    flex: 1, padding: "10px 0", border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                    background: savedTab === tab.key ? "#6DB344" : "#fff",
+                    color: savedTab === tab.key ? "#fff" : "#888",
+                    transition: "all 0.15s"
+                  }}>{tab.label}</button>
+                ))}
+              </div>
+
+              {/* Job list */}
+              {filteredJobs.length === 0 ? (
                 <div style={{ textAlign: "center", padding: 40, color: "#999" }}>
                   <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
-                  <p>No saved jobs yet</p>
+                  <p>{savedSearch ? "No jobs match your search" : "No saved jobs yet"}</p>
                 </div>
-              ) : savedJobs.map(s => (
-                <div key={s.id} style={{
-                  background: "#fff", borderRadius: 8, padding: 16, marginBottom: 10,
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: "1px solid #E8E8E8",
-                  display: "flex", justifyContent: "space-between", alignItems: "center"
-                }}>
-                  <div onClick={() => loadJob(s)} style={{ cursor: "pointer", flex: 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 16, color: "#6DB344" }}>{s.job.customerName || "Untitled Job"}</div>
-                    <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
-                      {s.job.date} • {s.units.length} unit{s.units.length !== 1 ? "s" : ""}
-                    </div>
-                    {s.job.address && <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>{s.job.address}</div>}
-                  </div>
-                  <button onClick={() => { if (confirm("Delete this job?")) deleteJob(s.id); }} style={{
-                    background: "none", border: "none", fontSize: 18, color: "#c0392b", cursor: "pointer", padding: 8
-                  }}>✕</button>
-                </div>
+              ) : filteredJobs.map(s => (
+                <JobCard
+                  key={s.id}
+                  s={s}
+                  onClickJob={savedTab === "edit" ? loadJob : loadJobForReport}
+                />
               ))}
             </div>
           </div>
@@ -1579,7 +1901,7 @@
 
       // ─── REPORT ───
       if (view === "report") {
-        return <ReportView job={job} units={units} onBack={() => setView("editor")} />;
+        return <ReportView job={job} units={units} catalog={catalog} onBack={() => setView(reportFrom === "saved" ? "saved" : "editor")} />;
       }
 
       // ─── EDITOR ───
@@ -1596,10 +1918,18 @@
               <RBaMark size={44} />
               <div style={{ fontSize: 8, fontWeight: 700, color: "#6DB344", letterSpacing: 2.5, textTransform: "uppercase", marginTop: 2 }}>Lake Superior Region</div>
             </div>
-            <button onClick={saveJob} style={{
-              background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.25)",
-              color: "#fff", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer"
-            }}>Save</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div title={isOnline ? "Connected — synced with team" : "Offline — saving locally"} style={{
+                width: 8, height: 8, borderRadius: "50%",
+                background: isOnline ? "#6DB344" : "#f39c12",
+                boxShadow: isOnline ? "0 0 6px rgba(109,179,68,0.6)" : "0 0 6px rgba(243,156,18,0.6)",
+                flexShrink: 0
+              }} />
+              <button onClick={saveJob} style={{
+                background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.25)",
+                color: "#fff", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer"
+              }}>Save</button>
+            </div>
           </div>
 
           <div style={{ maxWidth: 900, margin: "0 auto", padding: "16px 16px 0" }}>
@@ -1700,7 +2030,10 @@
                     <div>
                       <label style={lbl}>Species</label>
                       <select style={sel} value={globalTrim.species} onChange={e => updateGlobalTrim("species", e.target.value)}>
-                        {SPECIES.map(s => <option key={s}>{s}</option>)}
+                        {SPECIES.map(s => {
+                          const avail = isSpeciesAvailableInCatalog(catalog, s);
+                          return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
+                        })}
                       </select>
                     </div>
                     <div>
@@ -1713,7 +2046,10 @@
                       {customMode.globalCasing
                         ? <input style={inp} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)} placeholder="Type custom profile..." />
                         : <select style={sel} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)}>
-                            {getAvailableProfiles(globalTrim.species).map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                            {getAvailableProfiles(globalTrim.species).map(p => {
+                              const avail = isProfileAvailableInCatalog(catalog, p.label, globalTrim.species);
+                              return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
+                            })}
                           </select>
                       }
                     </div>
@@ -1791,7 +2127,7 @@
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <div style={{ width: 9, height: 9, borderRadius: "50%", background: complete ? "#6DB344" : "#ccc", flexShrink: 0 }} />
                         <div>
-                          <span style={{ fontWeight: 700, fontSize: 15, color: "#6DB344" }}>{unit.label}</span>
+                          <span style={{ fontWeight: 700, fontSize: 15, color: unit.label ? "#6DB344" : "#bbb" }}>{unit.label || `Unit ${idx + 1}`}</span>
                           <span style={{ fontSize: 12, color: "#888", marginLeft: 8 }}>
                             {unit.unitType}{complete ? ` • ${toFraction(combineMeasurement(unit.widthWhole, unit.widthFrac))}" × ${toFraction(combineMeasurement(unit.heightWhole, unit.heightFrac))}"` : ""}
                           </span>
@@ -1805,7 +2141,7 @@
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                           <div>
                             <label style={lbl}>Unit Label</label>
-                            <input style={inp} value={unit.label} onChange={e => updateUnit(idx, "label", e.target.value)} />
+                            <input style={inp} value={unit.label} onChange={e => updateUnit(idx, "label", e.target.value)} placeholder="101" />
                           </div>
                           <div>
                             <label style={lbl}>Location</label>
@@ -1820,7 +2156,10 @@
                           <div>
                             <label style={lbl}>Species</label>
                             <select style={sel} value={unit.species} onChange={e => updateUnit(idx, "species", e.target.value)}>
-                              {SPECIES.map(s => <option key={s}>{s}</option>)}
+                              {SPECIES.map(s => {
+                                const avail = isSpeciesAvailableInCatalog(catalog, s);
+                                return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
+                              })}
                             </select>
                           </div>
                           {needsTrim && (
@@ -1842,7 +2181,10 @@
                               {customMode["casing_"+idx]
                                 ? <input style={inp} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)} placeholder="Type custom profile..." />
                                 : <select style={sel} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)}>
-                                    {getAvailableProfiles(unit.species).map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                                    {getAvailableProfiles(unit.species).map(p => {
+                                      const avail = isProfileAvailableInCatalog(catalog, p.label, unit.species);
+                                      return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
+                                    })}
                                   </select>
                               }
                             </div>
@@ -2025,16 +2367,31 @@
 
             {/* Board Summary Preview */}
             {allComplete && units.length > 0 && (
-              <div style={{
+              <div key={boardCalcKey} style={{
                 background: "#fff", borderRadius: 8, marginBottom: 14, overflow: "hidden",
                 boxShadow: "0 2px 10px rgba(0,0,0,0.05)", border: "1px solid #E8E8E8"
               }}>
-                <div style={{ padding: "12px 16px", background: "rgba(109,179,68,0.08)", fontSize: 13, fontWeight: 700, color: "#6DB344", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ width: 22, height: 22, background: "#6DB344", color: "#fff", borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>4</span>
-                  Board Summary
+                <div style={{ padding: "12px 16px", background: "rgba(109,179,68,0.08)", fontSize: 13, fontWeight: 700, color: "#6DB344", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ width: 22, height: 22, background: "#6DB344", color: "#fff", borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>4</span>
+                    Board Summary
+                  </div>
+                  <button onClick={async () => {
+                    setRecalculating(true);
+                    const freshCatalog = await fetchCatalogFromAPI();
+                    if (freshCatalog) setCatalog(freshCatalog);
+                    setBoardCalcKey(k => k + 1);
+                    setRecalculating(false);
+                  }} style={{
+                    background: "#6DB344", color: "#fff", border: "none", borderRadius: 6,
+                    padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    opacity: recalculating ? 0.6 : 1
+                  }} disabled={recalculating}>
+                    {recalculating ? "Recalculating..." : "Recalculate Boards"}
+                  </button>
                 </div>
                 {(() => {
-                  const { boards, summary, STOCK_LABELS } = optimizeBoards(units);
+                  const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog);
                   return (
                     <div style={{ padding: "12px 16px" }}>
                       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
@@ -2047,7 +2404,7 @@
                           </div>
                         ))}
                       </div>
-                      <div style={{ fontSize: 12, color: "#888" }}>Full breakdown shown in report</div>
+                      <div style={{ fontSize: 12, color: "#888" }}>Pulls latest lumber availability — full breakdown in report</div>
                     </div>
                   );
                 })()}
@@ -2137,17 +2494,24 @@
               </div>
             </div>
 
-            {/* Generate Report */}
-            <button onClick={() => setView("report")} disabled={!allComplete} style={{
-              width: "100%", padding: "18px 0", border: "none", borderRadius: 8,
-              background: allComplete ? "#6DB344" : "#ccc",
-              fontSize: 17, fontWeight: 800, color: allComplete ? "#fff" : "#888",
-              cursor: allComplete ? "pointer" : "not-allowed",
-              boxShadow: allComplete ? "0 4px 20px rgba(109,179,68,0.3)" : "none",
-              letterSpacing: 0.5
-            }}>
-              {allComplete ? "Generate Report →" : "Complete all units to generate report"}
-            </button>
+            {/* Save + Generate Report */}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={saveJob} style={{
+                flex: 1, padding: "18px 0", border: "1px solid #E8E8E8", borderRadius: 8,
+                background: "#fff", fontSize: 15, fontWeight: 700, color: "#6DB344",
+                cursor: "pointer", letterSpacing: 0.5
+              }}>Save Job</button>
+              <button onClick={() => { setReportFrom("editor"); setView("report"); }} disabled={!allComplete} style={{
+                flex: 2, padding: "18px 0", border: "none", borderRadius: 8,
+                background: allComplete ? "#6DB344" : "#ccc",
+                fontSize: 17, fontWeight: 800, color: allComplete ? "#fff" : "#888",
+                cursor: allComplete ? "pointer" : "not-allowed",
+                boxShadow: allComplete ? "0 4px 20px rgba(109,179,68,0.3)" : "none",
+                letterSpacing: 0.5
+              }}>
+                {allComplete ? "Generate Report →" : "Complete all units to generate report"}
+              </button>
+            </div>
           </div>
 
           {/* Preview Modal — renders on editor view */}

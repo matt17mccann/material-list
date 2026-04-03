@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="80" fill="#3A3A3A"/>
+
+  <!-- Board 1 — longest, green -->
+  <polygon points="161,116 441,116 421,176 161,176" fill="#6DB344"/>
+  <line x1="431" y1="116" x2="411" y2="176" stroke="#3A3A3A" stroke-width="5" stroke-linecap="round"/>
+  <polyline points="71,136 89,161 113,121" fill="none" stroke="#6DB344" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Board 2 — medium, white -->
+  <polygon points="161,226 381,226 361,286 161,286" fill="#FFFFFF"/>
+  <line x1="371" y1="226" x2="351" y2="286" stroke="#3A3A3A" stroke-width="5" stroke-linecap="round"/>
+  <polyline points="71,246 89,271 113,231" fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Board 3 — shortest, dark gray -->
+  <polygon points="161,336 321,336 301,396 161,396" fill="#111111"/>
+  <line x1="311" y1="336" x2="291" y2="396" stroke="#3A3A3A" stroke-width="5" stroke-linecap="round"/>
+  <polyline points="71,356 89,381 113,341" fill="none" stroke="#111111" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
