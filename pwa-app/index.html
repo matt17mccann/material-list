@@ -890,7 +890,7 @@
     }
 
     // ─── REPORT VIEW ───
-    function ReportView({ job, units, catalog, reportType, onBack }) {
+    function ReportView({ job, units, catalog, reportType, onBack, onEdit }) {
       const reportRef = useRef();
       const [activeReport, setActiveReport] = useState(reportType || "checklist");
 
@@ -1244,6 +1244,10 @@
                   color: activeReport === "detailed" ? "#fff" : "rgba(255,255,255,0.6)"
                 }}>Detailed</button>
               </div>
+              {onEdit && <button onClick={onEdit} style={{
+                background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.25)", color: "#fff",
+                padding: "8px 14px", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer", letterSpacing: 0.5
+              }}>EDIT JOB</button>}
               <button onClick={async () => {
                 const pdf = await generatePDFDoc();
                 const blob = pdf.output("blob");
@@ -1981,13 +1985,10 @@
             return (b.savedAt || "").localeCompare(a.savedAt || "");
           });
 
-        const renderJobCard = (s, onClickJob, mode) => {
-          const isQuick = mode === "quick";
-          return (
-            <div key={s.id} style={{
-              background: isQuick ? "#fff" : "#2A2A2A", borderRadius: 8, marginBottom: 10,
-              boxShadow: isQuick ? "0 2px 8px rgba(0,0,0,0.06)" : "0 2px 10px rgba(0,0,0,0.2)",
-              border: `1px solid ${s.starred ? "#f39c12" : (isQuick ? "#E8E8E8" : "#444")}`,
+        const renderJobCard = (s) => (
+            <div key={s.id} onClick={() => loadJobForReport(s)} style={{
+              background: "#fff", borderRadius: 8, marginBottom: 10, cursor: "pointer",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${s.starred ? "#f39c12" : "#E8E8E8"}`,
               overflow: "hidden"
             }}>
               <div style={{ display: "flex", alignItems: "stretch" }}>
@@ -2001,32 +2002,31 @@
                 </div>
 
                 {/* Main content */}
-                <div onClick={() => onClickJob(s)} style={{ cursor: "pointer", flex: 1, padding: "12px 12px 8px" }}>
-                  <div style={{ fontWeight: 700, fontSize: 16, color: isQuick ? "#333" : "#fff" }}>{s.job.customerName || "Untitled Job"}</div>
-                  <div style={{ fontSize: 13, color: isQuick ? "#888" : "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                <div style={{ flex: 1, padding: "12px 12px 8px" }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, color: "#333" }}>{s.job.customerName || "Untitled Job"}</div>
+                  <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
                     {s.job.date} • {s.units.length} unit{s.units.length !== 1 ? "s" : ""}
                     {s.job.techMeasurer ? ` • ${s.job.techMeasurer}` : ""}
                   </div>
-                  {s.job.address && <div style={{ fontSize: 12, color: isQuick ? "#aaa" : "rgba(255,255,255,0.35)", marginTop: 2 }}>{s.job.address}</div>}
+                  {s.job.address && <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>{s.job.address}</div>}
                 </div>
 
                 {/* Complete + Delete */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 10 }}>
                   <button onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { status: s.status === "complete" ? "" : "complete" }); }} style={{
-                    background: s.status === "complete" ? "#6DB344" : (isQuick ? "rgba(109,179,68,0.08)" : "rgba(109,179,68,0.15)"),
-                    border: "1px solid " + (s.status === "complete" ? "#6DB344" : (isQuick ? "#ddd" : "#555")),
-                    color: s.status === "complete" ? "#fff" : (isQuick ? "#999" : "rgba(255,255,255,0.5)"),
+                    background: s.status === "complete" ? "#6DB344" : "rgba(109,179,68,0.08)",
+                    border: "1px solid " + (s.status === "complete" ? "#6DB344" : "#ddd"),
+                    color: s.status === "complete" ? "#fff" : "#999",
                     padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
                     transition: "all 0.15s", whiteSpace: "nowrap"
                   }}>{s.status === "complete" ? "✓ Complete" : "Job Complete"}</button>
                   <button onClick={(e) => { e.stopPropagation(); if (confirm("Delete this job?")) deleteJob(s.id); }} style={{
-                    background: "none", border: "none", fontSize: 16, color: isQuick ? "#c0392b" : "#e74c3c", cursor: "pointer", padding: 8
+                    background: "none", border: "none", fontSize: 16, color: "#c0392b", cursor: "pointer", padding: 8
                   }}>✕</button>
                 </div>
               </div>
             </div>
-          );
-        };
+        );
 
         return (
           <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "0 0 40px 0" }}>
@@ -2078,29 +2078,8 @@
                   <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
                   <p>{savedSearch ? "No jobs match your search" : "No saved jobs yet"}</p>
                 </div>
-              ) : filteredJobs.map(s =>
-                renderJobCard(s, loadJobForReport, "quick")
-              )}
+              ) : filteredJobs.map(s => renderJobCard(s))}
 
-              {/* Edit a Job bar */}
-              {filteredJobs.length > 0 && (
-                <>
-                  <div onClick={() => setSavedTab(savedTab === "edit" ? "quick" : "edit")} style={{
-                    margin: "20px 0 12px", padding: "14px 18px", borderRadius: 8, cursor: "pointer",
-                    background: "#1C1C1C", display: "flex", alignItems: "center", justifyContent: "space-between",
-                    boxShadow: "0 2px 10px rgba(0,0,0,0.15)"
-                  }}>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Edit a Job</div>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Change materials, update for homeowner decisions</div>
-                    </div>
-                    <div style={{ fontSize: 18, color: "#6DB344", fontWeight: 700, transition: "transform 0.2s", transform: savedTab === "edit" ? "rotate(180deg)" : "rotate(0)" }}>▾</div>
-                  </div>
-                  {savedTab === "edit" && filteredJobs.map(s =>
-                    renderJobCard(s, loadJob, "edit")
-                  )}
-                </>
-              )}
             </div>
           </div>
         );
@@ -2108,7 +2087,7 @@
 
       // ─── REPORT ───
       if (view === "report") {
-        return <ReportView job={job} units={units} catalog={catalog} reportType={reportType} onBack={() => setView(reportFrom === "saved" ? "saved" : "editor")} />;
+        return <ReportView job={job} units={units} catalog={catalog} reportType={reportType} onBack={() => setView(reportFrom === "saved" ? "saved" : "editor")} onEdit={() => setView("editor")} />;
       }
 
       // ─── EDITOR ───
