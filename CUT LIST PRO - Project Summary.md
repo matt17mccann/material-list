@@ -35,11 +35,12 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 | Manual unit entry | **Working** | Full form for each unit with fraction inputs |
 | Material calculations | **Working** | All formulas for Windows (PF & Traditional), Entry Doors, Patio Doors |
 | Board optimizer | **Working** | Bin-packing, catalog-aware (only suggests in-stock lengths) |
-| PDF report generation | **Working** | Per-unit cut list, board summary, prefinish notes |
+| PDF report generation | **Working** | Materials Checklist + Detailed Cut List views |
+| Print PDF | **Working** | Opens generated PDF in new tab for printing (same quality as Save PDF) |
 | Email/share report | **Working** | Native share API + mailto fallback |
 | Shared job storage | **Working** | Netlify Blobs — all devices read/write to same store |
 | Shared lumber catalog | **Working** | Warehouse changes visible to all tech measurers |
-| Shared offsets | **Working** | Offset changes apply to all future calculations |
+| Shared offsets | **Working** | Editable offset formulas, changes apply to all future calculations |
 | Offline support | **Working** | Service worker + localStorage fallback when offline |
 
 ### Editor Sections (in order)
@@ -50,22 +51,44 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 5. **Board Summary** — Live preview of optimized board counts + "Recalculate Boards" button
 6. **Prefinishing Notes** — Job-level + per-unit override text
 7. **Extra Materials** — Coil colors, custom items
-8. **Save Job + Generate Report** — Save to shared storage and/or create printable PDF
+8. **Submit / Save Progress** — Submit to shared storage or save as draft
 
-### Saved Jobs View
+### Editor Top Bar
+- **← Saved Jobs** back button (left) — returns to saved jobs list
+- **Clickable logo** (center) — returns to home screen
+- **Status dot + Save button** (right) — quick save without leaving editor
+
+### Report View
+- **← Back** button (left)
+- **Checklist / Detailed toggle** — switch between Materials Checklist and Detailed Cut List
+- **EDIT JOB** — jump back to editor to modify the job
+- **Print** — generates PDF and opens in new tab for printing
+- **Save PDF** — downloads the report as a PDF file
+- **Email** (right) — share via native share or mailto
+
+### Saved Jobs & Submitted Jobs
 | Feature | Notes |
 |---------|-------|
-| **Quick View tab** (default) | Shows contact info — tap to view report/PDF directly |
-| **Edit Jobs tab** | Tap to open job in full editor |
+| **Separate lists** | Home screen has "Saved Jobs" (drafts) and "Submitted Jobs" (finalized) with counts |
+| **Sort bar** | Sort by Newest, Oldest, or Last Name |
 | **Search bar** | Filter by customer name, address, or PO# |
 | **Star/Priority flags** | Tap star to flag important jobs — starred float to top |
-| **Job status tracking** | In Progress → Ready to Install → Complete |
+| **Job Complete button** | Mark jobs as complete — they sink to the bottom with green styling |
+| **Completed section divider** | Green "COMPLETED" divider line separates active from completed jobs |
+| **Click to view report** | All job cards open directly to the report/PDF view |
+| **EDIT JOB from report** | Edit button in the report toolbar to jump back to editor |
+| **Re-Submit** | Editing a previously submitted job shows "Re-Submit Job" instead of "Submit Job" |
 
 ### Home Screen Tools
 | Tool | Purpose |
 |------|---------|
-| **Available Lumber** | Warehouse manages what's in stock — collapsible profiles with species x length grids. Add/delete custom items. Changes sync to all devices. |
+| **Available Material** | Warehouse manages what's in stock — collapsible profiles with species x length grids. Add/delete custom items. Changes sync to all devices. |
 | **Offsets** | Editable calculation formulas organized by unit type. Changes sync to all devices. |
+
+### Consistent UI
+- Dark sticky top bars on all pages (Home, Editor, Saved Jobs, Available Material, Offsets)
+- Professional report toolbar with clean button layout
+- Green accent color throughout for RBA branding
 
 ### Material Calculation Offsets (Current Defaults)
 
@@ -91,7 +114,7 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 
 ### For Tech Measurers (Field iPad)
 
-1. Open https://strong-liger-980e1f.netlify.app
+1. Open https://rba-material-list.netlify.app
 2. Tap **+ New Job**
 3. Tap **Upload File** at the top — select the rSuite DL Export (.json) from your iPad
 4. Review the extracted units in the preview modal, tap **Add Units**
@@ -102,20 +125,20 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 9. Check the Board Summary at the bottom — shows exactly how many boards are needed
 10. Add prefinishing notes if needed
 11. Add extra materials (coil, custom items) if needed
-12. Tap **Save Job** then **Generate Report** to see the full cut list
-13. **Save PDF** or **Email** the report to the warehouse
+12. Tap **Submit Job** to send to the warehouse, or **Save Progress** to save as draft
+13. View the report — **Save PDF**, **Print**, or **Email** to the warehouse
 
 ### For the Warehouse
 
 1. Open the same URL on any device
-2. Go to **Saved Jobs** — all jobs from all tech measurers are visible
-3. **Quick View** tab: tap any job to see its PDF report immediately
-4. **Edit Jobs** tab: tap to open and modify any job
+2. Go to **Submitted Jobs** — all finalized jobs from tech measurers are visible
+3. Tap any job card to see its PDF report immediately
+4. Tap **EDIT JOB** in the report toolbar to modify any job
 5. Star priority jobs — they float to the top
-6. Update status: **In Progress** → **Ready to Install** → **Complete**
+6. Tap **Job Complete** when materials are prepped — job moves to the "Completed" section at the bottom
 7. Use **Search** to find jobs by name, address, or PO#
-8. Tap **Recalculate Boards** on any job to re-run the optimizer with current catalog
-9. Tap **Available Lumber** to manage what's in stock
+8. Sort by Newest, Oldest, or Last Name
+9. Tap **Available Material** to manage what's in stock
    - Each casing profile and jamb stock has a collapsible **Species x Length grid**
    - Toggle individual combinations on/off
    - Unavailable materials are hidden from tech measurer dropdowns
@@ -144,7 +167,7 @@ Single HTML file (pwa-app/index.html)
 
 Hosted on Netlify (auto-deploy from GitHub)
 ├── GitHub repo: matt17mccann/material-list
-├── Site: https://strong-liger-980e1f.netlify.app
+├── Site: https://rba-material-list.netlify.app
 ├── Netlify Functions:
 │   ├── /api/jobs — CRUD for shared job storage
 │   ├── /api/catalog — GET/PUT shared lumber catalog
@@ -177,12 +200,22 @@ Hosted on Netlify (auto-deploy from GitHub)
 - [x] **Lumber catalog drives editor dropdowns** — Unavailable species/profiles disabled
 - [x] **Board optimizer respects catalog** — Only suggests in-stock lengths
 - [x] **Recalculate Boards button** — Pulls latest catalog and re-runs optimizer
-- [x] **Saved Jobs redesign** — Quick View + Edit tabs, search, star/priority, status tracking
 - [x] **Global jamb depth** — Set once in Trim Selection, fills all units
 - [x] **Stain auto-fill from import** — Fuzzy match for stain names from JSON
 - [x] **Collapsible lumber catalog** — Space-saving accordions with availability summaries
 - [x] **Online/offline indicator** — Green/yellow dot showing connection status
 - [x] **New Cut List Pro app icon** — Boards + checkmarks design
+- [x] **Saved Jobs / Submitted Jobs split** — Separate lists on home screen with counts
+- [x] **Submit vs Save flow** — Submit finalizes for warehouse, Save Progress keeps as draft
+- [x] **Re-Submit for edited jobs** — Clear label when re-submitting a previously submitted job
+- [x] **Report-first job cards** — Click any job to see report; EDIT JOB button in toolbar
+- [x] **Job Complete workflow** — Mark jobs complete, green styling, sinks to bottom with divider
+- [x] **Star/Priority flags** — Starred jobs float to top of each list
+- [x] **Sort bar** — Sort by Newest, Oldest, or Last Name
+- [x] **Search** — Filter jobs by customer name, address, or PO#
+- [x] **Print PDF** — Same generated PDF as Save PDF, opens in new tab for printing
+- [x] **Consistent dark top bars** — Professional styling on all pages
+- [x] **Code audit and cleanup** — Dead code removed, bugs fixed, shared helpers extracted
 
 ### Phase 3 — Next Up
 - [ ] **Auto-save** — Save job state on every change, not just manual Save button
@@ -218,6 +251,9 @@ Hosted on Netlify (auto-deploy from GitHub)
 │           ├── catalog.mts  # /api/catalog — shared lumber catalog
 │           ├── offsets.mts  # /api/offsets — shared calculation offsets
 │           └── parse-pdf.mts # /api/parse-pdf — Claude API PDF extraction
+├── sales-pitch/
+│   ├── Cut List Pro - Sales Pitch.md    # Full pitch deck for affiliates
+│   └── Affiliate Target List.md         # Target affiliates and outreach plan
 ├── .claude/
 │   └── launch.json         # Dev server config
 ├── CUT LIST PRO - Project Summary.md   # This file
@@ -229,7 +265,7 @@ Hosted on Netlify (auto-deploy from GitHub)
 ### Netlify Blobs (Primary — shared across all devices)
 | Store | Key Pattern | Purpose |
 |-------|-------------|---------|
-| `jobs` | Job ID | Full job data (job info, units, status, starred) |
+| `jobs` | Job ID | Full job data (job info, units, status, submitted, starred) |
 | `catalog` | `current` | Lumber catalog (profiles, stock, stains, paints, availability grids) |
 | `offsets` | `current` | Material calculation offsets |
 
@@ -247,5 +283,5 @@ Hosted on Netlify (auto-deploy from GitHub)
 **Matt McCann** — Tech Measurer, RBA Lake Superior Region
 Built with Claude AI (Anthropic) via Claude Code
 
-**Live URL:** https://strong-liger-980e1f.netlify.app
+**Live URL:** https://rba-material-list.netlify.app
 **GitHub:** https://github.com/matt17mccann/material-list
