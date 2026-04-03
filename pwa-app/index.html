@@ -1608,11 +1608,12 @@
         setSavedJobs(jobs);
       };
 
-      const updateJobMeta = async (savedJob, updates) => {
+      const updateJobMeta = (savedJob, updates) => {
         const updated = { ...savedJob, ...updates };
-        await saveJobToAPI(updated);
-        const jobs = await fetchJobsFromAPI();
-        setSavedJobs(jobs);
+        // Update UI immediately
+        setSavedJobs(prev => prev.map(j => j.id === savedJob.id ? updated : j));
+        // Then persist in background
+        saveJobToAPI(updated);
       };
 
       const loadJobForReport = (saved) => {
@@ -1955,11 +1956,6 @@
 
       // ─── SAVED JOBS ───
       if (view === "saved") {
-        const STATUS_OPTIONS = [
-          { key: "list_printed", label: "List Printed", color: "#fff", bg: "#6DB344", borderColor: "#6DB344" },
-          { key: "ready_to_install", label: "Ready for Install", color: "#f39c12", bg: "rgba(243,156,18,0.1)", borderColor: "#f39c12" },
-          { key: "complete", label: "Install Complete", color: "#888", bg: "rgba(136,136,136,0.1)", borderColor: "#ccc" },
-        ];
 
         const searchLower = savedSearch.toLowerCase().trim();
         const filteredJobs = savedJobs
@@ -1971,7 +1967,11 @@
               || (s.job.poNumber || "").toLowerCase().includes(searchLower);
           })
           .sort((a, b) => {
-            // Starred always first
+            // Completed jobs always last
+            const aC = a.status === "complete" ? 1 : 0;
+            const bC = b.status === "complete" ? 1 : 0;
+            if (aC !== bC) return aC - bC;
+            // Starred first
             if ((b.starred ? 1 : 0) !== (a.starred ? 1 : 0)) return (b.starred ? 1 : 0) - (a.starred ? 1 : 0);
             if (savedSort === "oldest") return (a.savedAt || "").localeCompare(b.savedAt || "");
             if (savedSort === "last_name") {
@@ -1979,20 +1979,16 @@
               const bLast = (b.job.customerName || "").trim().split(/\s+/).pop().toLowerCase();
               return aLast.localeCompare(bLast);
             }
-            if (savedSort === "status") {
-              const order = { "": 0, list_printed: 1, ready_to_install: 2, complete: 3 };
-              const diff = (order[a.status || ""] || 0) - (order[b.status || ""] || 0);
-              if (diff !== 0) return diff;
-            }
             return (b.savedAt || "").localeCompare(a.savedAt || "");
           });
 
-        const renderJobCard = (s, onClickJob) => {
-          const status = STATUS_OPTIONS.find(o => o.key === (s.status || "in_progress")) || STATUS_OPTIONS[0];
+        const renderJobCard = (s, onClickJob, mode) => {
+          const isQuick = mode === "quick";
           return (
             <div key={s.id} style={{
-              background: "#fff", borderRadius: 8, marginBottom: 10,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${s.starred ? "#f39c12" : "#E8E8E8"}`,
+              background: isQuick ? "#fff" : "#2A2A2A", borderRadius: 8, marginBottom: 10,
+              boxShadow: isQuick ? "0 2px 8px rgba(0,0,0,0.06)" : "0 2px 10px rgba(0,0,0,0.2)",
+              border: `1px solid ${s.starred ? "#f39c12" : isQuick ? "#E8E8E8" : "#444"}`,
               overflow: "hidden"
             }}>
               <div style={{ display: "flex", alignItems: "stretch" }}>
@@ -2007,36 +2003,27 @@
 
                 {/* Main content */}
                 <div onClick={() => onClickJob(s)} style={{ cursor: "pointer", flex: 1, padding: "12px 12px 8px" }}>
-                  <div style={{ fontWeight: 700, fontSize: 16, color: "#333" }}>{s.job.customerName || "Untitled Job"}</div>
-                  <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, color: isQuick ? "#333" : "#fff" }}>{s.job.customerName || "Untitled Job"}</div>
+                  <div style={{ fontSize: 13, color: isQuick ? "#888" : "rgba(255,255,255,0.5)", marginTop: 2 }}>
                     {s.job.date} • {s.units.length} unit{s.units.length !== 1 ? "s" : ""}
                     {s.job.techMeasurer ? ` • ${s.job.techMeasurer}` : ""}
                   </div>
-                  {s.job.address && <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>{s.job.address}</div>}
+                  {s.job.address && <div style={{ fontSize: 12, color: isQuick ? "#aaa" : "rgba(255,255,255,0.35)", marginTop: 2 }}>{s.job.address}</div>}
                 </div>
 
-                {/* Delete */}
-                <div style={{ display: "flex", alignItems: "center", paddingRight: 8 }}>
+                {/* Complete + Delete */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 10 }}>
+                  <button onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { status: s.status === "complete" ? "" : "complete" }); }} style={{
+                    background: s.status === "complete" ? "#6DB344" : (isQuick ? "rgba(109,179,68,0.08)" : "rgba(109,179,68,0.15)"),
+                    border: `1px solid ${s.status === "complete" ? "#6DB344" : (isQuick ? "#ddd" : "#555")}`,
+                    color: s.status === "complete" ? "#fff" : (isQuick ? "#999" : "rgba(255,255,255,0.5)"),
+                    padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                    transition: "all 0.15s", whiteSpace: "nowrap"
+                  }}>{s.status === "complete" ? "✓ Complete" : "Job Complete"}</button>
                   <button onClick={(e) => { e.stopPropagation(); if (confirm("Delete this job?")) deleteJob(s.id); }} style={{
-                    background: "none", border: "none", fontSize: 16, color: "#c0392b", cursor: "pointer", padding: 8
+                    background: "none", border: "none", fontSize: 16, color: isQuick ? "#c0392b" : "#e74c3c", cursor: "pointer", padding: 8
                   }}>✕</button>
                 </div>
-              </div>
-
-              {/* Status pills */}
-              <div style={{ display: "flex", gap: 6, padding: "0 12px 10px 56px" }}>
-                {STATUS_OPTIONS.map(opt => {
-                  const active = (s.status || "") === opt.key;
-                  return (
-                    <button key={opt.key} onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { status: active ? "" : opt.key }); }} style={{
-                      padding: "4px 10px", borderRadius: 12, fontSize: 11, fontWeight: 600, cursor: "pointer",
-                      border: active ? `1.5px solid ${opt.borderColor}` : "1px solid #E8E8E8",
-                      background: active ? opt.bg : "#fff",
-                      color: active ? opt.color : "#bbb",
-                      transition: "all 0.15s"
-                    }}>{opt.label}</button>
-                  );
-                })}
               </div>
             </div>
           );
@@ -2075,7 +2062,6 @@
                   { key: "newest", label: "Newest" },
                   { key: "oldest", label: "Oldest" },
                   { key: "last_name", label: "Last Name" },
-                  { key: "status", label: "Status" },
                 ].map(opt => (
                   <button key={opt.key} onClick={() => setSavedSort(opt.key)} style={{
                     padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer",
@@ -2087,26 +2073,34 @@
                 ))}
               </div>
 
-              {/* Tabs */}
-              <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 8, overflow: "hidden", border: "1px solid #E8E8E8" }}>
-                {[{ key: "quick", label: "Quick View" }, { key: "edit", label: "Edit Jobs" }].map(tab => (
-                  <button key={tab.key} onClick={() => setSavedTab(tab.key)} style={{
-                    flex: 1, padding: "10px 0", border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer",
-                    background: savedTab === tab.key ? "#6DB344" : "#fff",
-                    color: savedTab === tab.key ? "#fff" : "#888",
-                    transition: "all 0.15s"
-                  }}>{tab.label}</button>
-                ))}
-              </div>
-
-              {/* Job list */}
+              {/* Job list — Quick View */}
               {filteredJobs.length === 0 ? (
                 <div style={{ textAlign: "center", padding: 40, color: "#999" }}>
                   <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
                   <p>{savedSearch ? "No jobs match your search" : "No saved jobs yet"}</p>
                 </div>
               ) : filteredJobs.map(s =>
-                renderJobCard(s, savedTab === "edit" ? loadJob : loadJobForReport)
+                renderJobCard(s, loadJobForReport, "quick")
+              )}
+
+              {/* Edit a Job bar */}
+              {filteredJobs.length > 0 && (
+                <>
+                  <div onClick={() => setSavedTab(savedTab === "edit" ? "quick" : "edit")} style={{
+                    margin: "20px 0 12px", padding: "14px 18px", borderRadius: 8, cursor: "pointer",
+                    background: "#1C1C1C", display: "flex", alignItems: "center", justifyContent: "space-between",
+                    boxShadow: "0 2px 10px rgba(0,0,0,0.15)"
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Edit a Job</div>
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Change materials, update for homeowner decisions</div>
+                    </div>
+                    <div style={{ fontSize: 18, color: "#6DB344", fontWeight: 700, transition: "transform 0.2s", transform: savedTab === "edit" ? "rotate(180deg)" : "rotate(0)" }}>▾</div>
+                  </div>
+                  {savedTab === "edit" && filteredJobs.map(s =>
+                    renderJobCard(s, loadJob, "edit")
+                  )}
+                </>
               )}
             </div>
           </div>
