@@ -25,6 +25,8 @@ export default async (req: Request, context: Context) => {
           job: data.job,
           units: data.units,
           savedAt: data.savedAt,
+          status: data.status || "in_progress",
+          starred: data.starred || false,
         });
       }
     }
