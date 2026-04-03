@@ -1,6 +1,6 @@
 # Cut List Pro — Project Summary
 ### Renewal by Andersen | Lake Superior Region
-**Last Updated:** April 2, 2026 | **Built by:** Matt McCann + Claude AI
+**Last Updated:** April 3, 2026 | **Built by:** Matt McCann + Claude AI
 
 ---
 
@@ -17,8 +17,9 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 1. **Upload** a job file (rSuite JSON export or Installer Package PDF)
 2. **Auto-populate** customer info, all window/door units with exact fractional dimensions, species, casing profile, and finish
 3. **Calculate** every material piece with correct offsets (jamb extensions, casings, stools, aprons, thresholds)
-4. **Optimize** board usage by bin-packing cuts into standard 8', 10', and 12' stock lengths
+4. **Optimize** board usage by bin-packing cuts into available stock lengths
 5. **Generate** a clean PDF report the warehouse can read and act on immediately
+6. **Share across all devices** — tech measurers and warehouse see the same jobs, catalog, and offsets in real time
 
 **90% of jobs are standard** — same Oak C115 casing, same stock. The app handles these in under 2 minutes. The other 10% (custom species, unusual profiles, manual overrides) are fully supported through manual editing.
 
@@ -29,31 +30,42 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 ### Core Workflow
 | Feature | Status | Notes |
 |---------|--------|-------|
-| JSON file import (rSuite DL Export) | **Working** | Auto-fills customer, address, all units with exact sizes |
-| PDF file import (Installer Package) | **Working** | Regex parser, less reliable than JSON |
+| JSON file import (rSuite DL Export) | **Working** | Auto-fills customer, address, trim, stain/finish, all units with exact sizes |
+| PDF file import (Installer Package) | **Working** | Regex parser + Claude API fallback |
 | Manual unit entry | **Working** | Full form for each unit with fraction inputs |
 | Material calculations | **Working** | All formulas for Windows (PF & Traditional), Entry Doors, Patio Doors |
-| Board optimizer | **Working** | Bin-packing into 8'/10'/12', tries 4 strategies, picks lowest waste |
+| Board optimizer | **Working** | Bin-packing, catalog-aware (only suggests in-stock lengths) |
 | PDF report generation | **Working** | Per-unit cut list, board summary, prefinish notes |
 | Email/share report | **Working** | Native share API + mailto fallback |
-| Save/load jobs | **Working** | localStorage, max 50 jobs |
-| Offline support | **Working** | Service worker with network-first HTML, cache-first assets |
+| Shared job storage | **Working** | Netlify Blobs — all devices read/write to same store |
+| Shared lumber catalog | **Working** | Warehouse changes visible to all tech measurers |
+| Shared offsets | **Working** | Offset changes apply to all future calculations |
+| Offline support | **Working** | Service worker + localStorage fallback when offline |
 
 ### Editor Sections (in order)
 1. **Import Job File** — Upload .json or .pdf, auto-fills everything
 2. **Job Info** — Customer, address, PO#, tech measurer, date
-3. **Trim Selection** — Global (same for all units) or per-unit species/casing/finish
+3. **Trim Selection** — Global (same for all units) or per-unit species/casing/finish/jamb depth
 4. **Units** — Expandable accordion per unit with dimensions, trim overrides, custom materials
-5. **Board Summary** — Live preview of optimized board counts
+5. **Board Summary** — Live preview of optimized board counts + "Recalculate Boards" button
 6. **Prefinishing Notes** — Job-level + per-unit override text
 7. **Extra Materials** — Coil colors, custom items
-8. **Generate Report** — Creates printable/PDF cut list
+8. **Save Job + Generate Report** — Save to shared storage and/or create printable PDF
+
+### Saved Jobs View
+| Feature | Notes |
+|---------|-------|
+| **Quick View tab** (default) | Shows contact info — tap to view report/PDF directly |
+| **Edit Jobs tab** | Tap to open job in full editor |
+| **Search bar** | Filter by customer name, address, or PO# |
+| **Star/Priority flags** | Tap star to flag important jobs — starred float to top |
+| **Job status tracking** | In Progress → Ready to Install → Complete |
 
 ### Home Screen Tools
 | Tool | Purpose |
 |------|---------|
-| **Available Lumber** | Warehouse manages what's in stock — casing profiles, jamb stock, stains, paints, other items. Each profile has species & length toggles. Add/delete custom items. |
-| **Offsets** | Editable calculation formulas organized by unit type. Warehouse can adjust any offset value and it changes how all future jobs calculate. Reset to defaults per section. |
+| **Available Lumber** | Warehouse manages what's in stock — collapsible profiles with species x length grids. Add/delete custom items. Changes sync to all devices. |
+| **Offsets** | Editable calculation formulas organized by unit type. Changes sync to all devices. |
 
 ### Material Calculation Offsets (Current Defaults)
 
@@ -83,34 +95,39 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 2. Tap **+ New Job**
 3. Tap **Upload File** at the top — select the rSuite DL Export (.json) from your iPad
 4. Review the extracted units in the preview modal, tap **Add Units**
-5. Customer name, address, and all unit dimensions are filled in automatically
+5. Customer name, address, species, casing, stain are filled in automatically
 6. Answer "Do all units have the same trim?" — Yes for standard jobs
-7. Fill in jamb depths (the only measurement not in the export file)
-8. Check the Board Summary at the bottom — it shows exactly how many 8'/10'/12' boards are needed
-9. Add prefinishing notes if needed
-10. Add extra materials (coil, custom items) if needed
-11. Tap **Generate Report** to see the full cut list
-12. **Save PDF** or **Email** the report to the warehouse
+7. Fill in the global jamb depth (sets all units at once)
+8. Adjust any individual unit's jamb depth if different
+9. Check the Board Summary at the bottom — shows exactly how many boards are needed
+10. Add prefinishing notes if needed
+11. Add extra materials (coil, custom items) if needed
+12. Tap **Save Job** then **Generate Report** to see the full cut list
+13. **Save PDF** or **Email** the report to the warehouse
 
 ### For the Warehouse
 
 1. Open the same URL on any device
-2. Tap **Available Lumber** to manage what's in stock
-   - Each casing profile and jamb stock size has a **Species x Length grid** — toggle individual combinations (e.g. Oak C115 in 10' = yes, Pine C115 in 12' = no)
-   - Add/delete custom casing profiles, jamb stock sizes, stains, paints, or other items
-3. Tap **Offsets** to view or adjust calculation formulas
-   - Change any offset value to match real-world requirements
-   - Reset to defaults if needed
-4. Open **Saved Jobs** to review or edit any submitted job
-5. Read the generated PDF report — each unit's cut list is clearly laid out
+2. Go to **Saved Jobs** — all jobs from all tech measurers are visible
+3. **Quick View** tab: tap any job to see its PDF report immediately
+4. **Edit Jobs** tab: tap to open and modify any job
+5. Star priority jobs — they float to the top
+6. Update status: **In Progress** → **Ready to Install** → **Complete**
+7. Use **Search** to find jobs by name, address, or PO#
+8. Tap **Recalculate Boards** on any job to re-run the optimizer with current catalog
+9. Tap **Available Lumber** to manage what's in stock
+   - Each casing profile and jamb stock has a collapsible **Species x Length grid**
+   - Toggle individual combinations on/off
+   - Unavailable materials are hidden from tech measurer dropdowns
+10. Tap **Offsets** to view or adjust calculation formulas
 
 ### For Custom/Non-Standard Jobs
 
 - Override any auto-populated value by editing the field directly
 - Use "No — Different per unit" for jobs with mixed trim styles
-- Check the **Custom** checkbox next to Casing Profile or Stain Color to type anything instead of using the dropdown
+- Check the **Custom** checkbox next to Casing Profile or Stain Color to type anything
 - Add manual materials per unit using "+ Add Extra Material" inside each unit card
-- Add job-level extra materials in section 6
+- Add job-level extra materials in section 7
 
 ---
 
@@ -121,13 +138,19 @@ Single HTML file (pwa-app/index.html)
 ├── React 18.2 (CDN) + Babel standalone (in-browser JSX)
 ├── pdf.js 3.11 (CDN) for PDF text extraction
 ├── html2canvas + jsPDF (CDN) for report PDF generation
-├── Service Worker (sw.js) — network-first HTML, cache-first assets
-└── localStorage for all persistence (jobs, offsets, lumber catalog)
+├── Service Worker (sw.js) — network-first HTML, cache-first assets, no-cache API
+└── Netlify Blobs for shared persistence (jobs, offsets, lumber catalog)
+    └── localStorage as offline fallback
 
 Hosted on Netlify (auto-deploy from GitHub)
 ├── GitHub repo: matt17mccann/material-list
 ├── Site: https://strong-liger-980e1f.netlify.app
-└── Netlify Functions directory (kept but unused — was for Vision API)
+├── Netlify Functions:
+│   ├── /api/jobs — CRUD for shared job storage
+│   ├── /api/catalog — GET/PUT shared lumber catalog
+│   ├── /api/offsets — GET/PUT shared calculation offsets
+│   └── /api/parse-pdf — Claude API fallback for PDF extraction
+└── Netlify Blobs (3 stores: jobs, catalog, offsets)
 ```
 
 ---
@@ -148,19 +171,30 @@ Hosted on Netlify (auto-deploy from GitHub)
 - [x] Custom casing profile and finish text entry
 - [x] Saved jobs (localStorage)
 
-### Phase 2 — Next Up
-- [ ] **Shared job storage across all users** — Move from localStorage to a backend (Netlify Blobs or similar) so the warehouse can pull up and edit any job submitted by any tech measurer
-- [ ] **Lumber catalog drives editor dropdowns** — When a species or profile is toggled off in Available Lumber, hide it from the editor dropdowns
-- [ ] **Board optimizer respects catalog** — Only suggest board lengths that are marked available
-- [ ] **Auto-save** — Save job state on every change, not just manual Save button
-- [ ] **Fraction display in preview modal** — Show "95-7/8" instead of "95-0.875" in the unit preview
+### Phase 2 — DONE
+- [x] **Shared job storage across all users** — Netlify Blobs with localStorage offline fallback
+- [x] **Shared lumber catalog and offsets** — Warehouse changes visible to all devices
+- [x] **Lumber catalog drives editor dropdowns** — Unavailable species/profiles disabled
+- [x] **Board optimizer respects catalog** — Only suggests in-stock lengths
+- [x] **Recalculate Boards button** — Pulls latest catalog and re-runs optimizer
+- [x] **Saved Jobs redesign** — Quick View + Edit tabs, search, star/priority, status tracking
+- [x] **Global jamb depth** — Set once in Trim Selection, fills all units
+- [x] **Stain auto-fill from import** — Fuzzy match for stain names from JSON
+- [x] **Collapsible lumber catalog** — Space-saving accordions with availability summaries
+- [x] **Online/offline indicator** — Green/yellow dot showing connection status
+- [x] **New Cut List Pro app icon** — Boards + checkmarks design
 
-### Phase 3 — Future
-- [ ] **Photo attachment per unit** — Camera capture on iPad, attach to unit for warehouse reference
-- [ ] **Job status tracking** — "Measured" → "Material Prepped" → "Prefinished" → "Ready for Install"
+### Phase 3 — Next Up
+- [ ] **Auto-save** — Save job state on every change, not just manual Save button
+- [ ] **Fraction display in preview modal** — Show "95-7/8" instead of "95-0.875"
+- [ ] **Photo attachment per unit** — Camera capture on iPad for warehouse reference
 - [ ] **Push notifications** — Alert warehouse when new job is submitted
+
+### Phase 4 — Future
+- [ ] **Inventory tracking with auto-reorder** — Track quantities on hand, deduct when jobs are prepped, email supplier when below threshold
 - [ ] **Barcode/QR labels** — Generate labels for each cut piece
 - [ ] **Analytics dashboard** — Board usage, waste tracking, jobs per week
+- [ ] **Authentication** — Simple PIN or team login for multi-team support
 
 ---
 
@@ -168,28 +202,43 @@ Hosted on Netlify (auto-deploy from GitHub)
 
 ```
 /Users/matthewmccann/Desktop/material list app/
+├── .gitignore              # Excludes node_modules, .netlify
 ├── pwa-app/
-│   ├── index.html          # The entire app (single file, ~2200 lines)
-│   ├── sw.js               # Service worker (network-first HTML)
+│   ├── index.html          # The entire app (single file, ~2800 lines)
+│   ├── sw.js               # Service worker (v7 — network-first HTML, no-cache API)
 │   ├── manifest.json       # PWA manifest
-│   ├── icon-192.png        # App icon
-│   ├── icon-512.png        # App icon (large)
+│   ├── icon.svg            # App icon source (SVG)
+│   ├── icon-192.png        # App icon (PWA)
+│   ├── icon-512.png        # App icon (large, PWA)
+│   ├── package.json        # Dependencies (@netlify/blobs)
+│   ├── netlify.toml        # Netlify build config
 │   └── netlify/
-│       ├── functions/
-│       │   └── parse-pdf.js  # Serverless function (kept, unused)
-│       └── netlify.toml      # Netlify config
+│       └── functions/
+│           ├── jobs.mts     # /api/jobs — shared job CRUD
+│           ├── catalog.mts  # /api/catalog — shared lumber catalog
+│           ├── offsets.mts  # /api/offsets — shared calculation offsets
+│           └── parse-pdf.mts # /api/parse-pdf — Claude API PDF extraction
 ├── .claude/
 │   └── launch.json         # Dev server config
-└── CUT LIST PRO - Project Summary.md  # This file
+├── CUT LIST PRO - Project Summary.md   # This file
+└── CUT LIST PRO - Next Steps.md        # Vision & future plans
 ```
 
-## localStorage Keys
+## Data Storage
 
+### Netlify Blobs (Primary — shared across all devices)
+| Store | Key Pattern | Purpose |
+|-------|-------------|---------|
+| `jobs` | Job ID | Full job data (job info, units, status, starred) |
+| `catalog` | `current` | Lumber catalog (profiles, stock, stains, paints, availability grids) |
+| `offsets` | `current` | Material calculation offsets |
+
+### localStorage (Offline fallback)
 | Key | Purpose |
 |-----|---------|
-| `cutlist_jobs` | Array of saved jobs (max 50) |
-| `cutlist_offsets` | Custom material calculation offsets |
-| `cutlist_lumber_catalog` | Available lumber inventory (profiles, stock, finishes) |
+| `cutlist_jobs` | Cached copy of jobs from API |
+| `cutlist_offsets` | Cached copy of offsets from API |
+| `cutlist_lumber_catalog` | Cached copy of catalog from API |
 
 ---
 
