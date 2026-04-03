@@ -1571,8 +1571,9 @@
       const saveJob = async (isSubmit) => {
         // Preserve existing status/starred if this job was previously saved
         const existing = savedJobs.find(j => j.id === jobId);
-        const status = isSubmit ? "submitted" : "in_progress";
-        const data = { id: jobId, job, units, savedAt: new Date().toISOString(), status, starred: existing?.starred || false };
+        const status = isSubmit ? "submitted" : (existing?.status === "complete" ? "in_progress" : (existing?.status || "in_progress"));
+        const submitted = isSubmit ? true : (existing?.submitted || false);
+        const data = { id: jobId, job, units, savedAt: new Date().toISOString(), status, submitted, starred: existing?.starred || false };
         const synced = await saveJobToAPI(data);
         const jobs = await fetchJobsFromAPI();
         setSavedJobs(jobs);
@@ -1671,13 +1672,13 @@
                 width: "100%", padding: "14px 0", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
                 background: "rgba(255,255,255,0.06)", fontSize: 14, fontWeight: 600,
                 color: "rgba(255,255,255,0.7)", cursor: "pointer", letterSpacing: 0.3, marginBottom: 8
-              }}>Saved Jobs ({savedJobs.filter(j => j.status !== "submitted").length})</button>
+              }}>Saved Jobs ({savedJobs.filter(j => !j.submitted).length})</button>
 
               <button onClick={() => { setSavedFilter("submitted"); setView("saved"); }} style={{
                 width: "100%", padding: "14px 0", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
                 background: "rgba(255,255,255,0.06)", fontSize: 14, fontWeight: 600,
                 color: "rgba(255,255,255,0.7)", cursor: "pointer", letterSpacing: 0.3
-              }}>Submitted Jobs ({savedJobs.filter(j => j.status === "submitted").length})</button>
+              }}>Submitted Jobs ({savedJobs.filter(j => j.submitted).length})</button>
 
               <div style={{ display: "flex", gap: 8, width: "100%", marginTop: 10 }}>
                 <button onClick={() => setView("lumber")} style={{
@@ -1948,7 +1949,7 @@
 
         const searchLower = savedSearch.toLowerCase().trim();
         const filteredJobs = savedJobs
-          .filter(s => savedFilter === "submitted" ? s.status === "submitted" : s.status !== "submitted")
+          .filter(s => savedFilter === "submitted" ? s.submitted === true : !s.submitted)
           .filter(s => {
             if (!searchLower) return true;
             return (s.job.customerName || "").toLowerCase().includes(searchLower)
@@ -1973,9 +1974,10 @@
 
         const renderJobCard = (s) => (
             <div key={s.id} onClick={() => loadJobForReport(s)} style={{
-              background: "#fff", borderRadius: 8, marginBottom: 10, cursor: "pointer",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${s.starred ? "#f39c12" : "#E8E8E8"}`,
-              overflow: "hidden"
+              background: s.status === "complete" ? "rgba(109,179,68,0.06)" : "#fff", borderRadius: 8, marginBottom: 10, cursor: "pointer",
+              boxShadow: s.status === "complete" ? "0 2px 8px rgba(109,179,68,0.10)" : "0 2px 8px rgba(0,0,0,0.06)",
+              border: `1px solid ${s.status === "complete" ? "rgba(109,179,68,0.3)" : (s.starred ? "#f39c12" : "#E8E8E8")}`,
+              overflow: "hidden", opacity: s.status === "complete" ? 0.85 : 1
             }}>
               <div style={{ display: "flex", alignItems: "stretch" }}>
                 {/* Star */}
@@ -1999,7 +2001,7 @@
 
                 {/* Complete + Delete */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 10 }}>
-                  <button onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { status: s.status === "complete" ? "in_progress" : "complete" }); }} style={{
+                  <button onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { status: s.status === "complete" ? (s.submitted ? "submitted" : "in_progress") : "complete" }); }} style={{
                     background: s.status === "complete" ? "#6DB344" : "rgba(109,179,68,0.08)",
                     border: "1px solid " + (s.status === "complete" ? "#6DB344" : "#ddd"),
                     color: s.status === "complete" ? "#fff" : "#999",
@@ -2064,7 +2066,21 @@
                   <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
                   <p>{savedSearch ? "No jobs match your search" : "No saved jobs yet"}</p>
                 </div>
-              ) : filteredJobs.map(s => renderJobCard(s))}
+              ) : (() => {
+                const activeJobs = filteredJobs.filter(j => j.status !== "complete");
+                const completeJobs = filteredJobs.filter(j => j.status === "complete");
+                return <>
+                  {activeJobs.map(s => renderJobCard(s))}
+                  {completeJobs.length > 0 && activeJobs.length > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", margin: "18px 0 12px", gap: 12 }}>
+                      <div style={{ flex: 1, height: 1, background: "rgba(109,179,68,0.3)" }} />
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", textTransform: "uppercase", letterSpacing: 1 }}>Completed</span>
+                      <div style={{ flex: 1, height: 1, background: "rgba(109,179,68,0.3)" }} />
+                    </div>
+                  )}
+                  {completeJobs.map(s => renderJobCard(s))}
+                </>;
+              })()}
 
             </div>
           </div>

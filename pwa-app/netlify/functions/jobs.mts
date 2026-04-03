@@ -26,6 +26,7 @@ export default async (req: Request, context: Context) => {
           units: data.units,
           savedAt: data.savedAt,
           status: data.status || "in_progress",
+          submitted: data.submitted || false,
           starred: data.starred || false,
         });
       }
