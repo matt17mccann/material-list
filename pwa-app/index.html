@@ -1223,39 +1223,47 @@
       return (
         <div style={{ background: "#fff", minHeight: "100vh" }}>
           <div className="no-print" style={{
-            position: "sticky", top: 0, zIndex: 100, padding: "12px 16px",
-            background: "#1C1C1C", display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap", alignItems: "center"
+            position: "sticky", top: 0, zIndex: 100, padding: "10px 16px",
+            background: "#1C1C1C", display: "flex", alignItems: "center",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
           }}>
             <button onClick={onBack} style={{
-              background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)",
-              padding: "10px 20px", borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer"
+              background: "none", border: "none", color: "#fff", fontSize: 15, cursor: "pointer", fontWeight: 600, marginRight: "auto", padding: "6px 0"
             }}>← Back</button>
 
-            {/* Report type toggle */}
-            <div style={{ display: "flex", background: "rgba(255,255,255,0.1)", borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.2)" }}>
-              <button onClick={() => setActiveReport("checklist")} style={{
-                padding: "10px 16px", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer",
-                background: activeReport === "checklist" ? "#6DB344" : "transparent",
-                color: activeReport === "checklist" ? "#fff" : "rgba(255,255,255,0.7)"
-              }}>Checklist</button>
-              <button onClick={() => setActiveReport("detailed")} style={{
-                padding: "10px 16px", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer",
-                background: activeReport === "detailed" ? "#6DB344" : "transparent",
-                color: activeReport === "detailed" ? "#fff" : "rgba(255,255,255,0.7)"
-              }}>Detailed</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", background: "rgba(255,255,255,0.1)", borderRadius: 6, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)" }}>
+                <button onClick={() => setActiveReport("checklist")} style={{
+                  padding: "8px 14px", border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  background: activeReport === "checklist" ? "#6DB344" : "transparent",
+                  color: activeReport === "checklist" ? "#fff" : "rgba(255,255,255,0.6)"
+                }}>Checklist</button>
+                <button onClick={() => setActiveReport("detailed")} style={{
+                  padding: "8px 14px", border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  background: activeReport === "detailed" ? "#6DB344" : "transparent",
+                  color: activeReport === "detailed" ? "#fff" : "rgba(255,255,255,0.6)"
+                }}>Detailed</button>
+              </div>
+              <button onClick={async () => {
+                const pdf = await generatePDFDoc();
+                const blob = pdf.output("blob");
+                const url = URL.createObjectURL(blob);
+                const win = window.open(url);
+                if (win) { win.onload = () => { win.print(); }; }
+                else { pdf.save(`CutList_${(job.customerName || "Job").replace(/\s+/g, "_")}.pdf`); }
+              }} style={{
+                background: "none", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.8)",
+                padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer"
+              }}>Print</button>
+              <button onClick={handlePDF} style={{
+                background: "none", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.8)",
+                padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer"
+              }}>Save PDF</button>
             </div>
 
-            <button onClick={() => window.print()} style={{
-              background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.25)",
-              padding: "10px 20px", borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer"
-            }}>Print</button>
-            <button onClick={handlePDF} style={{
-              background: "#fff", color: "#6DB344", border: "none",
-              padding: "10px 20px", borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer"
-            }}>Save PDF</button>
             <button onClick={handleEmail} style={{
-              background: "#6DB344", color: "#fff", border: "none",
-              padding: "10px 20px", borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: "pointer"
+              background: "#6DB344", border: "none", color: "#fff",
+              padding: "8px 16px", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer", marginLeft: "auto"
             }}>Email</button>
           </div>
 
@@ -1306,6 +1314,8 @@
       const [recalculating, setRecalculating] = useState(false);
       const [savedTab, setSavedTab] = useState("quick"); // "quick" or "edit"
       const [savedSearch, setSavedSearch] = useState("");
+      const [savedFilter, setSavedFilter] = useState("drafts"); // "drafts" or "submitted"
+      const [savedSort, setSavedSort] = useState("newest"); // "newest", "oldest", "last_name", "status"
       const [reportFrom, setReportFrom] = useState("editor"); // where to go back from report view
       const [submitted, setSubmitted] = useState(false); // tracks if current job has been submitted
       const [reportType, setReportType] = useState("checklist"); // "checklist" or "detailed"
@@ -1666,18 +1676,24 @@
                 letterSpacing: 0.5, marginBottom: 10
               }}>+ New Job</button>
 
-              <button onClick={() => setView("saved")} style={{
+              <button onClick={() => { setSavedFilter("drafts"); setView("saved"); }} style={{
+                width: "100%", padding: "14px 0", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
+                background: "rgba(255,255,255,0.06)", fontSize: 14, fontWeight: 600,
+                color: "rgba(255,255,255,0.7)", cursor: "pointer", letterSpacing: 0.3, marginBottom: 8
+              }}>Saved Jobs ({savedJobs.filter(j => j.status !== "submitted").length})</button>
+
+              <button onClick={() => { setSavedFilter("submitted"); setView("saved"); }} style={{
                 width: "100%", padding: "14px 0", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
                 background: "rgba(255,255,255,0.06)", fontSize: 14, fontWeight: 600,
                 color: "rgba(255,255,255,0.7)", cursor: "pointer", letterSpacing: 0.3
-              }}>Saved Jobs ({savedJobs.length})</button>
+              }}>Submitted Jobs ({savedJobs.filter(j => j.status === "submitted").length})</button>
 
               <div style={{ display: "flex", gap: 8, width: "100%", marginTop: 10 }}>
                 <button onClick={() => setView("lumber")} style={{
                   flex: 1, padding: "12px 0", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6,
                   background: "rgba(255,255,255,0.04)", fontSize: 12, fontWeight: 600,
                   color: "rgba(255,255,255,0.5)", cursor: "pointer", letterSpacing: 0.3
-                }}>Available Lumber</button>
+                }}>Available Material</button>
                 <button onClick={() => setView("offsets")} style={{
                   flex: 1, padding: "12px 0", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6,
                   background: "rgba(255,255,255,0.04)", fontSize: 12, fontWeight: 600,
@@ -1785,7 +1801,7 @@
             <div style={{ maxWidth: 900, margin: "0 auto" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
                 <button onClick={() => setView("home")} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#6DB344" }}>←</button>
-                <h2 style={{ fontSize: 22, color: "#1C1C1C", margin: 0 }}>Available Lumber</h2>
+                <h2 style={{ fontSize: 22, color: "#1C1C1C", margin: 0 }}>Available Material</h2>
               </div>
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Casing Profiles</div>
@@ -1929,14 +1945,14 @@
       // ─── SAVED JOBS ───
       if (view === "saved") {
         const STATUS_OPTIONS = [
-          { key: "in_progress", label: "In Progress", color: "#f39c12", bg: "rgba(243,156,18,0.1)" },
-          { key: "submitted", label: "Submitted", color: "#3498db", bg: "rgba(52,152,219,0.1)" },
-          { key: "ready_to_install", label: "Ready to Install", color: "#6DB344", bg: "rgba(109,179,68,0.1)" },
-          { key: "complete", label: "Complete", color: "#888", bg: "rgba(136,136,136,0.1)" },
+          { key: "list_printed", label: "List Printed", color: "#fff", bg: "#6DB344", borderColor: "#6DB344" },
+          { key: "ready_to_install", label: "Ready for Install", color: "#f39c12", bg: "rgba(243,156,18,0.1)", borderColor: "#f39c12" },
+          { key: "complete", label: "Install Complete", color: "#888", bg: "rgba(136,136,136,0.1)", borderColor: "#ccc" },
         ];
 
         const searchLower = savedSearch.toLowerCase().trim();
         const filteredJobs = savedJobs
+          .filter(s => savedFilter === "submitted" ? s.status === "submitted" : s.status !== "submitted")
           .filter(s => {
             if (!searchLower) return true;
             return (s.job.customerName || "").toLowerCase().includes(searchLower)
@@ -1944,15 +1960,26 @@
               || (s.job.poNumber || "").toLowerCase().includes(searchLower);
           })
           .sort((a, b) => {
-            // Starred first, then by date
+            // Starred always first
             if ((b.starred ? 1 : 0) !== (a.starred ? 1 : 0)) return (b.starred ? 1 : 0) - (a.starred ? 1 : 0);
+            if (savedSort === "oldest") return (a.savedAt || "").localeCompare(b.savedAt || "");
+            if (savedSort === "last_name") {
+              const aLast = (a.job.customerName || "").trim().split(/\s+/).pop().toLowerCase();
+              const bLast = (b.job.customerName || "").trim().split(/\s+/).pop().toLowerCase();
+              return aLast.localeCompare(bLast);
+            }
+            if (savedSort === "status") {
+              const order = { "": 0, list_printed: 1, ready_to_install: 2, complete: 3 };
+              const diff = (order[a.status || ""] || 0) - (order[b.status || ""] || 0);
+              if (diff !== 0) return diff;
+            }
             return (b.savedAt || "").localeCompare(a.savedAt || "");
           });
 
-        const JobCard = ({ s, onClickJob }) => {
+        const renderJobCard = (s, onClickJob) => {
           const status = STATUS_OPTIONS.find(o => o.key === (s.status || "in_progress")) || STATUS_OPTIONS[0];
           return (
-            <div style={{
+            <div key={s.id} style={{
               background: "#fff", borderRadius: 8, marginBottom: 10,
               boxShadow: "0 2px 8px rgba(0,0,0,0.06)", border: `1px solid ${s.starred ? "#f39c12" : "#E8E8E8"}`,
               overflow: "hidden"
@@ -1988,11 +2015,11 @@
               {/* Status pills */}
               <div style={{ display: "flex", gap: 6, padding: "0 12px 10px 56px" }}>
                 {STATUS_OPTIONS.map(opt => {
-                  const active = (s.status || "in_progress") === opt.key;
+                  const active = (s.status || "") === opt.key;
                   return (
-                    <button key={opt.key} onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { status: opt.key }); }} style={{
+                    <button key={opt.key} onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { status: active ? "" : opt.key }); }} style={{
                       padding: "4px 10px", borderRadius: 12, fontSize: 11, fontWeight: 600, cursor: "pointer",
-                      border: active ? `1.5px solid ${opt.color}` : "1px solid #E8E8E8",
+                      border: active ? `1.5px solid ${opt.borderColor}` : "1px solid #E8E8E8",
                       background: active ? opt.bg : "#fff",
                       color: active ? opt.color : "#bbb",
                       transition: "all 0.15s"
@@ -2010,7 +2037,7 @@
               {/* Header */}
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
                 <button onClick={() => { setView("home"); setSavedSearch(""); }} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#6DB344" }}>←</button>
-                <h2 style={{ fontSize: 22, color: "#333", margin: 0 }}>Saved Jobs</h2>
+                <h2 style={{ fontSize: 22, color: "#333", margin: 0 }}>{savedFilter === "submitted" ? "Submitted Jobs" : "Saved Jobs"}</h2>
                 <span style={{ fontSize: 13, color: "#999", marginLeft: "auto" }}>{filteredJobs.length} job{filteredJobs.length !== 1 ? "s" : ""}</span>
               </div>
 
@@ -2023,6 +2050,24 @@
                   background: "#fff", boxSizing: "border-box", marginBottom: 14
                 }}
               />
+
+              {/* Sort bar */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                {[
+                  { key: "newest", label: "Newest" },
+                  { key: "oldest", label: "Oldest" },
+                  { key: "last_name", label: "Last Name" },
+                  { key: "status", label: "Status" },
+                ].map(opt => (
+                  <button key={opt.key} onClick={() => setSavedSort(opt.key)} style={{
+                    padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                    border: savedSort === opt.key ? "1.5px solid #6DB344" : "1px solid #ddd",
+                    background: savedSort === opt.key ? "rgba(109,179,68,0.08)" : "#fff",
+                    color: savedSort === opt.key ? "#6DB344" : "#999",
+                    transition: "all 0.15s"
+                  }}>{opt.label}</button>
+                ))}
+              </div>
 
               {/* Tabs */}
               <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 8, overflow: "hidden", border: "1px solid #E8E8E8" }}>
@@ -2042,13 +2087,9 @@
                   <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
                   <p>{savedSearch ? "No jobs match your search" : "No saved jobs yet"}</p>
                 </div>
-              ) : filteredJobs.map(s => (
-                <JobCard
-                  key={s.id}
-                  s={s}
-                  onClickJob={savedTab === "edit" ? loadJob : loadJobForReport}
-                />
-              ))}
+              ) : filteredJobs.map(s =>
+                renderJobCard(s, savedTab === "edit" ? loadJob : loadJobForReport)
+              )}
             </div>
           </div>
         );
@@ -2068,11 +2109,8 @@
             padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
             boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
-              <button onClick={() => setView("saved")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>Saved Jobs</button>
-            </div>
-            <div style={{ textAlign: "center", lineHeight: 1 }}>
+            <button onClick={() => setView("saved")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Saved Jobs</button>
+            <div onClick={() => setView("home")} style={{ textAlign: "center", lineHeight: 1, cursor: "pointer" }}>
               <RBaMark size={44} />
               <div style={{ fontSize: 8, fontWeight: 700, color: "#6DB344", letterSpacing: 2.5, textTransform: "uppercase", marginTop: 2 }}>Lake Superior Region</div>
             </div>
@@ -2648,7 +2686,7 @@
                   boxShadow: allComplete ? "0 4px 20px rgba(109,179,68,0.3)" : "none",
                   letterSpacing: 0.5
                 }}>
-                  {allComplete ? "Submit Job" : "Complete all units to submit"}
+                  {allComplete ? (savedJobs.some(j => j.id === jobId) ? "Re-Submit Job" : "Submit Job") : "Complete all units to submit"}
                 </button>
               ) : (
                 <>
