@@ -1581,7 +1581,7 @@
       const saveJob = async (isSubmit) => {
         // Preserve existing status/starred if this job was previously saved
         const existing = savedJobs.find(j => j.id === jobId);
-        const status = isSubmit ? "submitted" : (existing?.status || "in_progress");
+        const status = isSubmit ? "submitted" : "in_progress";
         const data = { id: jobId, job, units, savedAt: new Date().toISOString(), status, starred: existing?.starred || false };
         const synced = await saveJobToAPI(data);
         const jobs = await fetchJobsFromAPI();
@@ -1797,12 +1797,17 @@
         };
 
         return (
-          <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "20px 16px" }}>
-            <div style={{ maxWidth: 900, margin: "0 auto" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-                <button onClick={() => setView("home")} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#6DB344" }}>←</button>
-                <h2 style={{ fontSize: 22, color: "#1C1C1C", margin: 0 }}>Available Material</h2>
-              </div>
+          <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "0 0 40px 0" }}>
+            <div style={{
+              position: "sticky", top: 0, zIndex: 100, background: "#1C1C1C",
+              padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
+              boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
+            }}>
+              <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Available Material</div>
+              <div style={{ width: 70 }} />
+            </div>
+            <div style={{ maxWidth: 900, margin: "0 auto", padding: "16px 16px 0" }}>
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Casing Profiles</div>
               {(catalog.casingProfiles || []).map((item, i) => <AvailGrid key={item.code+i} item={item} index={i} section="casingProfiles" />)}
@@ -1892,11 +1897,17 @@
           </div>
         );
         return (
-          <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "20px 16px" }}>
-            <div style={{ maxWidth: 900, margin: "0 auto" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-                <button onClick={() => setView("home")} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#6DB344" }}>←</button>
-                <h2 style={{ fontSize: 22, color: "#1C1C1C", margin: 0 }}>Offsets</h2>
+          <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "0 0 40px 0" }}>
+            <div style={{
+              position: "sticky", top: 0, zIndex: 100, background: "#1C1C1C",
+              padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
+              boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
+            }}>
+              <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Offsets</div>
+              <div style={{ width: 70 }} />
+            </div>
+            <div style={{ maxWidth: 900, margin: "0 auto", padding: "16px 16px 0" }}>
               </div>
               <div style={{ fontSize: 13, color: "#888", marginBottom: 16, padding: "0 4px" }}>These values are added to Width (W), Height (H), or Jamb Depth (JD) when calculating cut lengths. Negative = subtract.</div>
 
@@ -2032,14 +2043,21 @@
         };
 
         return (
-          <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "20px 16px" }}>
-            <div style={{ maxWidth: 900, margin: "0 auto" }}>
-              {/* Header */}
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-                <button onClick={() => { setView("home"); setSavedSearch(""); }} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#6DB344" }}>←</button>
-                <h2 style={{ fontSize: 22, color: "#333", margin: 0 }}>{savedFilter === "submitted" ? "Submitted Jobs" : "Saved Jobs"}</h2>
-                <span style={{ fontSize: 13, color: "#999", marginLeft: "auto" }}>{filteredJobs.length} job{filteredJobs.length !== 1 ? "s" : ""}</span>
+          <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "0 0 40px 0" }}>
+            {/* Top Bar */}
+            <div style={{
+              position: "sticky", top: 0, zIndex: 100, background: "#1C1C1C",
+              padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
+              boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
+            }}>
+              <button onClick={() => { setView("home"); setSavedSearch(""); }} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
+              <div style={{ textAlign: "center", lineHeight: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{savedFilter === "submitted" ? "Submitted Jobs" : "Saved Jobs"}</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{filteredJobs.length} job{filteredJobs.length !== 1 ? "s" : ""}</div>
               </div>
+              <div style={{ width: 70 }} />
+            </div>
+            <div style={{ maxWidth: 900, margin: "0 auto", padding: "16px 16px 0" }}>
 
               {/* Search */}
               <input
@@ -2716,6 +2734,12 @@
                   </div>
                 </>
               )}
+
+              <button onClick={() => saveJob(false)} style={{
+                width: "100%", padding: "14px 0", border: "1px solid #ddd", borderRadius: 8,
+                background: "#fff", fontSize: 14, fontWeight: 600, color: "#888",
+                cursor: "pointer", marginTop: 4
+              }}>Save Progress</button>
             </div>
           </div>
 
