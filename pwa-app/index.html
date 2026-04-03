@@ -974,11 +974,19 @@
         // Aggregate boards by material type + species + stock length
         const boardGroups = {};
         boards.forEach(board => {
-          const isJamb = board.materialType === "Jamb Stock";
-          const label = isJamb
-            ? `${board.species} 5/8x6x${STOCK_LABELS[board.stockLength]}`
-            : `${board.species} ${board.profile ? board.profile + " - " : ""}${STOCK_LABELS[board.stockLength]}`;
-          const cat = isJamb ? "JAMB MATERIAL" : `${board.species.toUpperCase()} CASING`;
+          const isJamb = board.materialType !== "Casing";
+          let label, cat;
+          if (isJamb) {
+            // Jamb extensions, stools, aprons, thresholds — show stock dimensions e.g. "Oak 5/8x6x8'"
+            const stockLabel = board.jambStock ? board.jambStock.label : "5/8x6";
+            label = `${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}`;
+            cat = "JAMB MATERIAL";
+          } else {
+            // Casing — e.g. "Oak (C115) Colonial Casing 2-1/2" - 10'"
+            const profile = board.profile || "Casing";
+            label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}`;
+            cat = `${board.species.toUpperCase()} CASING`;
+          }
           const key = cat + "|" + label;
           if (!boardGroups[key]) boardGroups[key] = { category: cat, description: label, quantity: 0, length: STOCK_LABELS[board.stockLength] };
           boardGroups[key].quantity++;
@@ -1277,7 +1285,7 @@
       const [job, setJob] = useState({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", extraMaterials: [] });
       const [units, setUnits] = useState([emptyUnit(1)]);
       const [expandedUnit, setExpandedUnit] = useState(0);
-      const [sameTrim, setSameTrim] = useState(null); // null = not chosen, true/false
+      const [sameTrim, setSameTrim] = useState(true); // always start with common trim active
       const [globalTrim, setGlobalTrim] = useState({
         species: "Oak",
         casingProfile: '2-1/2" Colonial (C115)',
@@ -1414,12 +1422,6 @@
         // Apply to all existing units — force jamb depth so every change propagates
         const forceJamb = field === "jambDepthWhole" || field === "jambDepthFrac";
         setUnits(prev => prev.map(u => applyGlobalToUnit(u, newGlobal, forceJamb)));
-      };
-
-      // When sameTrim changes to true, apply global to all units
-      const handleSameTrimYes = () => {
-        setSameTrim(true);
-        setUnits(prev => prev.map(u => applyGlobalToUnit(u, globalTrim)));
       };
 
       // ─── PROCESS JSON TEXT (shared by file upload and paste) ───
@@ -2066,7 +2068,10 @@
             padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
             boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
           }}>
-            <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
+              <button onClick={() => setView("saved")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>Saved Jobs</button>
+            </div>
             <div style={{ textAlign: "center", lineHeight: 1 }}>
               <RBaMark size={44} />
               <div style={{ fontSize: 8, fontWeight: 700, color: "#6DB344", letterSpacing: 2.5, textTransform: "uppercase", marginTop: 2 }}>Lake Superior Region</div>
@@ -2157,28 +2162,9 @@
                 Trim Selection
               </div>
 
-              {sameTrim === null && (
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#333", marginBottom: 12 }}>Do all units have the same trim?</div>
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button onClick={handleSameTrimYes} style={{
-                      flex: 1, padding: "14px 0", border: "2px solid #6DB344", borderRadius: 8,
-                      background: "#fff", fontSize: 15, fontWeight: 700, color: "#6DB344", cursor: "pointer"
-                    }}>Yes — Same for all</button>
-                    <button onClick={() => setSameTrim(false)} style={{
-                      flex: 1, padding: "14px 0", border: "2px solid #999", borderRadius: 8,
-                      background: "#fff", fontSize: 15, fontWeight: 700, color: "#666", cursor: "pointer"
-                    }}>No — Different per unit</button>
-                  </div>
-                </div>
-              )}
-
-              {sameTrim === true && (
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "#6DB344" }}>Same trim for all units</div>
-                    <button onClick={() => setSameTrim(null)} style={{ background: "none", border: "none", fontSize: 12, color: "#999", cursor: "pointer", textDecoration: "underline" }}>Change</button>
-                  </div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#6DB344", marginBottom: 10 }}>Most Common Trim for Job</div>
+                <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Sets the default for all new units. Each unit can be overridden individually below.</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <div>
                       <label style={lbl}>Species</label>
@@ -2251,17 +2237,9 @@
                       placeholder="4"
                       labelStyle={lbl}
                     />
-                    <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Sets jamb depth for all units at once</div>
+                    <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Changes here update all units. Override individually in each unit below.</div>
                   </div>
-                </div>
-              )}
-
-              {sameTrim === false && (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ fontSize: 14, color: "#666" }}>Each unit has individual trim settings below</div>
-                  <button onClick={() => setSameTrim(null)} style={{ background: "none", border: "none", fontSize: 12, color: "#999", cursor: "pointer", textDecoration: "underline" }}>Change</button>
-                </div>
-              )}
+              </div>
             </div>
 
             <div style={{ marginBottom: 14 }}>
@@ -2336,56 +2314,50 @@
                               </select>
                             </div>
                           )}
-                          {!sameTrim && (
-                            <div>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                <label style={lbl}>Casing Profile</label>
-                                <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-                                  <input type="checkbox" checked={!!customMode["casing_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["casing_"+idx]: !p["casing_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
-                                </label>
-                              </div>
-                              {customMode["casing_"+idx]
-                                ? <input style={inp} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)} placeholder="Type custom profile..." />
-                                : <select style={sel} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)}>
-                                    {getAvailableProfiles(unit.species).map(p => {
-                                      const avail = isProfileAvailableInCatalog(catalog, p.label, unit.species);
-                                      return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
-                                    })}
-                                  </select>
-                              }
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <label style={lbl}>Casing Profile</label>
+                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                                <input type="checkbox" checked={!!customMode["casing_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["casing_"+idx]: !p["casing_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
+                              </label>
                             </div>
-                          )}
-                          {!sameTrim && (
-                            <div>
-                              <label style={lbl}>Finish Type</label>
-                              <select style={sel} value={unit.finishType} onChange={e => {
-                                const newType = e.target.value;
-                                const newFinish = newType === "Stain" ? STAINS[0].label : PAINTS[0];
-                                setUnits(p => p.map((u, i) => i === idx ? { ...u, finishType: newType, finish: newFinish } : u));
-                              }}>
-                                {FINISH_TYPES.map(t => <option key={t}>{t}</option>)}
-                              </select>
+                            {customMode["casing_"+idx]
+                              ? <input style={inp} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)} placeholder="Type custom profile..." />
+                              : <select style={sel} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)}>
+                                  {getAvailableProfiles(unit.species).map(p => {
+                                    const avail = isProfileAvailableInCatalog(catalog, p.label, unit.species);
+                                    return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
+                                  })}
+                                </select>
+                            }
+                          </div>
+                          <div>
+                            <label style={lbl}>Finish Type</label>
+                            <select style={sel} value={unit.finishType} onChange={e => {
+                              const newType = e.target.value;
+                              const newFinish = newType === "Stain" ? STAINS[0].label : PAINTS[0];
+                              setUnits(p => p.map((u, i) => i === idx ? { ...u, finishType: newType, finish: newFinish } : u));
+                            }}>
+                              {FINISH_TYPES.map(t => <option key={t}>{t}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <label style={lbl}>{unit.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
+                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                                <input type="checkbox" checked={!!customMode["finish_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["finish_"+idx]: !p["finish_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
+                              </label>
                             </div>
-                          )}
-                          {!sameTrim && (
-                            <div>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                <label style={lbl}>{unit.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
-                                <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-                                  <input type="checkbox" checked={!!customMode["finish_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["finish_"+idx]: !p["finish_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
-                                </label>
-                              </div>
-                              {customMode["finish_"+idx]
-                                ? <input style={inp} value={unit.finish} onChange={e => updateUnit(idx, "finish", e.target.value)} placeholder="Type custom color..." />
-                                : <select style={sel} value={unit.finish} onChange={e => updateUnit(idx, "finish", e.target.value)}>
-                                    {unit.finishType === "Stain"
-                                      ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
-                                      : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
-                                    }
-                                  </select>
-                              }
-                            </div>
-                          )}
+                            {customMode["finish_"+idx]
+                              ? <input style={inp} value={unit.finish} onChange={e => updateUnit(idx, "finish", e.target.value)} placeholder="Type custom color..." />
+                              : <select style={sel} value={unit.finish} onChange={e => updateUnit(idx, "finish", e.target.value)}>
+                                  {unit.finishType === "Stain"
+                                    ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
+                                    : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
+                                  }
+                                </select>
+                            }
+                          </div>
                           {needsThreshold && (
                             <div>
                               <label style={lbl}>Threshold Species</label>
