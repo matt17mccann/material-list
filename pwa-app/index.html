@@ -1178,6 +1178,8 @@
         casingProfile: '2-1/2" Colonial (C115)',
         finishType: "Stain",
         finish: "Dark Walnut (Minwax)",
+        jambDepthWhole: "",
+        jambDepthFrac: 0,
       });
       const [savedJobs, setSavedJobs] = useState([]);
       const [pdfParsing, setPdfParsing] = useState(false);
@@ -1262,6 +1264,18 @@
         return { ...unitObj, species: globalTrim.species, casingProfile: globalTrim.casingProfile, finishType: globalTrim.finishType, finish: globalTrim.finish };
       }, [sameTrim, globalTrim]);
 
+      const applyGlobalToUnit = (u, g, force) => {
+        const updates = { species: g.species, casingProfile: g.casingProfile, finishType: g.finishType, finish: g.finish };
+        // Only apply jamb depth if global has a value AND (force=true OR unit has no value yet)
+        if (g.jambDepthWhole !== "" && g.jambDepthWhole != null) {
+          if (force || !u.jambDepthWhole) {
+            updates.jambDepthWhole = g.jambDepthWhole;
+            updates.jambDepthFrac = g.jambDepthFrac || 0;
+          }
+        }
+        return { ...u, ...updates };
+      };
+
       const updateGlobalTrim = (field, value) => {
         const newGlobal = { ...globalTrim, [field]: value };
         // If changing species away from Pine, reset knotty pine profile
@@ -1271,13 +1285,13 @@
         }
         setGlobalTrim(newGlobal);
         // Apply to all existing units
-        setUnits(prev => prev.map(u => ({ ...u, species: newGlobal.species, casingProfile: newGlobal.casingProfile, finishType: newGlobal.finishType, finish: newGlobal.finish })));
+        setUnits(prev => prev.map(u => applyGlobalToUnit(u, newGlobal)));
       };
 
       // When sameTrim changes to true, apply global to all units
       const handleSameTrimYes = () => {
         setSameTrim(true);
-        setUnits(prev => prev.map(u => ({ ...u, species: globalTrim.species, casingProfile: globalTrim.casingProfile, finishType: globalTrim.finishType, finish: globalTrim.finish })));
+        setUnits(prev => prev.map(u => applyGlobalToUnit(u, globalTrim)));
       };
 
       // ─── PROCESS JSON TEXT (shared by file upload and paste) ───
@@ -1365,9 +1379,10 @@
         let pdfFinishType = "Stain";
         let pdfFinish = "Dark Walnut (Minwax)";
         if (jobInfo?.finishNote) {
-          const isStain = STAINS.find(s => s.label === jobInfo.finishNote);
+          // Match stain by exact label OR by short name (e.g. "Premium Teak" matches "Premium Teak (Zar)")
+          const isStain = STAINS.find(s => s.label === jobInfo.finishNote || s.label.startsWith(jobInfo.finishNote + " ("));
           const isPaint = PAINTS.includes(jobInfo.finishNote);
-          if (isStain) { pdfFinishType = "Stain"; pdfFinish = jobInfo.finishNote; }
+          if (isStain) { pdfFinishType = "Stain"; pdfFinish = isStain.label; }
           else if (isPaint) { pdfFinishType = "Paint"; pdfFinish = jobInfo.finishNote; }
           else { pdfFinishType = "Stain"; pdfFinish = jobInfo.finishNote; } // custom stain
         }
@@ -2086,6 +2101,19 @@
                           </select>
                       }
                     </div>
+                  </div>
+                  {/* Global Jamb Depth */}
+                  <div style={{ marginTop: 10 }}>
+                    <FractionInput
+                      label="Jamb Depth (all units)"
+                      wholeValue={globalTrim.jambDepthWhole}
+                      fracValue={globalTrim.jambDepthFrac}
+                      onWholeChange={v => updateGlobalTrim("jambDepthWhole", v)}
+                      onFracChange={v => updateGlobalTrim("jambDepthFrac", v)}
+                      placeholder="4"
+                      labelStyle={lbl}
+                    />
+                    <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Sets jamb depth for all units at once</div>
                   </div>
                 </div>
               )}
