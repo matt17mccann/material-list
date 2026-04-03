@@ -524,9 +524,6 @@
 
     // ─── SHARED STORAGE API (Netlify Blobs) ───
     // All API calls try the server first, fall back to localStorage when offline.
-    let _isOnline = navigator.onLine;
-    window.addEventListener("online", () => { _isOnline = true; });
-    window.addEventListener("offline", () => { _isOnline = false; });
 
     async function apiRequest(path, method = "GET", body = null) {
       const opts = { method, headers: {} };
@@ -637,7 +634,7 @@
     }
 
     // ─── LUMBER CATALOG ───
-    const ALL_SPECIES = ["Oak", "Pine", "Maple", "Basswood"];
+    const ALL_SPECIES = SPECIES;
     const ALL_LENGTHS = [{ key: "96", label: "8'" }, { key: "120", label: "10'" }, { key: "144", label: "12'" }];
 
     function makeAvailability() {
@@ -734,8 +731,6 @@
         // Determine available stock lengths for this group's species from catalog
         const section = group.materialType === "Casing" ? "casingProfiles" : "jambStock";
         let STOCK_LENGTHS = catalog ? getAvailableLengthsForSpecies(catalog, group.species, section) : ALL_STOCK_LENGTHS;
-        // Safety: if nothing available, fall back to all lengths
-        if (!STOCK_LENGTHS.length) STOCK_LENGTHS = ALL_STOCK_LENGTHS;
         STOCK_LENGTHS = STOCK_LENGTHS.filter(l => ALL_STOCK_LENGTHS.includes(l)).sort((a, b) => a - b);
         if (!STOCK_LENGTHS.length) STOCK_LENGTHS = ALL_STOCK_LENGTHS;
 
@@ -925,15 +920,16 @@
         return pdf;
       };
 
+      const pdfFilename = () => `CutList_${(job.customerName || "Job").replace(/\s+/g, "_")}_${job.date || "undated"}.pdf`;
+
       const handlePDF = async () => {
         const pdf = await generatePDFDoc();
-        const filename = `CutList_${(job.customerName || "Job").replace(/\s+/g, "_")}_${job.date || "undated"}.pdf`;
-        pdf.save(filename);
+        pdf.save(pdfFilename());
       };
 
       const handleEmail = async () => {
         const pdf = await generatePDFDoc();
-        const filename = `CutList_${(job.customerName || "Job").replace(/\s+/g, "_")}_${job.date || "undated"}.pdf`;
+        const filename = pdfFilename();
         const pdfBlob = pdf.output("blob");
 
         if (navigator.share && navigator.canShare) {
@@ -960,7 +956,7 @@
 
       // ─── Aggregate materials for checklist view ───
       const buildChecklist = () => {
-        const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog);
+        const { boards, STOCK_LABELS } = optimizeBoards(units, catalog);
         const rows = [];
 
         // Coil / extra materials first
@@ -1061,9 +1057,9 @@
                     <div style={{ flex: 1, fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>{row.description}</div>
                     <div style={{ flex: "0 0 120px", textAlign: "right", fontSize: 15 }}>
                       {row.length ? (
-                        <span>..{row.quantity} x {row.length}</span>
+                        <span>{row.quantity} x {row.length}</span>
                       ) : (
-                        <span>..{row.quantity}</span>
+                        <span>{row.quantity}</span>
                       )}
                     </div>
                     <div style={{ flex: "0 0 40px", display: "flex", justifyContent: "center" }}>
@@ -1277,7 +1273,6 @@
     }
 
     // ─── RBA MARK SVG ───
-    // ─── RBA MARK SVG ───
     function RBaMark({ size = 180, bgColor = "#1C1C1C" }) {
       return (
         <svg viewBox="0 0 200 100" width={size} height={size / 2} xmlns="http://www.w3.org/2000/svg">
@@ -1292,7 +1287,7 @@
     // ─── MAIN APP ───
     function App() {
       const [view, setView] = useState("home");
-      const [showInspo, setShowInspo] = useState(false); // home, editor, report, saved
+      const [showInspo, setShowInspo] = useState(false);
       const [jobId, setJobId] = useState(null);
       const [job, setJob] = useState({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", extraMaterials: [] });
       const [units, setUnits] = useState([emptyUnit(1)]);
@@ -1407,11 +1402,6 @@
         setUnits(p => [...p.slice(0, idx + 1), c, ...p.slice(idx + 1)]);
         setExpandedUnit(idx + 1);
       };
-      const applyGlobalTrim = useCallback((unitObj) => {
-        if (!sameTrim) return unitObj;
-        return { ...unitObj, species: globalTrim.species, casingProfile: globalTrim.casingProfile, finishType: globalTrim.finishType, finish: globalTrim.finish };
-      }, [sameTrim, globalTrim]);
-
       const applyGlobalToUnit = (u, g, force) => {
         const updates = { species: g.species, casingProfile: g.casingProfile, finishType: g.finishType, finish: g.finish };
         // Only apply jamb depth if global has a value AND (force=true OR unit has no value yet)
@@ -1553,10 +1543,6 @@
           if (u.heightFrac != null) nu.heightFrac = u.heightFrac;
           if (u.jambDepthWhole != null) nu.jambDepthWhole = u.jambDepthWhole;
           if (u.jambDepthFrac != null) nu.jambDepthFrac = u.jambDepthFrac;
-          // If global trim is active, override with global settings
-          if (sameTrim) {
-            nu = { ...nu, species: globalTrim.species, casingProfile: globalTrim.casingProfile, finishType: globalTrim.finishType, finish: globalTrim.finish };
-          }
           return nu;
         });
         // If only the default empty unit exists, replace it; otherwise append
@@ -1573,7 +1559,7 @@
       const allComplete = units.every(isUnitComplete);
 
       const startNewJob = () => {
-        setSameTrim(null);
+        setSameTrim(true);
         setJobId(Date.now().toString());
         setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", extraMaterials: [] });
         setUnits([emptyUnit(1)]);
@@ -2013,7 +1999,7 @@
 
                 {/* Complete + Delete */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 10 }}>
-                  <button onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { status: s.status === "complete" ? "" : "complete" }); }} style={{
+                  <button onClick={(e) => { e.stopPropagation(); updateJobMeta(s, { status: s.status === "complete" ? "in_progress" : "complete" }); }} style={{
                     background: s.status === "complete" ? "#6DB344" : "rgba(109,179,68,0.08)",
                     border: "1px solid " + (s.status === "complete" ? "#6DB344" : "#ddd"),
                     color: s.status === "complete" ? "#fff" : "#999",
@@ -2111,7 +2097,7 @@
                 boxShadow: isOnline ? "0 0 6px rgba(109,179,68,0.6)" : "0 0 6px rgba(243,156,18,0.6)",
                 flexShrink: 0
               }} />
-              <button onClick={saveJob} style={{
+              <button onClick={() => saveJob(false)} style={{
                 background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.25)",
                 color: "#fff", padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer"
               }}>Save</button>
