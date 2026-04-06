@@ -166,9 +166,9 @@
 
 
     const STOP_PROFILES = [
-      { label: '1x4', width: 3.5, code: 'STOP-1x4', pineOnly: false },
-      { label: 'Colonial Stop - 3-1/2"', width: 3.5, code: 'STOP-COL', pineOnly: false },
-      { label: 'Flat Stop - 1-1/4"', width: 1.25, code: 'STOP-FLAT', pineOnly: false },
+      { label: '1x4 Stop', width: 3.5, code: 'STOP-1x4', pineOnly: false },
+      { label: 'Colonial 3-1/4" Stop', width: 3.25, code: 'STOP-COL', pineOnly: false },
+      { label: 'Eased Edge 1-1/4" Stop', width: 1.25, code: 'STOP-EASE', pineOnly: false },
     ];
 
     const STOP_COVERAGES = ["All Sides", "Sides and Top"];
@@ -492,6 +492,32 @@
           { name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" }
         );
       }
+      // Apply custom trim overrides
+      if (unit.customTrimPieces && unit.customTrimPieces.length > 0) {
+        unit.customTrimPieces.forEach(ctp => {
+          // Find and replace matching piece, or add as new
+          const matchIdx = materials.findIndex(m => m.name === ctp.piece);
+          const profileWidth = getProfileWidth(ctp.profile) || getStopProfileWidth(ctp.profile) || 3.5;
+          const isJamb = ctp.piece.includes("Jamb") || ctp.piece.includes("Stool") || ctp.piece.includes("Sill");
+          const override = {
+            name: ctp.piece,
+            qty: ctp.qty || 1,
+            length: matchIdx >= 0 ? materials[matchIdx].length : (ctp.piece.includes("Side") ? h : w),
+            width: isJamb ? (materials[matchIdx]?.width || profileWidth) : profileWidth,
+            thickness: isJamb ? t : null,
+            species: ctp.species || unit.species,
+            category: isJamb ? "Jamb" : (ctp.piece.includes("Stop") ? "Stop" : "Casing"),
+            profile: isJamb ? null : ctp.profile,
+            jambStock: isJamb ? (materials[matchIdx]?.jambStock || getJambStockWidth(profileWidth)) : undefined,
+          };
+          if (matchIdx >= 0) {
+            materials[matchIdx] = override;
+          } else {
+            materials.push(override);
+          }
+        });
+      }
+
       return materials;
     }
 
@@ -516,7 +542,8 @@
         jambSpecies: "Oak",
         jambMaterial: "",
         stopCoverage: "All Sides",
-        stopProfile: "1x4",
+        stopProfile: "1x4 Stop",
+        customTrimPieces: [],
         manualMaterials: [],
       };
     }
@@ -1440,7 +1467,7 @@
       const [view, setView] = useState("home");
       const [showInspo, setShowInspo] = useState(false);
       const [jobId, setJobId] = useState(null);
-      const [job, setJob] = useState({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], optimizePerUnit: false });
+      const [job, setJob] = useState({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], customTrimMode: false, optimizePerUnit: false });
       const [units, setUnits] = useState([emptyUnit(1)]);
       const [expandedUnit, setExpandedUnit] = useState(0);
       const [showPfSection, setShowPfSection] = useState(false);
@@ -1723,7 +1750,7 @@
       const startNewJob = () => {
         setSameTrim(true);
         setJobId(Date.now().toString());
-        setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], optimizePerUnit: false });
+        setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], customTrimMode: false, optimizePerUnit: false });
         setUnits([emptyUnit(1)]);
         setExpandedUnit(0);
         setSubmitted(false);
@@ -1979,7 +2006,7 @@
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Stain Colors</div>
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
-                {(catalog.customStains || []).concat(STAINS.map(s => s.label)).filter((v, i, a) => a.indexOf(v) === i).map(s => (
+                {(catalog.customStains || []).concat(STAINS.map(s => s.label)).filter((v, i, a) => a.indexOf(v) === i).sort((a,b) => a.localeCompare(b)).map(s => (
                   <div key={s} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
                     <span style={{ fontSize: 14 }}>{s}</span>
                     <button onClick={() => {
@@ -1994,7 +2021,7 @@
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Paint Colors</div>
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
-                {(catalog.customPaints || []).concat(PAINTS).filter((v, i, a) => a.indexOf(v) === i).map(p => (
+                {(catalog.customPaints || []).concat(PAINTS).filter((v, i, a) => a.indexOf(v) === i).sort((a,b) => a.localeCompare(b)).map(p => (
                   <div key={p} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
                     <span style={{ fontSize: 14 }}>{p}</span>
                     <button onClick={() => {
@@ -2007,10 +2034,36 @@
               <button onClick={() => { const n = prompt("New paint color name:"); if (n) updateCatalog({ ...catalog, customPaints: [...(catalog.customPaints || []), n] }); }}
                 style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 24 }}>+ Add Paint Color</button>
 
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Coil Colors</div>
+              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
+                {[...COIL_COLORS, ...(catalog.customCoils || [])].filter((v, i, a) => a.indexOf(v) === i).sort((a,b) => a.localeCompare(b)).map(c => (
+                  <div key={c} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+                    <span style={{ fontSize: 14 }}>{c}</span>
+                    {!(COIL_COLORS.includes(c)) && <button onClick={() => updateCatalog({ ...catalog, customCoils: (catalog.customCoils || []).filter(x => x !== c) })}
+                      style={{ background: "none", border: "none", fontSize: 12, color: "#c0392b", cursor: "pointer" }}>✕</button>}
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => { const n = prompt("New coil color name:"); if (n) updateCatalog({ ...catalog, customCoils: [...(catalog.customCoils || []), n] }); }}
+                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 24 }}>+ Add Coil Color</button>
+
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Bay Material Items</div>
+              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
+                {["Soffit", "Plywood", "Pink Foam", ...(catalog.customBayItems || [])].filter((v, i, a) => a.indexOf(v) === i).sort((a,b) => a.localeCompare(b)).map(item => (
+                  <div key={item} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+                    <span style={{ fontSize: 14 }}>{item}</span>
+                    {!["Soffit", "Plywood", "Pink Foam"].includes(item) && <button onClick={() => updateCatalog({ ...catalog, customBayItems: (catalog.customBayItems || []).filter(x => x !== item) })}
+                      style={{ background: "none", border: "none", fontSize: 12, color: "#c0392b", cursor: "pointer" }}>✕</button>}
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => { const n = prompt("New bay material item:"); if (n) updateCatalog({ ...catalog, customBayItems: [...(catalog.customBayItems || []), n] }); }}
+                style={{ width: "100%", padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 24 }}>+ Add Bay Material Item</button>
+
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Other Items</div>
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
                 {(catalog.otherItems || []).length === 0 && <div style={{ fontSize: 13, color: "#999", padding: "6px 0" }}>No custom items yet</div>}
-                {(catalog.otherItems || []).map((item, i) => (
+                {[...(catalog.otherItems || [])].sort((a,b) => a.localeCompare(b)).map((item, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
                     <span style={{ fontSize: 14 }}>{item}</span>
                     <button onClick={() => updateCatalog({ ...catalog, otherItems: (catalog.otherItems || []).filter((_, j) => j !== i) })}
@@ -2355,9 +2408,17 @@
               background: "#fff", borderRadius: 8, padding: 18, marginBottom: 14,
               boxShadow: "0 2px 10px rgba(0,0,0,0.05)", border: "1px solid #E8E8E8"
             }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#6DB344", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 22, height: 22, background: "#6DB344", color: "#fff", borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>2</span>
-                Trim Selection
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#6DB344", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ width: 22, height: 22, background: "#6DB344", color: "#fff", borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>2</span>
+                  Trim Selection
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: job.customTrimMode ? "#e67e22" : "#999", cursor: "pointer" }}>
+                  <input type="checkbox" checked={job.customTrimMode || false}
+                    onChange={e => updateJob("customTrimMode", e.target.checked)}
+                    style={{ width: 16, height: 16, accentColor: "#e67e22" }} />
+                  Custom Trim
+                </label>
               </div>
 
               <div>
@@ -2709,6 +2770,85 @@
                           </div>
                         )}
 
+
+                        {/* Custom Trim Pieces */}
+                        {job.customTrimMode && (
+                          <div style={{ marginTop: 12, padding: 12, border: "1px dashed #e67e22", borderRadius: 8, background: "#fef9f4" }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#e67e22", marginBottom: 8 }}>Custom Trim Overrides</div>
+                            <div style={{ fontSize: 10, color: "#999", marginBottom: 8 }}>These replace the auto-calculated piece of the same name.</div>
+                            {(unit.customTrimPieces || []).map((ctp, ci) => (
+                              <div key={ci} style={{ padding: 8, marginBottom: 6, background: "#fff", borderRadius: 6, border: "1px solid #f0e0cc" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: "#e67e22" }}>Override {ci + 1}</span>
+                                  <button onClick={() => {
+                                    const updated = (unit.customTrimPieces || []).filter((_, i) => i !== ci);
+                                    updateUnit(idx, "customTrimPieces", updated);
+                                  }} style={{ background: "none", border: "none", fontSize: 14, color: "#c0392b", cursor: "pointer" }}>✕</button>
+                                </div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                                  <div>
+                                    <label style={{ ...lbl, fontSize: 10 }}>Piece</label>
+                                    <select style={{ ...sel, fontSize: 12 }} value={ctp.piece || "Side Casing"} onChange={e => {
+                                      const updated = [...(unit.customTrimPieces || [])];
+                                      updated[ci] = { ...ctp, piece: e.target.value };
+                                      updateUnit(idx, "customTrimPieces", updated);
+                                    }}>
+                                      <option>Side Casing</option>
+                                      <option>Top Casing</option>
+                                      <option>Head Casing</option>
+                                      <option>Top/Bottom Casing</option>
+                                      <option>Apron</option>
+                                      <option>Side Jamb Extension</option>
+                                      <option>Head Jamb Extension</option>
+                                      <option>Top/Bottom Jamb Extension</option>
+                                      <option>Sill / Stool</option>
+                                      <option>Side Stop</option>
+                                      <option>Top/Bottom Stop</option>
+                                      <option>Other</option>
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label style={{ ...lbl, fontSize: 10 }}>Species</label>
+                                    <select style={{ ...sel, fontSize: 12 }} value={ctp.species || unit.species} onChange={e => {
+                                      const updated = [...(unit.customTrimPieces || [])];
+                                      updated[ci] = { ...ctp, species: e.target.value };
+                                      updateUnit(idx, "customTrimPieces", updated);
+                                    }}>
+                                      {SPECIES.map(s => <option key={s}>{s}</option>)}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label style={{ ...lbl, fontSize: 10 }}>Profile</label>
+                                    <select style={{ ...sel, fontSize: 12 }} value={ctp.profile || unit.casingProfile} onChange={e => {
+                                      const updated = [...(unit.customTrimPieces || [])];
+                                      updated[ci] = { ...ctp, profile: e.target.value };
+                                      updateUnit(idx, "customTrimPieces", updated);
+                                    }}>
+                                      {CASING_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                                      {STOP_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                                      {JAMB_STOCK_WIDTHS.map(j => <option key={j.label} value={j.label}>{j.label} (jamb)</option>)}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label style={{ ...lbl, fontSize: 10 }}>Qty</label>
+                                    <input type="number" min="1" style={{ ...inp, fontSize: 12 }} value={ctp.qty || 1} onChange={e => {
+                                      const updated = [...(unit.customTrimPieces || [])];
+                                      updated[ci] = { ...ctp, qty: parseInt(e.target.value) || 1 };
+                                      updateUnit(idx, "customTrimPieces", updated);
+                                    }} />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                            <button onClick={() => {
+                              const updated = [...(unit.customTrimPieces || []), { piece: "Side Casing", species: unit.species, profile: unit.casingProfile, qty: 2 }];
+                              updateUnit(idx, "customTrimPieces", updated);
+                            }} style={{
+                              width: "100%", padding: "8px 0", border: "1px dashed #e67e22", borderRadius: 6,
+                              background: "transparent", fontSize: 12, fontWeight: 700, color: "#e67e22", cursor: "pointer", marginTop: 4
+                            }}>+ Add Trim Override</button>
+                          </div>
+                        )}
                         {/* Manual Materials */}
                         <div style={{ marginTop: 12 }}>
                           {(unit.manualMaterials || []).length > 0 && (
