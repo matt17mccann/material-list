@@ -41,6 +41,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script>pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";</script>
 
   <script type="text/babel">
@@ -626,12 +627,23 @@
     }
 
     // Catalog API
+    function migrateCatalog(data) {
+      if (data && !data.stopProfiles) {
+        data.stopProfiles = STOP_PROFILES.map(p => ({
+          label: p.label, code: p.code, width: p.width, pineOnly: p.pineOnly || false,
+          availability: makeAvailability()
+        }));
+      }
+      return data;
+    }
+
     async function fetchCatalogFromAPI() {
       try {
         const data = await apiRequest("/api/catalog");
         if (data) {
-          localStorage.setItem("cutlist_lumber_catalog", JSON.stringify(data));
-          return data;
+          const migrated = migrateCatalog(data);
+          localStorage.setItem("cutlist_lumber_catalog", JSON.stringify(migrated));
+          return migrated;
         }
         return null; // not yet seeded on server
       } catch {
@@ -1635,7 +1647,20 @@
 
           let data;
 
-          if (ext === "json") {
+          if (ext === "zip") {
+            // ── ZIP — extract first .json file inside ──
+            if (typeof JSZip === "undefined") {
+              throw new Error("ZIP library failed to load. Check your internet connection and reload.");
+            }
+            const zipData = await file.arrayBuffer();
+            const zip = await JSZip.loadAsync(zipData);
+            const jsonFile = Object.keys(zip.files).find(name => name.toLowerCase().endsWith(".json"));
+            if (!jsonFile) {
+              throw new Error("No .json file found inside the ZIP. Make sure it contains an rSuite export.");
+            }
+            const text = await zip.files[jsonFile].async("string");
+            data = processJSONText(text);
+          } else if (ext === "json") {
             // ── JSON (rSuite DL Export) — use FileReader for max Safari compatibility ──
             const text = await new Promise((resolve, reject) => {
               const reader = new FileReader();
@@ -1670,7 +1695,7 @@
           }
 
           if (!data.units || !data.units.length) {
-            alert("No units found in this file.\n\nSupported formats:\n• rSuite DL Export (.json)\n• RBA Installer Package (.pdf)");
+            alert("No units found in this file.\n\nSupported formats:\n• rSuite DL Export (.json or .zip)\n• RBA Installer Package (.pdf)");
             setPdfParsing(false);
             return;
           }
@@ -1900,6 +1925,8 @@
       if (view === "lumber") {
         const updateCatalog = (updated) => { setCatalog(updated); saveCatalogToAPI(updated); };
 
+        const [expandedCatalogItem, setExpandedCatalogItem] = useState(null);
+
         const toggleAvail = (section, index, species, lengthKey) => {
           const arr = [...catalog[section]];
           const item = { ...arr[index], availability: { ...arr[index].availability } };
@@ -1909,7 +1936,9 @@
         };
 
         const AvailGrid = ({ item, index, section }) => {
-          const [open, setOpen] = useState(false);
+          const gridKey = `${section}-${index}`;
+          const open = expandedCatalogItem === gridKey;
+          const setOpen = (v) => setExpandedCatalogItem(v ? gridKey : null);
           // Build a summary of available species/lengths
           const summary = ALL_SPECIES.map(sp => {
             const lengths = ALL_LENGTHS.filter(l => item.availability?.[sp]?.[l.key] !== false).map(l => l.label);
@@ -2358,7 +2387,7 @@
                   color: "#fff", cursor: pdfParsing ? "wait" : "pointer", flexShrink: 0
                 }}>{pdfParsing ? "Extracting..." : "Upload File"}</button>
               </div>
-              <input ref={pdfInputRef} type="file" accept=".pdf,.json" onChange={handleFileUpload} style={{ display: "none" }} />
+              <input ref={pdfInputRef} type="file" accept=".pdf,.json,.zip" onChange={handleFileUpload} style={{ display: "none" }} />
             </div>
 
             {/* Job Info */}
@@ -2608,17 +2637,36 @@
                               </select>
                             </div>
                           )}
+                          {/* Casing Species */}
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <label style={lbl}>Casing Species</label>
+                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>
+                                <input type="checkbox" checked={!!customMode["species_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["species_"+idx]: !p["species_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
+                              </label>
+                            </div>
+                            {customMode["species_"+idx]
+                              ? <input style={inp} value={unit.species} onChange={e => updateUnit(idx, "species", e.target.value)} placeholder="Type custom species..." />
+                              : <select style={sel} value={unit.species} onChange={e => updateUnit(idx, "species", e.target.value)}>
+                                  {SPECIES.map(s => {
+                                    const avail = isSpeciesAvailableInCatalog(catalog, s);
+                                    return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
+                                  })}
+                                </select>
+                            }
+                          </div>
+                          {/* Casing / Stop Profile */}
                           {unit.trimStyle === "Stops" && needsTrim ? (
                           <div>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                               <label style={lbl}>Stop Profile</label>
-                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>
                                 <input type="checkbox" checked={!!customMode["stop_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["stop_"+idx]: !p["stop_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
                               </label>
                             </div>
                             {customMode["stop_"+idx]
-                              ? <input style={inp} value={unit.stopProfile || "1x4"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)} placeholder="Type custom stop profile..." />
-                              : <select style={sel} value={unit.stopProfile || "1x4"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)}>
+                              ? <input style={inp} value={unit.stopProfile || "1x4 Stop"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)} placeholder="Type custom stop profile..." />
+                              : <select style={sel} value={unit.stopProfile || "1x4 Stop"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)}>
                                   {getAvailableStopProfiles(unit.species).map(p => (
                                     <option key={p.label} value={p.label}>{p.label}</option>
                                   ))}
@@ -2629,29 +2677,59 @@
                           <div>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                               <label style={lbl}>Casing Profile</label>
-                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>
                                 <input type="checkbox" checked={!!customMode["casing_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["casing_"+idx]: !p["casing_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
                               </label>
                             </div>
                             {customMode["casing_"+idx]
                               ? <input style={inp} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)} placeholder="Type custom profile..." />
-                              : <select style={sel} value={`${unit.species} ${unit.casingProfile}`} onChange={e => {
-                                  const val = e.target.value;
-                                  const match = val.match(/^(Oak|Pine|Maple|Basswood)\s+(.+)$/);
-                                  if (match) {
-                                    setUnits(p => p.map((u, i) => i === idx ? { ...u, species: match[1], casingProfile: match[2] } : u));
-                                    setSubmitted(false);
-                                  }
-                                }}>
+                              : <select style={sel} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)}>
                                   {getAvailableProfiles(unit.species).map(p => {
                                     const avail = isProfileAvailableInCatalog(catalog, p.label, unit.species);
-                                    const display = `${unit.species} ${p.label}`;
-                                    return <option key={p.label} value={display} disabled={!avail}>{display}{!avail ? " (unavailable)" : ""}</option>;
+                                    return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
                                   })}
                                 </select>
                             }
                           </div>
                           )}
+                          {/* Jamb Species */}
+                          {needsJD && (
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <label style={lbl}>Jamb Species</label>
+                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>
+                                <input type="checkbox" checked={!!customMode["jambSp_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["jambSp_"+idx]: !p["jambSp_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
+                              </label>
+                            </div>
+                            {customMode["jambSp_"+idx]
+                              ? <input style={inp} value={unit.jambSpecies || unit.species} onChange={e => updateUnit(idx, "jambSpecies", e.target.value)} placeholder="Type custom species..." />
+                              : <select style={sel} value={unit.jambSpecies || unit.species} onChange={e => updateUnit(idx, "jambSpecies", e.target.value)}>
+                                  {SPECIES.map(s => {
+                                    const avail = isSpeciesAvailableInCatalog(catalog, s);
+                                    return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
+                                  })}
+                                </select>
+                            }
+                          </div>
+                          )}
+                          {/* Jamb Material */}
+                          {needsJD && (
+                          <div>
+                            <label style={lbl}>Jamb Material</label>
+                            <select style={sel} value={unit.jambMaterial || ""} onChange={e => updateUnit(idx, "jambMaterial", e.target.value)}>
+                              <option value="">Auto ({(() => {
+                                if (!unit.jambDepthWhole) return "set depth";
+                                const jd = combineMeasurement(unit.jambDepthWhole, unit.jambDepthFrac);
+                                const jw = jd + (offsets?.window_pf?.jamb_width || -2.75);
+                                return getJambStockWidth(jw).label;
+                              })()})</option>
+                              {JAMB_STOCK_WIDTHS.map(j => (
+                                <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
+                              ))}
+                            </select>
+                          </div>
+                          )}
+                          {/* Finish Type */}
                           <div>
                             <label style={lbl}>Finish Type</label>
                             <select style={sel} value={unit.finishType} onChange={e => {
@@ -2662,10 +2740,11 @@
                               {FINISH_TYPES.map(t => <option key={t}>{t}</option>)}
                             </select>
                           </div>
+                          {/* Finish Color */}
                           <div>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                               <label style={lbl}>{unit.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
-                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>
                                 <input type="checkbox" checked={!!customMode["finish_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["finish_"+idx]: !p["finish_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
                               </label>
                             </div>
@@ -2795,15 +2874,12 @@
                                     }}>
                                       <option>Side Casing</option>
                                       <option>Top Casing</option>
-                                      <option>Head Casing</option>
                                       <option>Top/Bottom Casing</option>
                                       <option>Apron</option>
                                       <option>Side Jamb Extension</option>
                                       <option>Head Jamb Extension</option>
                                       <option>Top/Bottom Jamb Extension</option>
                                       <option>Sill / Stool</option>
-                                      <option>Side Stop</option>
-                                      <option>Top/Bottom Stop</option>
                                       <option>Other</option>
                                     </select>
                                   </div>
@@ -2818,16 +2894,31 @@
                                     </select>
                                   </div>
                                   <div>
-                                    <label style={{ ...lbl, fontSize: 10 }}>Profile</label>
-                                    <select style={{ ...sel, fontSize: 12 }} value={ctp.profile || unit.casingProfile} onChange={e => {
-                                      const updated = [...(unit.customTrimPieces || [])];
-                                      updated[ci] = { ...ctp, profile: e.target.value };
-                                      updateUnit(idx, "customTrimPieces", updated);
-                                    }}>
-                                      {CASING_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
-                                      {STOP_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
-                                      {JAMB_STOCK_WIDTHS.map(j => <option key={j.label} value={j.label}>{j.label} (jamb)</option>)}
-                                    </select>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                      <label style={{ ...lbl, fontSize: 10 }}>Profile</label>
+                                      <label style={{ fontSize: 9, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>
+                                        <input type="checkbox" checked={!!ctp.customProfile} onChange={() => {
+                                          const updated = [...(unit.customTrimPieces || [])];
+                                          updated[ci] = { ...ctp, customProfile: !ctp.customProfile };
+                                          updateUnit(idx, "customTrimPieces", updated);
+                                        }} style={{ width: 11, height: 11 }} /> Custom
+                                      </label>
+                                    </div>
+                                    {ctp.customProfile
+                                      ? <input style={{ ...inp, fontSize: 12 }} value={ctp.profile || ""} onChange={e => {
+                                          const updated = [...(unit.customTrimPieces || [])];
+                                          updated[ci] = { ...ctp, profile: e.target.value };
+                                          updateUnit(idx, "customTrimPieces", updated);
+                                        }} placeholder="Type custom profile..." />
+                                      : <select style={{ ...sel, fontSize: 12 }} value={ctp.profile || unit.casingProfile} onChange={e => {
+                                          const updated = [...(unit.customTrimPieces || [])];
+                                          updated[ci] = { ...ctp, profile: e.target.value };
+                                          updateUnit(idx, "customTrimPieces", updated);
+                                        }}>
+                                          {CASING_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                                          {JAMB_STOCK_WIDTHS.map(j => <option key={j.label} value={j.label}>{j.label} (jamb)</option>)}
+                                        </select>
+                                    }
                                   </div>
                                   <div>
                                     <label style={{ ...lbl, fontSize: 10 }}>Qty</label>
