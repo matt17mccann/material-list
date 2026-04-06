@@ -147,7 +147,7 @@
     ];
 
 
-    const COIL_COLORS = ["White", "Black", "Canvas", "Terratone", "Sandtone", "Dark Bronze"];
+    const COIL_COLORS = ["White", "Black", "Canvas", "Terratone", "Sandtone", "Dark Bronze", "Forest Green", "Red Rock"];
 
     const CASING_PROFILES = [
       { label: '1x4 (RBA-S4S-3.5)', width: 3.5, code: 'RBA-S4S-3.5', pineOnly: false },
@@ -514,6 +514,7 @@
         jambDepthWhole: "",
         jambDepthFrac: 0,
         jambSpecies: "Oak",
+        jambMaterial: "",
         stopCoverage: "All Sides",
         stopProfile: "1x4",
         manualMaterials: [],
@@ -680,6 +681,10 @@
           label: j.label, width: j.width,
           availability: makeAvailability()
         })),
+        stopProfiles: STOP_PROFILES.map(p => ({
+          label: p.label, code: p.code, width: p.width, pineOnly: p.pineOnly || false,
+          availability: makeAvailability()
+        })),
         stains: {},
         paints: {},
       };
@@ -692,6 +697,13 @@
         // Migrate: if old format (not array, or missing availability), reset to defaults
         if (parsed.casingProfiles && !Array.isArray(parsed.casingProfiles)) return defaultCatalog();
         if (parsed.casingProfiles?.[0] && !parsed.casingProfiles[0].availability) return defaultCatalog();
+        // Migrate: add stopProfiles if missing
+        if (!parsed.stopProfiles) {
+          parsed.stopProfiles = STOP_PROFILES.map(p => ({
+            label: p.label, code: p.code, width: p.width, pineOnly: p.pineOnly || false,
+            availability: makeAvailability()
+          }));
+        }
         return parsed;
       } catch { return defaultCatalog(); }
     }
@@ -869,10 +881,35 @@
       return { boards: allBoards, summary, STOCK_LABELS };
     }
 
-    function BoardSummary({ units, catalog, optimizePerUnit, extraBoardsNote }) {
-      const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog, optimizePerUnit);
-      if (boards.length === 0) return null;
+    function BoardSummary({ units, catalog, optimizePerUnit, extraBoards }) {
+      const result = optimizeBoards(units, catalog, optimizePerUnit);
+      const boards = [...result.boards];
+      const summary = { ...result.summary };
+      const STOCK_LABELS = result.STOCK_LABELS;
 
+      // Append extra boards as real numbered entries
+      if (extraBoards && extraBoards.length > 0) {
+        const defaultFinish = units[0]?.finish || "";
+        extraBoards.forEach(eb => {
+          const stockLen = parseInt(eb.stockLength) || 120;
+          const isJamb = eb.materialType === "Jamb Extension";
+          const board = {
+            stockLength: stockLen,
+            materialType: eb.materialType || "Casing",
+            species: eb.species || units[0]?.species || "Oak",
+            finish: defaultFinish,
+            profile: isJamb ? null : (eb.profile || null),
+            jambStock: isJamb ? (JAMB_STOCK_WIDTHS.find(j => j.label === eb.profile) || { label: eb.profile || "1x6", width: 5.5 }) : null,
+            cuts: [],
+            isExtra: true,
+            extraNote: eb.note || ""
+          };
+          boards.push(board);
+          summary[stockLen] = (summary[stockLen] || 0) + 1;
+        });
+      }
+
+      if (boards.length === 0) return null;
       const totalBoards = boards.length;
 
       return (
@@ -881,11 +918,7 @@
             Board Purchase Summary
             {optimizePerUnit && <span style={{ fontSize: 11, fontWeight: 400, marginLeft: 12, opacity: 0.85 }}> — Optimized per unit for grain matching</span>}
           </div>
-          {extraBoardsNote && (
-            <div style={{ padding: "6px 14px", fontSize: 12, fontStyle: "italic", color: "#888", background: "#fafcf8", borderBottom: "1px solid #eee" }}>
-              {extraBoardsNote}
-            </div>
-          )}
+
 
           {/* Quick totals */}
           <div style={{ background: "#F5F5F4", padding: "10px 14px", display: "flex", gap: 20, fontSize: 14, borderBottom: "1px solid #E8E8E8" }}>
@@ -913,7 +946,7 @@
                 <tr key={i} style={{ borderBottom: "1px solid #ddd", background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
                   <td style={{ padding: "6px 10px", fontWeight: 600 }}>{i + 1}</td>
                   <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{STOCK_LABELS[board.stockLength]}</td>
-                  <td style={{ padding: "6px 8px" }}>{board.species} {board.materialType}{board.jambStock ? ` (${board.jambStock.label})` : ""}{board.profile ? ` — ${board.profile}` : ""}</td>
+                  <td style={{ padding: "6px 8px" }}>{board.species} {board.materialType}{board.jambStock ? ` (${board.jambStock.label})` : ""}{board.profile ? ` — ${board.profile}` : ""}{board.isExtra ? <span style={{ fontStyle: "italic", color: "#999", marginLeft: 6 }}>(Extra)</span> : ""}</td>
                   <td style={{ padding: "6px 8px" }}>{board.species}</td>
                   <td style={{ padding: "6px 8px" }}>{board.finish}</td>
                   <td style={{ padding: "6px 8px", fontSize: 11 }}>
@@ -1007,7 +1040,28 @@
 
       // ─── Aggregate materials for checklist view ───
       const buildChecklist = () => {
-        const { boards, STOCK_LABELS } = optimizeBoards(units, catalog, job.optimizePerUnit);
+        const result = optimizeBoards(units, catalog, job.optimizePerUnit);
+        const boards = [...result.boards];
+        const STOCK_LABELS = result.STOCK_LABELS;
+
+        // Append extra boards to the board list for aggregation
+        if (job.extraBoards && job.extraBoards.length > 0) {
+          const defaultFinish = units[0]?.finish || "";
+          job.extraBoards.forEach(eb => {
+            const stockLen = parseInt(eb.stockLength) || 120;
+            const isJamb = eb.materialType === "Jamb Extension";
+            boards.push({
+              stockLength: stockLen,
+              materialType: eb.materialType || "Casing",
+              species: eb.species || units[0]?.species || "Oak",
+              finish: defaultFinish,
+              profile: isJamb ? null : (eb.profile || null),
+              jambStock: isJamb ? (JAMB_STOCK_WIDTHS.find(j => j.label === eb.profile) || { label: eb.profile || "1x6", width: 5.5 }) : null,
+              isExtra: true
+            });
+          });
+        }
+
         const rows = [];
 
         // Coil / extra materials first
@@ -1157,7 +1211,7 @@
               </div>
             )}
 
-            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} extraBoardsNote={job.extraBoardsCount > 0 && (job.extraBoardsCasing || job.extraBoardsJamb) ? `${job.extraBoardsCount} extra board${job.extraBoardsCount !== 1 ? "s" : ""} included (${[job.extraBoardsCasing && "Casing", job.extraBoardsJamb && "Jamb"].filter(Boolean).join(", ")})` : null} /></div>
+            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} extraBoards={job.extraBoards} /></div>
 
             <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", display: "flex", justifyContent: "space-between" }}>
               <span>Materials Checklist | {job.address || ""}</span>
@@ -1305,7 +1359,7 @@
             </div>
           )}
 
-          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} extraBoardsNote={job.extraBoardsCount > 0 && (job.extraBoardsCasing || job.extraBoardsJamb) ? `${job.extraBoardsCount} extra board${job.extraBoardsCount !== 1 ? "s" : ""} included (${[job.extraBoardsCasing && "Casing", job.extraBoardsJamb && "Jamb"].filter(Boolean).join(", ")})` : null} /></div>
+          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} extraBoards={job.extraBoards} /></div>
 
           <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", textAlign: "center" }}>
             Renewal by Andersen — Detailed Cut List • {new Date().toLocaleDateString()}
@@ -1386,15 +1440,17 @@
       const [view, setView] = useState("home");
       const [showInspo, setShowInspo] = useState(false);
       const [jobId, setJobId] = useState(null);
-      const [job, setJob] = useState({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoardsCount: 0, extraBoardsCasing: false, extraBoardsJamb: false, bayMaterials: [], optimizePerUnit: false });
+      const [job, setJob] = useState({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], optimizePerUnit: false });
       const [units, setUnits] = useState([emptyUnit(1)]);
       const [expandedUnit, setExpandedUnit] = useState(0);
       const [showPfSection, setShowPfSection] = useState(false);
       const [showBayMaterial, setShowBayMaterial] = useState(false);
       const [sameTrim, setSameTrim] = useState(true); // always start with common trim active
       const [globalTrim, setGlobalTrim] = useState({
+        trimStyle: "Picture Frame",
         species: "Oak",
         jambSpecies: "Oak",
+        jambMaterial: "",
         casingProfile: '2-1/2" Colonial (C115)',
         finishType: "Stain",
         finish: "Dark Walnut (Minwax)",
@@ -1503,7 +1559,7 @@
         setExpandedUnit(idx + 1);
       };
       const applyGlobalToUnit = (u, g, force) => {
-        const updates = { species: g.species, jambSpecies: g.jambSpecies || g.species, casingProfile: g.casingProfile, finishType: g.finishType, finish: g.finish };
+        const updates = { trimStyle: g.trimStyle || "Picture Frame", species: g.species, jambSpecies: g.jambSpecies || g.species, jambMaterial: g.jambMaterial || "", casingProfile: g.casingProfile, finishType: g.finishType, finish: g.finish };
         // Only apply jamb depth if global has a value AND (force=true OR unit has no value yet)
         if (g.jambDepthWhole !== "" && g.jambDepthWhole != null) {
           if (force || !u.jambDepthWhole) {
@@ -1667,7 +1723,7 @@
       const startNewJob = () => {
         setSameTrim(true);
         setJobId(Date.now().toString());
-        setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoardsCount: 0, extraBoardsCasing: false, extraBoardsJamb: false, bayMaterials: [], optimizePerUnit: false });
+        setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], optimizePerUnit: false });
         setUnits([emptyUnit(1)]);
         setExpandedUnit(0);
         setSubmitted(false);
@@ -1916,6 +1972,10 @@
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Jamb Stock</div>
               {(catalog.jambStock || []).map((item, i) => <AvailGrid key={item.label+i} item={item} index={i} section="jambStock" />)}
               <button onClick={() => addMaterial("jambStock", "New jamb stock label (e.g. 1x3):", "Actual width in inches (e.g. 2.5):")} style={{ width: "100%", padding: "12px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 24 }}>+ Add Jamb Stock</button>
+
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Stop Profiles</div>
+              {(catalog.stopProfiles || []).map((item, i) => <AvailGrid key={(item.code||item.label)+i} item={item} index={i} section="stopProfiles" />)}
+              <button onClick={() => addMaterial("stopProfiles", "New stop profile name:", "Profile width in inches (e.g. 3.5):")} style={{ width: "100%", padding: "12px 0", border: "1px dashed #ccc", borderRadius: 6, background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer", marginBottom: 24 }}>+ Add Stop Profile</button>
 
               <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8, padding: "0 4px" }}>Stain Colors</div>
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 4, border: "1px solid #E8E8E8" }}>
@@ -2303,6 +2363,12 @@
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#6DB344", marginBottom: 10 }}>Most Common Trim for Job</div>
                 <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Sets the default for all new units. Each unit can be overridden individually below.</div>
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={lbl}>Window Type</label>
+                    <select style={sel} value={globalTrim.trimStyle || "Picture Frame"} onChange={e => updateGlobalTrim("trimStyle", e.target.value)}>
+                      {TRIM_STYLES.map(t => <option key={t}>{t}</option>)}
+                    </select>
+                  </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     {/* Casing Species */}
                     <div>
@@ -2345,14 +2411,17 @@
                     {/* Jamb Material */}
                     <div>
                       <label style={lbl}>Jamb Material</label>
-                      <div style={{ ...inp, background: "#f5f5f4", color: "#555", display: "flex", alignItems: "center", cursor: "default" }}>
-                        {globalTrim.jambDepthWhole ? (() => {
+                      <select style={sel} value={globalTrim.jambMaterial || ""} onChange={e => updateGlobalTrim("jambMaterial", e.target.value)}>
+                        <option value="">Auto ({(() => {
+                          if (!globalTrim.jambDepthWhole) return "set jamb depth";
                           const jd = combineMeasurement(globalTrim.jambDepthWhole, globalTrim.jambDepthFrac);
                           const jw = jd + (offsets?.window_pf?.jamb_width || -2.75);
-                          const stock = getJambStockWidth(jw);
-                          return `${stock.label} (${toFraction(stock.width)}")`;
-                        })() : "Set jamb depth below"}
-                      </div>
+                          return getJambStockWidth(jw).label;
+                        })()})</option>
+                        {JAMB_STOCK_WIDTHS.map(j => (
+                          <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
@@ -2404,30 +2473,6 @@
                     <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Changes here update all units. Override individually in each unit below.</div>
                   </div>
 
-                  {/* Extra Boards to Send */}
-                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #eee" }}>
-                    <label style={lbl}>Extra Boards to Send</label>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <input type="number" min="0" style={{ ...inp, width: 60, textAlign: "center", marginBottom: 0 }}
-                          value={job.extraBoardsCount || 0}
-                          onChange={e => updateJob("extraBoardsCount", parseInt(e.target.value) || 0)} />
-                        <span style={{ fontSize: 13, color: "#555" }}>boards</span>
-                      </div>
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, color: "#333", cursor: "pointer" }}>
-                        <input type="checkbox" checked={job.extraBoardsCasing || false}
-                          onChange={e => updateJob("extraBoardsCasing", e.target.checked)}
-                          style={{ width: 18, height: 18, accentColor: "#6DB344" }} />
-                        Casing
-                      </label>
-                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, color: "#333", cursor: "pointer" }}>
-                        <input type="checkbox" checked={job.extraBoardsJamb || false}
-                          onChange={e => updateJob("extraBoardsJamb", e.target.checked)}
-                          style={{ width: 18, height: 18, accentColor: "#6DB344" }} />
-                        Jamb
-                      </label>
-                    </div>
-                  </div>
               </div>
             </div>
 
@@ -2733,6 +2778,122 @@
 
             {/* Board Summary Preview — always visible */}
 
+            {/* Extra Boards */}
+            <div style={{
+              background: "#fff", borderRadius: 8, padding: 18, marginBottom: 14,
+              boxShadow: "0 2px 10px rgba(0,0,0,0.05)", border: "1px solid #E8E8E8"
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#6DB344", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ width: 22, height: 22, background: "#6DB344", color: "#fff", borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>4</span>
+                Extra Boards ({(job.extraBoards || []).length})
+              </div>
+              <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Add extra boards for mistakes, other areas of the home, or additional material.</div>
+              {(job.extraBoards || []).map((eb, idx) => (
+                <div key={idx} style={{ padding: 12, marginBottom: 8, border: "1px solid #E8E8E8", borderRadius: 8, background: "#fafbfa" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#333" }}>Board {idx + 1}</span>
+                    <button onClick={() => updateJob("extraBoards", (job.extraBoards || []).filter((_, i) => i !== idx))}
+                      style={{ background: "none", border: "none", fontSize: 16, color: "#c0392b", cursor: "pointer" }}>✕</button>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label style={lbl}>Type</label>
+                      <select style={sel} value={eb.materialType || "Casing"} onChange={e => {
+                        const updated = [...job.extraBoards];
+                        updated[idx] = { ...eb, materialType: e.target.value };
+                        updateJob("extraBoards", updated);
+                      }}>
+                        <option value="Casing">Casing</option>
+                        <option value="Jamb Extension">Jamb</option>
+                        <option value="Stop">Stop</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={lbl}>Species</label>
+                      <select style={sel} value={eb.species || globalTrim.species} onChange={e => {
+                        const updated = [...job.extraBoards];
+                        updated[idx] = { ...eb, species: e.target.value };
+                        updateJob("extraBoards", updated);
+                      }}>
+                        {SPECIES.map(s => <option key={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={lbl}>Profile / Size</label>
+                      {eb.materialType === "Jamb Extension" ? (
+                        <select style={sel} value={eb.profile || "1x6"} onChange={e => {
+                          const updated = [...job.extraBoards];
+                          updated[idx] = { ...eb, profile: e.target.value };
+                          updateJob("extraBoards", updated);
+                        }}>
+                          {JAMB_STOCK_WIDTHS.map(j => <option key={j.label} value={j.label}>{j.label}</option>)}
+                        </select>
+                      ) : eb.materialType === "Stop" ? (
+                        <select style={sel} value={eb.profile || "1x4"} onChange={e => {
+                          const updated = [...job.extraBoards];
+                          updated[idx] = { ...eb, profile: e.target.value };
+                          updateJob("extraBoards", updated);
+                        }}>
+                          {STOP_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                        </select>
+                      ) : eb.materialType === "Other" ? (
+                        <input style={inp} value={eb.profile || ""} onChange={e => {
+                          const updated = [...job.extraBoards];
+                          updated[idx] = { ...eb, profile: e.target.value };
+                          updateJob("extraBoards", updated);
+                        }} placeholder="Description" />
+                      ) : (
+                        <select style={sel} value={eb.profile || globalTrim.casingProfile} onChange={e => {
+                          const updated = [...job.extraBoards];
+                          updated[idx] = { ...eb, profile: e.target.value };
+                          updateJob("extraBoards", updated);
+                        }}>
+                          {CASING_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                        </select>
+                      )}
+                    </div>
+                    <div>
+                      <label style={lbl}>Stock Length</label>
+                      <select style={sel} value={eb.stockLength || "120"} onChange={e => {
+                        const updated = [...job.extraBoards];
+                        updated[idx] = { ...eb, stockLength: e.target.value };
+                        updateJob("extraBoards", updated);
+                      }}>
+                        <option value="96">8'</option>
+                        <option value="120">10'</option>
+                        <option value="144">12'</option>
+                      </select>
+                    </div>
+                  </div>
+                  {eb.note !== undefined && (
+                    <div style={{ marginTop: 8 }}>
+                      <label style={lbl}>Note</label>
+                      <input style={inp} value={eb.note || ""} onChange={e => {
+                        const updated = [...job.extraBoards];
+                        updated[idx] = { ...eb, note: e.target.value };
+                        updateJob("extraBoards", updated);
+                      }} placeholder="e.g. for bathroom trim, extra for mistakes..." />
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Casing", species: globalTrim.species, profile: globalTrim.casingProfile, stockLength: "120", note: "" }])} style={{
+                  flex: 1, minWidth: 100, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                }}>+ Casing</button>
+                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Jamb Extension", species: globalTrim.jambSpecies || globalTrim.species, profile: "1x6", stockLength: "120", note: "" }])} style={{
+                  flex: 1, minWidth: 100, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                }}>+ Jamb</button>
+                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Other", species: globalTrim.species, profile: "", stockLength: "120", note: "" }])} style={{
+                  flex: 1, minWidth: 100, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                }}>+ Other</button>
+              </div>
+            </div>
+
             {/* Prefinish / Warehouse Notes */}
             <div style={{
               background: "#fff", borderRadius: 8, padding: 18, marginBottom: 14,
@@ -2841,46 +3002,47 @@
               }}>
                 {showBayMaterial ? "▾" : "▸"} Bay Material {(job.bayMaterials || []).length > 0 && <span style={{ fontSize: 11, fontWeight: 400, color: "#999" }}>({job.bayMaterials.length} item{job.bayMaterials.length !== 1 ? "s" : ""})</span>}
               </button>
-              {showBayMaterial && (job.bayMaterials || []).map((item, idx) => (
-                <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                  <input style={{ ...inp, flex: 2, marginBottom: 0 }} value={item.description}
-                    onChange={e => {
-                      const updated = [...job.bayMaterials];
-                      updated[idx] = { ...item, description: e.target.value };
+              {showBayMaterial && (<>
+                {(job.bayMaterials || []).map((item, idx) => (
+                  <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                    <input style={{ ...inp, flex: 2, marginBottom: 0 }} value={item.description}
+                      onChange={e => {
+                        const updated = [...job.bayMaterials];
+                        updated[idx] = { ...item, description: e.target.value };
+                        updateJob("bayMaterials", updated);
+                      }}
+                      placeholder="Description" />
+                    <input style={{ ...inp, width: 60, flexShrink: 0, marginBottom: 0, textAlign: "center" }} type="number" min="1"
+                      value={item.quantity} onChange={e => {
+                        const updated = [...job.bayMaterials];
+                        updated[idx] = { ...item, quantity: parseInt(e.target.value) || 1 };
+                        updateJob("bayMaterials", updated);
+                      }} />
+                    <button onClick={() => {
+                      const updated = (job.bayMaterials || []).filter((_, i) => i !== idx);
                       updateJob("bayMaterials", updated);
-                    }}
-                    placeholder="Description" />
-                  <input style={{ ...inp, width: 60, flexShrink: 0, marginBottom: 0, textAlign: "center" }} type="number" min="1"
-                    value={item.quantity} onChange={e => {
-                      const updated = [...job.bayMaterials];
-                      updated[idx] = { ...item, quantity: parseInt(e.target.value) || 1 };
-                      updateJob("bayMaterials", updated);
-                    }} />
-                  <button onClick={() => {
-                    const updated = (job.bayMaterials || []).filter((_, i) => i !== idx);
-                    updateJob("bayMaterials", updated);
-                  }} style={{ background: "none", border: "none", fontSize: 18, color: "#c0392b", cursor: "pointer", padding: "0 4px", flexShrink: 0 }}>✕</button>
+                    }} style={{ background: "none", border: "none", fontSize: 18, color: "#c0392b", cursor: "pointer", padding: "0 4px", flexShrink: 0 }}>✕</button>
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                  <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "Soffit", quantity: 1 }])} style={{
+                    flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                    background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                  }}>+ Soffit</button>
+                  <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "Plywood", quantity: 1 }])} style={{
+                    flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                    background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                  }}>+ Plywood</button>
+                  <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "Pink Foam", quantity: 1 }])} style={{
+                    flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                    background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                  }}>+ Pink Foam</button>
+                  <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "", quantity: 1 }])} style={{
+                    flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                    background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                  }}>+ Other</button>
                 </div>
-              ))}
-              <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-                <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "Soffit", quantity: 1 }])} style={{
-                  flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
-                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
-                }}>+ Soffit</button>
-                <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "Plywood", quantity: 1 }])} style={{
-                  flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
-                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
-                }}>+ Plywood</button>
-                <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "Pink Foam", quantity: 1 }])} style={{
-                  flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
-                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
-                }}>+ Pink Foam</button>
-                <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "", quantity: 1 }])} style={{
-                  flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
-                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
-                }}>+ Other</button>
-              </div>
-              )}
+              </>)}
             </div>
 
             {/* Board Summary + Recalculate */}
