@@ -103,7 +103,7 @@
     }
 
     const UNIT_TYPES = ["Window", "Entry Door", "Patio Door"];
-    const TRIM_STYLES = ["Picture Frame", "Traditional"];
+    const TRIM_STYLES = ["Picture Frame", "Traditional", "Stops"];
     const THRESHOLD_SPECIES = ["Oak", "Maple"];
 
     const JAMB_STOCK_WIDTHS = [
@@ -164,8 +164,27 @@
       { label: '1x4 Knotty Pine', width: 3.5, code: 'KnottyPine-1x4', pineOnly: true },
     ];
 
+
+    const STOP_PROFILES = [
+      { label: '1x4', width: 3.5, code: 'STOP-1x4', pineOnly: false },
+      { label: 'Colonial Stop - 3-1/2"', width: 3.5, code: 'STOP-COL', pineOnly: false },
+      { label: 'Flat Stop - 1-1/4"', width: 1.25, code: 'STOP-FLAT', pineOnly: false },
+    ];
+
+    const STOP_COVERAGES = ["All Sides", "Sides and Top"];
+
     function getAvailableProfiles(species) {
       return CASING_PROFILES.filter(p => !p.pineOnly || species === "Pine");
+    }
+
+
+    function getAvailableStopProfiles(species) {
+      return STOP_PROFILES.filter(p => !p.pineOnly || species === "Pine");
+    }
+
+    function getStopProfileWidth(profileLabel) {
+      const p = STOP_PROFILES.find(pr => pr.label === profileLabel);
+      return p ? p.width : 3.5;
     }
 
     // Catalog-aware filtering: checks if a profile/stock has any length available for a species
@@ -426,8 +445,14 @@
       const materials = [];
 
       if (unit.unitType === "Window") {
-        const isPF = unit.trimStyle === "Picture Frame";
-        if (isPF) {
+        if (unit.trimStyle === "Stops") {
+          const stopW = getStopProfileWidth(unit.stopProfile);
+          const isAllSides = unit.stopCoverage !== "Sides and Top";
+          materials.push(
+            { name: "Side Stop", qty: 2, length: h, width: stopW, thickness: null, species: unit.species, category: "Stop", profile: unit.stopProfile },
+            { name: isAllSides ? "Top/Bottom Stop" : "Top Stop", qty: isAllSides ? 2 : 1, length: w, width: stopW, thickness: null, species: unit.species, category: "Stop", profile: unit.stopProfile }
+          );
+        } else if (unit.trimStyle === "Picture Frame") {
           const o = off.window_pf;
           const jw = jd + o.jamb_width;
           materials.push(
@@ -488,14 +513,16 @@
         heightFrac: 0,
         jambDepthWhole: "",
         jambDepthFrac: 0,
-        prefinishNote: "",
+        stopCoverage: "All Sides",
+        stopProfile: "1x4",
         manualMaterials: [],
       };
     }
 
     function isUnitComplete(u) {
       if (!u.heightWhole || !u.widthWhole) return false;
-      if (u.unitType !== "Entry Door" && !u.jambDepthWhole) return false;
+      // Stops trim style doesn't need jamb depth
+      if (u.unitType !== "Entry Door" && u.trimStyle !== "Stops" && !u.jambDepthWhole) return false;
       return true;
     }
 
@@ -673,7 +700,24 @@
 
     // ─── BOARD OPTIMIZER ───
     // Groups cuts by material type + species + finish, then bin-packs into standard lengths
-    function optimizeBoards(units, catalog) {
+    function optimizeBoards(units, catalog, perUnit) {
+      // Per-unit mode: run optimizer separately for each unit, then combine
+      if (perUnit) {
+        const PU_STOCK_LABELS = { 96: "8'", 120: "10'", 144: "12'" };
+        let allBoards = [];
+        units.forEach(unit => {
+          const result = optimizeBoards([unit], catalog, false);
+          allBoards.push(...result.boards);
+        });
+        allBoards.sort((a, b) => {
+          if (a.materialType !== b.materialType) return a.materialType.localeCompare(b.materialType);
+          if (a.species !== b.species) return a.species.localeCompare(b.species);
+          return b.stockLength - a.stockLength;
+        });
+        const summary = {};
+        allBoards.forEach(board => { summary[board.stockLength] = (summary[board.stockLength] || 0) + 1; });
+        return { boards: allBoards, summary, STOCK_LABELS: PU_STOCK_LABELS };
+      }
       const ALL_STOCK_LENGTHS = [96, 120, 144]; // 8ft, 10ft, 12ft in inches
       const STOCK_LABELS = { 96: "8'", 120: "10'", 144: "12'" };
 
@@ -690,7 +734,7 @@
             allCuts.push({
               length: m.length + MIN_CUTOFF, // add 5" for bad ends
               rawLength: m.length,
-              materialType: m.name.includes("Jamb") || m.name.includes("Sill") || m.name.includes("Stool") ? "Jamb Extension" : m.name.includes("Threshold") ? "Threshold" : m.name.includes("Apron") ? "Apron" : "Casing",
+              materialType: m.name.includes("Jamb") || m.name.includes("Sill") || m.name.includes("Stool") ? "Jamb Extension" : m.name.includes("Threshold") ? "Threshold" : m.name.includes("Apron") ? "Apron" : m.category === "Stop" ? "Stop" : "Casing",
               species: m.species,
               finish: unit.finish || "",
               profile: m.profile || null,
@@ -729,7 +773,7 @@
         const sorted = [...group.cuts].sort((a, b) => b.length - a.length);
 
         // Determine available stock lengths for this group's species from catalog
-        const section = group.materialType === "Casing" ? "casingProfiles" : "jambStock";
+        const section = group.materialType === "Casing" || group.materialType === "Stop" ? "casingProfiles" : "jambStock";
         let STOCK_LENGTHS = catalog ? getAvailableLengthsForSpecies(catalog, group.species, section) : ALL_STOCK_LENGTHS;
         STOCK_LENGTHS = STOCK_LENGTHS.filter(l => ALL_STOCK_LENGTHS.includes(l)).sort((a, b) => a - b);
         if (!STOCK_LENGTHS.length) STOCK_LENGTHS = ALL_STOCK_LENGTHS;
@@ -824,8 +868,8 @@
       return { boards: allBoards, summary, STOCK_LABELS };
     }
 
-    function BoardSummary({ units, catalog }) {
-      const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog);
+    function BoardSummary({ units, catalog, optimizePerUnit }) {
+      const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog, optimizePerUnit);
       if (boards.length === 0) return null;
 
       const totalBoards = boards.length;
@@ -834,6 +878,7 @@
         <div style={{ marginTop: 28, pageBreakBefore: "always" }}>
           <div style={{ background: "#6DB344", color: "#fff", padding: "10px 14px", fontSize: 16, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
             Board Purchase Summary
+            {optimizePerUnit && <span style={{ fontSize: 11, fontWeight: 400, marginLeft: 12, opacity: 0.85 }}> — Optimized per unit for grain matching</span>}
           </div>
 
           {/* Quick totals */}
@@ -862,7 +907,7 @@
                 <tr key={i} style={{ borderBottom: "1px solid #ddd", background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
                   <td style={{ padding: "6px 10px", fontWeight: 600 }}>{i + 1}</td>
                   <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{STOCK_LABELS[board.stockLength]}</td>
-                  <td style={{ padding: "6px 8px" }}>{board.materialType}{board.jambStock ? ` (${board.jambStock.label})` : ""}{board.profile ? ` — ${board.profile}` : ""}</td>
+                  <td style={{ padding: "6px 8px" }}>{board.species} {board.materialType}{board.jambStock ? ` (${board.jambStock.label})` : ""}{board.profile ? ` — ${board.profile}` : ""}</td>
                   <td style={{ padding: "6px 8px" }}>{board.species}</td>
                   <td style={{ padding: "6px 8px" }}>{board.finish}</td>
                   <td style={{ padding: "6px 8px", fontSize: 11 }}>
@@ -956,7 +1001,7 @@
 
       // ─── Aggregate materials for checklist view ───
       const buildChecklist = () => {
-        const { boards, STOCK_LABELS } = optimizeBoards(units, catalog);
+        const { boards, STOCK_LABELS } = optimizeBoards(units, catalog, job.optimizePerUnit);
         const rows = [];
 
         // Coil / extra materials first
@@ -970,13 +1015,17 @@
         // Aggregate boards by material type + species + stock length
         const boardGroups = {};
         boards.forEach(board => {
-          const isJamb = board.materialType !== "Casing";
+          const isJamb = board.materialType !== "Casing" && board.materialType !== "Stop";
           let label, cat;
           if (isJamb) {
             // Jamb extensions, stools, aprons, thresholds — show stock dimensions e.g. "Oak 5/8x6x8'"
             const stockLabel = board.jambStock ? board.jambStock.label : "5/8x6";
             label = `${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}`;
             cat = "JAMB MATERIAL";
+          } else if (board.materialType === "Stop") {
+            const profile = board.profile || "Stop";
+            label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}`;
+            cat = `${board.species.toUpperCase()} STOP`;
           } else {
             // Casing — e.g. "Oak (C115) Colonial Casing 2-1/2" - 10'"
             const profile = board.profile || "Casing";
@@ -1008,18 +1057,13 @@
             <div>
               <img src={LOGO_FULL} alt="Renewal by Andersen" style={{ height: 50, marginBottom: 4 }} />
               <div style={{ fontSize: 11, color: "#888", letterSpacing: 2, textTransform: "uppercase" }}>{subtitle}</div>
+              <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>{units.length} unit{units.length !== 1 ? "s" : ""}</div>
             </div>
-            <div style={{ textAlign: "right", fontSize: 13, color: "#555" }}>
-              <div><strong>{job.date}</strong></div>
-              <div>{units.length} unit{units.length !== 1 ? "s" : ""}</div>
-            </div>
-          </div>
-          <div style={{ marginTop: 14, fontSize: 14, lineHeight: 1.6 }}>
-            <div><strong>Customer:</strong> {job.customerName || "—"}</div>
-            <div><strong>Address:</strong> {job.address || "—"}</div>
-            <div style={{ display: "flex", gap: 32 }}>
-              <span><strong>PO #:</strong> {job.poNumber || "—"}</span>
-              <span><strong>Tech Measurer:</strong> {job.techMeasurer || "—"}</span>
+            <div style={{ textAlign: "right", fontSize: 14, color: "#555", lineHeight: 1.6 }}>
+              <div style={{ fontWeight: 700, color: "#1a1a1a" }}>{job.customerName || "—"}</div>
+              <div>{job.address || "—"}</div>
+              <div>PO# {job.poNumber || "—"}</div>
+              <div style={{ fontSize: 13 }}>Tech: {job.techMeasurer || "—"}  |  {job.date}</div>
             </div>
           </div>
         </div>
@@ -1045,6 +1089,7 @@
 
               <div style={{ fontSize: 13, color: "#999", padding: "10px 14px", borderBottom: "1px solid #ddd" }}>
                 This list includes the sum total of all materials for the entire job.
+                {job.optimizePerUnit && <div style={{ marginTop: 4, fontSize: 12, color: "#6DB344", fontWeight: 600 }}>Optimized per unit for grain matching</div>}
               </div>
 
               {allRows.map((row, i) => {
@@ -1071,25 +1116,54 @@
             </div>
 
             {/* Prefinishing Notes */}
-            {(job.prefinishNotes || units.some(u => u.prefinishNote)) && (
+            {(job.prefinishNotes || job.pfWindowsNeeded) && (
               <div data-pdf-section="prefinish" style={{ marginTop: 28, pageBreakInside: "avoid" }}>
                 <div style={{ display: "flex", padding: "8px 14px", background: "#1a1a1a", color: "#fff", fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>
-                  Prefinishing Notes
+                  Prefinish / Warehouse Notes
                 </div>
                 {job.prefinishNotes && (
                   <div style={{ padding: "10px 14px", fontSize: 14, borderBottom: "1px solid #ddd" }}>
                     {job.prefinishNotes}
                   </div>
                 )}
-                {units.filter(u => u.prefinishNote).map((u, i) => (
-                  <div key={i} style={{ padding: "8px 14px", fontSize: 13, borderBottom: "1px solid #eee" }}>
-                    <strong>{u.label}:</strong> {u.prefinishNote}
+                <div style={{ padding: "10px 14px", fontSize: 14, borderBottom: "1px solid #ddd" }}>
+                  <strong>Windows needing PF:</strong> {job.pfWindowsNeeded ? "Yes" : "No"}
+                  {job.pfWindowsNeeded && job.pfWindowsList && (
+                    <span> — {job.pfWindowsList}</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+
+            {/* Extra Boards */}
+            {(job.extraBoardsCount > 0 && (job.extraBoardsCasing || job.extraBoardsJamb)) && (
+              <div data-pdf-section="extra-boards" style={{ marginTop: 28, pageBreakInside: "avoid" }}>
+                <div style={{ display: "flex", padding: "8px 14px", background: "#1a1a1a", color: "#fff", fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>
+                  Extra Boards
+                </div>
+                <div style={{ padding: "10px 14px", fontSize: 14, borderBottom: "1px solid #ddd" }}>
+                  <strong>Extra Boards:</strong> {job.extraBoardsCount} ({[job.extraBoardsCasing && "Casing", job.extraBoardsJamb && "Jamb"].filter(Boolean).join(", ")})
+                </div>
+              </div>
+            )}
+
+            {/* Bay Material */}
+            {(job.bayMaterials || []).length > 0 && (
+              <div data-pdf-section="bay-material" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
+                <div style={{ display: "flex", padding: "8px 14px", background: "#1a1a1a", color: "#fff", fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>
+                  Bay Material
+                </div>
+                {job.bayMaterials.filter(item => item.description).map((item, j) => (
+                  <div key={j} style={{ display: "flex", alignItems: "center", padding: "10px 14px", borderBottom: "1px solid #ddd" }}>
+                    <div style={{ flex: 1, fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>{item.description}</div>
+                    <div style={{ flex: "0 0 80px", textAlign: "right", fontSize: 15 }}>{item.quantity}</div>
                   </div>
                 ))}
               </div>
             )}
 
-            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} /></div>
+            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} /></div>
 
             <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", display: "flex", justifyContent: "space-between" }}>
               <span>Materials Checklist | {job.address || ""}</span>
@@ -1106,13 +1180,13 @@
 
           {units.map((unit, i) => {
             const mats = calcMaterials(unit);
-            const hasJD = unit.unitType !== "Entry Door";
+            const hasJD = unit.unitType !== "Entry Door" && unit.trimStyle !== "Stops";
             return (
               <div key={unit.id} data-pdf-section={"unit-" + i} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
                 <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", display: "flex", justifyContent: "space-between", borderRadius: "6px 6px 0 0" }}>
                   <span>{unit.label}{unit.location ? ` — ${unit.location}` : ""}</span>
                   <span style={{ fontWeight: 400, opacity: 0.85 }}>
-                    {unit.unitType}{unit.unitType === "Window" ? ` • ${unit.trimStyle}` : ""}
+                    {unit.unitType}{unit.unitType === "Window" ? ` • ${unit.trimStyle}${unit.trimStyle === "Stops" ? ` (${unit.stopCoverage || "All Sides"})` : ""}` : ""}
                   </span>
                 </div>
                 <div style={{ background: "#F5F5F4", padding: "6px 14px", fontSize: 13, display: "flex", gap: 16, flexWrap: "wrap", borderBottom: "1px solid #E8E8E8" }}>
@@ -1120,7 +1194,7 @@
                   <span><strong>H:</strong> {toFraction(combineMeasurement(unit.heightWhole, unit.heightFrac))}"</span>
                   {hasJD && <span><strong>JD:</strong> {toFraction(combineMeasurement(unit.jambDepthWhole, unit.jambDepthFrac))}"</span>}
                   <span><strong>Species:</strong> {unit.species}</span>
-                  <span><strong>Profile:</strong> {unit.casingProfile}</span>
+                  <span><strong>Profile:</strong> {unit.trimStyle === "Stops" ? (unit.stopProfile || "1x4") : unit.casingProfile}</span>
                   <span><strong>Finish:</strong> {unit.finish}</span>
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -1138,10 +1212,12 @@
                       let thicknessDisplay = "—";
                       if (m.category === "Jamb") {
                         thicknessDisplay = m.name.includes("Sill") || m.name.includes("Stool") ? '3/4"' : '5/8"';
+                      } else if (m.category === "Stop") {
+                        thicknessDisplay = "—";
                       }
                       return (
                         <tr key={j} style={{ borderBottom: "1px solid #ddd", background: j % 2 === 0 ? "#fff" : "#fafbfa" }}>
-                          <td style={{ padding: "6px 12px" }}>{m.name}</td>
+                          <td style={{ padding: "6px 12px" }}>{m.species ? `${m.species} ${m.name}` : m.name}</td>
                           <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 600 }}>{m.qty}</td>
                           <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{toFraction(m.length)}"</td>
                           <td style={{ textAlign: "center", padding: "6px 8px" }}>{m.width != null ? toFraction(m.width) + '"' : "—"}</td>
@@ -1165,21 +1241,22 @@
           })}
 
           {/* Prefinishing Notes */}
-          {(job.prefinishNotes || units.some(u => u.prefinishNote)) && (
+          {(job.prefinishNotes || job.pfWindowsNeeded) && (
             <div data-pdf-section="prefinish" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
               <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
-                Prefinishing Notes
+                Prefinish / Warehouse Notes
               </div>
               {job.prefinishNotes && (
                 <div style={{ padding: "10px 14px", fontSize: 13, background: "#fafbfa", borderBottom: "1px solid #ddd" }}>
-                  <strong>Job Default:</strong> {job.prefinishNotes}
+                  {job.prefinishNotes}
                 </div>
               )}
-              {units.filter(u => u.prefinishNote).map((u, i) => (
-                <div key={i} style={{ padding: "6px 14px", fontSize: 13, background: i % 2 === 0 ? "#fff" : "#fafbfa", borderBottom: "1px solid #eee" }}>
-                  <strong>{u.label}:</strong> {u.prefinishNote}
-                </div>
-              ))}
+              <div style={{ padding: "10px 14px", fontSize: 13, background: "#fff", borderBottom: "1px solid #ddd" }}>
+                <strong>Windows needing PF:</strong> {job.pfWindowsNeeded ? "Yes" : "No"}
+                {job.pfWindowsNeeded && job.pfWindowsList && (
+                  <span> — {job.pfWindowsList}</span>
+                )}
+              </div>
             </div>
           )}
 
@@ -1208,7 +1285,45 @@
             </div>
           )}
 
-          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} /></div>
+
+          {/* Extra Boards */}
+          {(job.extraBoardsCount > 0 && (job.extraBoardsCasing || job.extraBoardsJamb)) && (
+            <div data-pdf-section="extra-boards" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
+              <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
+                Extra Boards
+              </div>
+              <div style={{ padding: "10px 14px", fontSize: 13, background: "#fafbfa", borderBottom: "1px solid #ddd" }}>
+                <strong>Extra Boards:</strong> {job.extraBoardsCount} ({[job.extraBoardsCasing && "Casing", job.extraBoardsJamb && "Jamb"].filter(Boolean).join(", ")})
+              </div>
+            </div>
+          )}
+
+          {/* Bay Material */}
+          {(job.bayMaterials || []).length > 0 && (
+            <div data-pdf-section="bay-material" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
+              <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
+                Bay Material
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#F0F0EF" }}>
+                    <th style={{ textAlign: "left", padding: "7px 12px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Description</th>
+                    <th style={{ textAlign: "center", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700, width: 80 }}>Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {job.bayMaterials.filter(item => item.description).map((item, j) => (
+                    <tr key={j} style={{ borderBottom: "1px solid #ddd", background: j % 2 === 0 ? "#fff" : "#fafbfa" }}>
+                      <td style={{ padding: "6px 12px" }}>{item.description}</td>
+                      <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 600 }}>{item.quantity}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} /></div>
 
           <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", textAlign: "center" }}>
             Renewal by Andersen — Detailed Cut List • {new Date().toLocaleDateString()}
@@ -1289,9 +1404,10 @@
       const [view, setView] = useState("home");
       const [showInspo, setShowInspo] = useState(false);
       const [jobId, setJobId] = useState(null);
-      const [job, setJob] = useState({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", extraMaterials: [] });
+      const [job, setJob] = useState({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoardsCount: 0, extraBoardsCasing: false, extraBoardsJamb: false, bayMaterials: [], optimizePerUnit: false });
       const [units, setUnits] = useState([emptyUnit(1)]);
       const [expandedUnit, setExpandedUnit] = useState(0);
+      const [showPfSection, setShowPfSection] = useState(false);
       const [sameTrim, setSameTrim] = useState(true); // always start with common trim active
       const [globalTrim, setGlobalTrim] = useState({
         species: "Oak",
@@ -1561,10 +1677,11 @@
       const startNewJob = () => {
         setSameTrim(true);
         setJobId(Date.now().toString());
-        setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", extraMaterials: [] });
+        setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoardsCount: 0, extraBoardsCasing: false, extraBoardsJamb: false, bayMaterials: [], optimizePerUnit: false });
         setUnits([emptyUnit(1)]);
         setExpandedUnit(0);
         setSubmitted(false);
+        setShowPfSection(false);
         setView("editor");
       };
 
@@ -1590,6 +1707,7 @@
         setUnits(saved.units);
         setExpandedUnit(0);
         setSubmitted(saved.status && saved.status !== "in_progress");
+        setShowPfSection(!!(saved.job.prefinishNotes));
         setView("editor");
       };
 
@@ -2195,29 +2313,41 @@
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#6DB344", marginBottom: 10 }}>Most Common Trim for Job</div>
                 <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Sets the default for all new units. Each unit can be overridden individually below.</div>
+                  {/* Default Species */}
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={lbl}>Default Species</label>
+                    <select style={sel} value={globalTrim.species} onChange={e => updateGlobalTrim("species", e.target.value)}>
+                      {SPECIES.map(s => {
+                        const avail = isSpeciesAvailableInCatalog(catalog, s);
+                        return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
+                      })}
+                    </select>
+                    <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>Filters casing options and sets species for all units</div>
+                  </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <div>
-                      <label style={lbl}>Species</label>
-                      <select style={sel} value={globalTrim.species} onChange={e => updateGlobalTrim("species", e.target.value)}>
-                        {SPECIES.map(s => {
-                          const avail = isSpeciesAvailableInCatalog(catalog, s);
-                          return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
-                        })}
-                      </select>
-                    </div>
-                    <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <label style={lbl}>Casing Profile</label>
+                        <label style={lbl}>Casing Material</label>
                         <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
                           <input type="checkbox" checked={!!customMode.globalCasing} onChange={() => setCustomMode(p => ({ ...p, globalCasing: !p.globalCasing }))} style={{ width: 13, height: 13 }} /> Custom
                         </label>
                       </div>
                       {customMode.globalCasing
                         ? <input style={inp} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)} placeholder="Type custom profile..." />
-                        : <select style={sel} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)}>
+                        : <select style={sel} value={`${globalTrim.species} ${globalTrim.casingProfile}`} onChange={e => {
+                            const val = e.target.value;
+                            const match = val.match(/^(Oak|Pine|Maple|Basswood)\s+(.+)$/);
+                            if (match) {
+                              const newGlobal = { ...globalTrim, species: match[1], casingProfile: match[2] };
+                              setGlobalTrim(newGlobal);
+                              setSubmitted(false);
+                              setUnits(prev => prev.map(u => applyGlobalToUnit(u, newGlobal, false)));
+                            }
+                          }}>
                             {getAvailableProfiles(globalTrim.species).map(p => {
                               const avail = isProfileAvailableInCatalog(catalog, p.label, globalTrim.species);
-                              return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
+                              const display = `${globalTrim.species} ${p.label}`;
+                              return <option key={p.label} value={display} disabled={!avail}>{display}{!avail ? " (unavailable)" : ""}</option>;
                             })}
                           </select>
                       }
@@ -2269,6 +2399,31 @@
                     />
                     <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Changes here update all units. Override individually in each unit below.</div>
                   </div>
+
+                  {/* Extra Boards to Send */}
+                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #eee" }}>
+                    <label style={lbl}>Extra Boards to Send</label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input type="number" min="0" style={{ ...inp, width: 60, textAlign: "center", marginBottom: 0 }}
+                          value={job.extraBoardsCount || 0}
+                          onChange={e => updateJob("extraBoardsCount", parseInt(e.target.value) || 0)} />
+                        <span style={{ fontSize: 13, color: "#555" }}>boards</span>
+                      </div>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, color: "#333", cursor: "pointer" }}>
+                        <input type="checkbox" checked={job.extraBoardsCasing || false}
+                          onChange={e => updateJob("extraBoardsCasing", e.target.checked)}
+                          style={{ width: 18, height: 18, accentColor: "#6DB344" }} />
+                        Casing
+                      </label>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, color: "#333", cursor: "pointer" }}>
+                        <input type="checkbox" checked={job.extraBoardsJamb || false}
+                          onChange={e => updateJob("extraBoardsJamb", e.target.checked)}
+                          style={{ width: 18, height: 18, accentColor: "#6DB344" }} />
+                        Jamb
+                      </label>
+                    </div>
+                  </div>
               </div>
             </div>
 
@@ -2282,7 +2437,7 @@
                 const expanded = expandedUnit === idx;
                 const complete = isUnitComplete(unit);
                 const mats = complete ? calcMaterials(unit) : [];
-                const needsJD = unit.unitType !== "Entry Door";
+                const needsJD = unit.unitType !== "Entry Door" && unit.trimStyle !== "Stops";
                 const needsTrim = unit.unitType === "Window";
                 const needsThreshold = unit.unitType !== "Window";
 
@@ -2327,15 +2482,6 @@
                               {UNIT_TYPES.map(t => <option key={t}>{t}</option>)}
                             </select>
                           </div>
-                          <div>
-                            <label style={lbl}>Species</label>
-                            <select style={sel} value={unit.species} onChange={e => updateUnit(idx, "species", e.target.value)}>
-                              {SPECIES.map(s => {
-                                const avail = isSpeciesAvailableInCatalog(catalog, s);
-                                return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
-                              })}
-                            </select>
-                          </div>
                           {needsTrim && (
                             <div>
                               <label style={lbl}>Trim Style</label>
@@ -2344,23 +2490,58 @@
                               </select>
                             </div>
                           )}
+                          {unit.trimStyle === "Stops" && needsTrim && (
+                            <div>
+                              <label style={lbl}>Stop Coverage</label>
+                              <select style={sel} value={unit.stopCoverage || "All Sides"} onChange={e => updateUnit(idx, "stopCoverage", e.target.value)}>
+                                {STOP_COVERAGES.map(c => <option key={c}>{c}</option>)}
+                              </select>
+                            </div>
+                          )}
+                          {unit.trimStyle === "Stops" && needsTrim ? (
                           <div>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <label style={lbl}>Casing Profile</label>
+                              <label style={lbl}>Stop Profile</label>
+                              <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                                <input type="checkbox" checked={!!customMode["stop_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["stop_"+idx]: !p["stop_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
+                              </label>
+                            </div>
+                            {customMode["stop_"+idx]
+                              ? <input style={inp} value={unit.stopProfile || "1x4"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)} placeholder="Type custom stop profile..." />
+                              : <select style={sel} value={unit.stopProfile || "1x4"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)}>
+                                  {getAvailableStopProfiles(unit.species).map(p => (
+                                    <option key={p.label} value={p.label}>{p.label}</option>
+                                  ))}
+                                </select>
+                            }
+                          </div>
+                          ) : (
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <label style={lbl}>Casing Material</label>
                               <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
                                 <input type="checkbox" checked={!!customMode["casing_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["casing_"+idx]: !p["casing_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
                               </label>
                             </div>
                             {customMode["casing_"+idx]
                               ? <input style={inp} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)} placeholder="Type custom profile..." />
-                              : <select style={sel} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)}>
+                              : <select style={sel} value={`${unit.species} ${unit.casingProfile}`} onChange={e => {
+                                  const val = e.target.value;
+                                  const match = val.match(/^(Oak|Pine|Maple|Basswood)\s+(.+)$/);
+                                  if (match) {
+                                    setUnits(p => p.map((u, i) => i === idx ? { ...u, species: match[1], casingProfile: match[2] } : u));
+                                    setSubmitted(false);
+                                  }
+                                }}>
                                   {getAvailableProfiles(unit.species).map(p => {
                                     const avail = isProfileAvailableInCatalog(catalog, p.label, unit.species);
-                                    return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
+                                    const display = `${unit.species} ${p.label}`;
+                                    return <option key={p.label} value={display} disabled={!avail}>{display}{!avail ? " (unavailable)" : ""}</option>;
                                   })}
                                 </select>
                             }
                           </div>
+                          )}
                           <div>
                             <label style={lbl}>Finish Type</label>
                             <select style={sel} value={unit.finishType} onChange={e => {
@@ -2431,6 +2612,19 @@
                           )}
                         </div>
 
+                        {/* Jamb Material Info */}
+                        {complete && needsJD && (() => {
+                          const jambMats = mats.filter(m => m.category === "Jamb" && m.jambStock);
+                          if (jambMats.length === 0) return null;
+                          const jambStockLabel = jambMats[0].jambStock.label;
+                          const jambWidth = toFraction(jambMats[0].width);
+                          return (
+                            <div style={{ marginTop: 10, padding: "6px 10px", background: "#f5f9f2", borderRadius: 6, fontSize: 12, color: "#5a7a48", display: "flex", alignItems: "center", gap: 6 }}>
+                              <span style={{ fontWeight: 700 }}>Jamb:</span> {unit.species} {jambStockLabel} @ {jambWidth}"
+                            </div>
+                          );
+                        })()}
+
                         {/* Live Cut List */}
                         {complete && (
                           <div style={{ marginTop: 14, borderRadius: 8, border: "1px solid #E8E8E8", overflow: "hidden" }}>
@@ -2452,7 +2646,7 @@
                               <tbody>
                                 {mats.map((m, j) => (
                                   <tr key={j} style={{ borderTop: "1px solid #e4ede0", background: j % 2 ? "#fafcf8" : "#fff" }}>
-                                    <td style={{ padding: "7px 10px", fontWeight: 500 }}>{m.name}</td>
+                                    <td style={{ padding: "7px 10px", fontWeight: 500 }}>{m.species ? `${m.species} ${m.name}` : m.name}</td>
                                     <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 600 }}>{m.qty}</td>
                                     <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 700, color: "#6DB344" }}>{toFraction(m.length)}"</td>
                                     <td style={{ textAlign: "center", padding: "7px 6px", color: "#666" }}>{m.width != null ? toFraction(m.width) + '"' : "—"}</td>
@@ -2535,32 +2729,48 @@
 
             {/* Board Summary Preview — always visible */}
 
-            {/* Prefinishing Notes */}
+            {/* Prefinish / Warehouse Notes */}
             <div style={{
               background: "#fff", borderRadius: 8, padding: 18, marginBottom: 14,
               boxShadow: "0 2px 10px rgba(0,0,0,0.05)", border: "1px solid #E8E8E8"
             }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#6DB344", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ width: 22, height: 22, background: "#6DB344", color: "#fff", borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>5</span>
-                Prefinishing Notes
+                Prefinish / Warehouse Notes
               </div>
-              <div>
-                <label style={lbl}>Job-Wide Notes</label>
-                <textarea style={{ ...inp, minHeight: 60, resize: "vertical", fontFamily: "inherit" }}
-                  value={job.prefinishNotes} onChange={e => updateJob("prefinishNotes", e.target.value)}
-                  placeholder="e.g. Premium Teak stain, 2 coats, sand between coats..." />
+
+              {/* Collapsible notes textarea */}
+              <button onClick={() => setShowPfSection(p => !p)} style={{
+                background: "none", border: "1px dashed #ccc", borderRadius: 6, padding: "10px 14px",
+                fontSize: 14, fontWeight: 600, color: "#6DB344", cursor: "pointer", width: "100%", textAlign: "left",
+                marginBottom: showPfSection ? 12 : 0
+              }}>
+                {showPfSection ? "Hide" : "+"} Prefinish / Warehouse Notes
+              </button>
+              {showPfSection && (
+                <div>
+                  <label style={lbl}>Job Notes</label>
+                  <textarea style={{ ...inp, minHeight: 60, resize: "vertical", fontFamily: "inherit" }}
+                    value={job.prefinishNotes} onChange={e => updateJob("prefinishNotes", e.target.value)}
+                    placeholder="e.g. Premium Teak stain, 2 coats, sand between coats..." />
+                </div>
+              )}
+
+              {/* PF Windows checkbox */}
+              <div style={{ marginTop: 14 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, fontWeight: 600, color: "#333", cursor: "pointer" }}>
+                  <input type="checkbox" checked={job.pfWindowsNeeded || false}
+                    onChange={e => { updateJob("pfWindowsNeeded", e.target.checked); if (!e.target.checked) updateJob("pfWindowsList", ""); }}
+                    style={{ width: 20, height: 20, accentColor: "#6DB344" }} />
+                  Any Windows needing PF?
+                </label>
               </div>
-              {units.length > 0 && (
-                <div style={{ marginTop: 12 }}>
-                  <label style={{ ...lbl, marginBottom: 8 }}>Per-Unit Overrides <span style={{ fontWeight: 400, color: "#999" }}>(leave blank to use job default)</span></label>
-                  {units.map((unit, idx) => (
-                    <div key={unit.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: "#555", minWidth: 60, flexShrink: 0 }}>{unit.label}</span>
-                      <input style={{ ...inp, marginBottom: 0, fontSize: 12 }}
-                        value={unit.prefinishNote || ""} onChange={e => updateUnit(idx, "prefinishNote", e.target.value)}
-                        placeholder="Same as job default" />
-                    </div>
-                  ))}
+              {job.pfWindowsNeeded && (
+                <div style={{ marginTop: 10 }}>
+                  <label style={lbl}>Which windows need prefinishing?</label>
+                  <input style={inp}
+                    value={job.pfWindowsList || ""} onChange={e => updateJob("pfWindowsList", e.target.value)}
+                    placeholder="e.g. Unit 1, Unit 3 casements, all bedroom windows..." />
                 </div>
               )}
             </div>
@@ -2618,6 +2828,56 @@
               </div>
             </div>
 
+
+            {/* Bay Material */}
+            <div style={{
+              background: "#fff", borderRadius: 8, padding: 18, marginBottom: 14,
+              boxShadow: "0 2px 10px rgba(0,0,0,0.05)", border: "1px solid #E8E8E8"
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#6DB344", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+                Bay Material
+              </div>
+              {(job.bayMaterials || []).map((item, idx) => (
+                <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                  <input style={{ ...inp, flex: 2, marginBottom: 0 }} value={item.description}
+                    onChange={e => {
+                      const updated = [...job.bayMaterials];
+                      updated[idx] = { ...item, description: e.target.value };
+                      updateJob("bayMaterials", updated);
+                    }}
+                    placeholder="Description" />
+                  <input style={{ ...inp, width: 60, flexShrink: 0, marginBottom: 0, textAlign: "center" }} type="number" min="1"
+                    value={item.quantity} onChange={e => {
+                      const updated = [...job.bayMaterials];
+                      updated[idx] = { ...item, quantity: parseInt(e.target.value) || 1 };
+                      updateJob("bayMaterials", updated);
+                    }} />
+                  <button onClick={() => {
+                    const updated = (job.bayMaterials || []).filter((_, i) => i !== idx);
+                    updateJob("bayMaterials", updated);
+                  }} style={{ background: "none", border: "none", fontSize: 18, color: "#c0392b", cursor: "pointer", padding: "0 4px", flexShrink: 0 }}>✕</button>
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "Soffit", quantity: 1 }])} style={{
+                  flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                }}>+ Soffit</button>
+                <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "Plywood", quantity: 1 }])} style={{
+                  flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                }}>+ Plywood</button>
+                <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "Pink Foam", quantity: 1 }])} style={{
+                  flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                }}>+ Pink Foam</button>
+                <button onClick={() => updateJob("bayMaterials", [...(job.bayMaterials || []), { description: "", quantity: 1 }])} style={{
+                  flex: 1, minWidth: 80, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
+                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                }}>+ Other</button>
+              </div>
+            </div>
+
             {/* Board Summary + Recalculate */}
             <div key={boardCalcKey} style={{
               background: "#fff", borderRadius: 8, marginBottom: 14, overflow: "hidden",
@@ -2643,8 +2903,15 @@
                   {recalculating ? "Recalculating..." : "Recalculate Boards"}
                 </button>
               </div>
+              <div style={{ padding: "8px 16px", borderBottom: "1px solid #E8E8E8", display: "flex", alignItems: "center", gap: 10 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                  <input type="checkbox" checked={job.optimizePerUnit || false} onChange={e => updateJob("optimizePerUnit", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#6DB344" }} />
+                  <span style={{ fontWeight: 600 }}>Calculate per unit</span>
+                  <span style={{ fontSize: 11, color: "#888", fontWeight: 400 }}>(less optimized, better grain matching)</span>
+                </label>
+              </div>
               {allComplete && units.length > 0 ? (() => {
-                const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog);
+                const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog, job.optimizePerUnit);
                 return (
                   <div style={{ padding: "12px 16px" }}>
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>

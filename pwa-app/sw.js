@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cutlist-pro-v7';
+const CACHE_NAME = 'cutlist-pro-v8';
 const ASSETS = [
   '/',
   '/index.html',
