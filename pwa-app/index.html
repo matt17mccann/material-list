@@ -513,6 +513,7 @@
         heightFrac: 0,
         jambDepthWhole: "",
         jambDepthFrac: 0,
+        jambSpecies: "Oak",
         stopCoverage: "All Sides",
         stopProfile: "1x4",
         manualMaterials: [],
@@ -868,7 +869,7 @@
       return { boards: allBoards, summary, STOCK_LABELS };
     }
 
-    function BoardSummary({ units, catalog, optimizePerUnit }) {
+    function BoardSummary({ units, catalog, optimizePerUnit, extraBoardsNote }) {
       const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog, optimizePerUnit);
       if (boards.length === 0) return null;
 
@@ -880,6 +881,11 @@
             Board Purchase Summary
             {optimizePerUnit && <span style={{ fontSize: 11, fontWeight: 400, marginLeft: 12, opacity: 0.85 }}> — Optimized per unit for grain matching</span>}
           </div>
+          {extraBoardsNote && (
+            <div style={{ padding: "6px 14px", fontSize: 12, fontStyle: "italic", color: "#888", background: "#fafcf8", borderBottom: "1px solid #eee" }}>
+              {extraBoardsNote}
+            </div>
+          )}
 
           {/* Quick totals */}
           <div style={{ background: "#F5F5F4", padding: "10px 14px", display: "flex", gap: 20, fontSize: 14, borderBottom: "1px solid #E8E8E8" }}>
@@ -1136,18 +1142,6 @@
             )}
 
 
-            {/* Extra Boards */}
-            {(job.extraBoardsCount > 0 && (job.extraBoardsCasing || job.extraBoardsJamb)) && (
-              <div data-pdf-section="extra-boards" style={{ marginTop: 28, pageBreakInside: "avoid" }}>
-                <div style={{ display: "flex", padding: "8px 14px", background: "#1a1a1a", color: "#fff", fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>
-                  Extra Boards
-                </div>
-                <div style={{ padding: "10px 14px", fontSize: 14, borderBottom: "1px solid #ddd" }}>
-                  <strong>Extra Boards:</strong> {job.extraBoardsCount} ({[job.extraBoardsCasing && "Casing", job.extraBoardsJamb && "Jamb"].filter(Boolean).join(", ")})
-                </div>
-              </div>
-            )}
-
             {/* Bay Material */}
             {(job.bayMaterials || []).length > 0 && (
               <div data-pdf-section="bay-material" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
@@ -1163,7 +1157,7 @@
               </div>
             )}
 
-            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} /></div>
+            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} extraBoardsNote={job.extraBoardsCount > 0 && (job.extraBoardsCasing || job.extraBoardsJamb) ? `${job.extraBoardsCount} extra board${job.extraBoardsCount !== 1 ? "s" : ""} included (${[job.extraBoardsCasing && "Casing", job.extraBoardsJamb && "Jamb"].filter(Boolean).join(", ")})` : null} /></div>
 
             <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", display: "flex", justifyContent: "space-between" }}>
               <span>Materials Checklist | {job.address || ""}</span>
@@ -1286,18 +1280,6 @@
           )}
 
 
-          {/* Extra Boards */}
-          {(job.extraBoardsCount > 0 && (job.extraBoardsCasing || job.extraBoardsJamb)) && (
-            <div data-pdf-section="extra-boards" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
-              <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
-                Extra Boards
-              </div>
-              <div style={{ padding: "10px 14px", fontSize: 13, background: "#fafbfa", borderBottom: "1px solid #ddd" }}>
-                <strong>Extra Boards:</strong> {job.extraBoardsCount} ({[job.extraBoardsCasing && "Casing", job.extraBoardsJamb && "Jamb"].filter(Boolean).join(", ")})
-              </div>
-            </div>
-          )}
-
           {/* Bay Material */}
           {(job.bayMaterials || []).length > 0 && (
             <div data-pdf-section="bay-material" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
@@ -1323,7 +1305,7 @@
             </div>
           )}
 
-          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} /></div>
+          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} extraBoardsNote={job.extraBoardsCount > 0 && (job.extraBoardsCasing || job.extraBoardsJamb) ? `${job.extraBoardsCount} extra board${job.extraBoardsCount !== 1 ? "s" : ""} included (${[job.extraBoardsCasing && "Casing", job.extraBoardsJamb && "Jamb"].filter(Boolean).join(", ")})` : null} /></div>
 
           <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", textAlign: "center" }}>
             Renewal by Andersen — Detailed Cut List • {new Date().toLocaleDateString()}
@@ -1408,9 +1390,11 @@
       const [units, setUnits] = useState([emptyUnit(1)]);
       const [expandedUnit, setExpandedUnit] = useState(0);
       const [showPfSection, setShowPfSection] = useState(false);
+      const [showBayMaterial, setShowBayMaterial] = useState(false);
       const [sameTrim, setSameTrim] = useState(true); // always start with common trim active
       const [globalTrim, setGlobalTrim] = useState({
         species: "Oak",
+        jambSpecies: "Oak",
         casingProfile: '2-1/2" Colonial (C115)',
         finishType: "Stain",
         finish: "Dark Walnut (Minwax)",
@@ -1519,7 +1503,7 @@
         setExpandedUnit(idx + 1);
       };
       const applyGlobalToUnit = (u, g, force) => {
-        const updates = { species: g.species, casingProfile: g.casingProfile, finishType: g.finishType, finish: g.finish };
+        const updates = { species: g.species, jambSpecies: g.jambSpecies || g.species, casingProfile: g.casingProfile, finishType: g.finishType, finish: g.finish };
         // Only apply jamb depth if global has a value AND (force=true OR unit has no value yet)
         if (g.jambDepthWhole !== "" && g.jambDepthWhole != null) {
           if (force || !u.jambDepthWhole) {
@@ -1533,9 +1517,15 @@
       const updateGlobalTrim = (field, value) => {
         const newGlobal = { ...globalTrim, [field]: value };
         // If changing species away from Pine, reset knotty pine profile
-        if (field === "species" && value !== "Pine") {
-          const profile = CASING_PROFILES.find(p => p.label === newGlobal.casingProfile);
-          if (profile && profile.pineOnly) newGlobal.casingProfile = '2-1/2" Colonial (C115)';
+        if (field === "species") {
+          if (value !== "Pine") {
+            const profile = CASING_PROFILES.find(p => p.label === newGlobal.casingProfile);
+            if (profile && profile.pineOnly) newGlobal.casingProfile = '2-1/2" Colonial (C115)';
+          }
+          // Default jambSpecies to match casing species unless explicitly set
+          if (!newGlobal.jambSpecies || newGlobal.jambSpecies === globalTrim.species) {
+            newGlobal.jambSpecies = value;
+          }
         }
         setGlobalTrim(newGlobal);
         setSubmitted(false);
@@ -2313,45 +2303,59 @@
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#6DB344", marginBottom: 10 }}>Most Common Trim for Job</div>
                 <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Sets the default for all new units. Each unit can be overridden individually below.</div>
-                  {/* Default Species */}
-                  <div style={{ marginBottom: 10 }}>
-                    <label style={lbl}>Default Species</label>
-                    <select style={sel} value={globalTrim.species} onChange={e => updateGlobalTrim("species", e.target.value)}>
-                      {SPECIES.map(s => {
-                        const avail = isSpeciesAvailableInCatalog(catalog, s);
-                        return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
-                      })}
-                    </select>
-                    <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>Filters casing options and sets species for all units</div>
-                  </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    {/* Casing Species */}
+                    <div>
+                      <label style={lbl}>Casing Species</label>
+                      <select style={sel} value={globalTrim.species} onChange={e => updateGlobalTrim("species", e.target.value)}>
+                        {SPECIES.map(s => {
+                          const avail = isSpeciesAvailableInCatalog(catalog, s);
+                          return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
+                        })}
+                      </select>
+                    </div>
+                    {/* Casing Profile */}
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <label style={lbl}>Casing Material</label>
+                        <label style={lbl}>Casing Profile</label>
                         <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
                           <input type="checkbox" checked={!!customMode.globalCasing} onChange={() => setCustomMode(p => ({ ...p, globalCasing: !p.globalCasing }))} style={{ width: 13, height: 13 }} /> Custom
                         </label>
                       </div>
                       {customMode.globalCasing
                         ? <input style={inp} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)} placeholder="Type custom profile..." />
-                        : <select style={sel} value={`${globalTrim.species} ${globalTrim.casingProfile}`} onChange={e => {
-                            const val = e.target.value;
-                            const match = val.match(/^(Oak|Pine|Maple|Basswood)\s+(.+)$/);
-                            if (match) {
-                              const newGlobal = { ...globalTrim, species: match[1], casingProfile: match[2] };
-                              setGlobalTrim(newGlobal);
-                              setSubmitted(false);
-                              setUnits(prev => prev.map(u => applyGlobalToUnit(u, newGlobal, false)));
-                            }
-                          }}>
+                        : <select style={sel} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)}>
                             {getAvailableProfiles(globalTrim.species).map(p => {
                               const avail = isProfileAvailableInCatalog(catalog, p.label, globalTrim.species);
-                              const display = `${globalTrim.species} ${p.label}`;
-                              return <option key={p.label} value={display} disabled={!avail}>{display}{!avail ? " (unavailable)" : ""}</option>;
+                              return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
                             })}
                           </select>
                       }
                     </div>
+                    {/* Jamb Species */}
+                    <div>
+                      <label style={lbl}>Jamb Species</label>
+                      <select style={sel} value={globalTrim.jambSpecies || globalTrim.species} onChange={e => updateGlobalTrim("jambSpecies", e.target.value)}>
+                        {SPECIES.map(s => {
+                          const avail = isSpeciesAvailableInCatalog(catalog, s);
+                          return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
+                        })}
+                      </select>
+                    </div>
+                    {/* Jamb Material */}
+                    <div>
+                      <label style={lbl}>Jamb Material</label>
+                      <div style={{ ...inp, background: "#f5f5f4", color: "#555", display: "flex", alignItems: "center", cursor: "default" }}>
+                        {globalTrim.jambDepthWhole ? (() => {
+                          const jd = combineMeasurement(globalTrim.jambDepthWhole, globalTrim.jambDepthFrac);
+                          const jw = jd + (offsets?.window_pf?.jamb_width || -2.75);
+                          const stock = getJambStockWidth(jw);
+                          return `${stock.label} (${toFraction(stock.width)}")`;
+                        })() : "Set jamb depth below"}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
                     <div>
                       <label style={lbl}>Finish Type</label>
                       <select style={sel} value={globalTrim.finishType} onChange={e => {
@@ -2518,7 +2522,7 @@
                           ) : (
                           <div>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <label style={lbl}>Casing Material</label>
+                              <label style={lbl}>Casing Profile</label>
                               <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
                                 <input type="checkbox" checked={!!customMode["casing_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["casing_"+idx]: !p["casing_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
                               </label>
@@ -2739,22 +2743,19 @@
                 Prefinish / Warehouse Notes
               </div>
 
-              {/* Collapsible notes textarea */}
-              <button onClick={() => setShowPfSection(p => !p)} style={{
-                background: "none", border: "1px dashed #ccc", borderRadius: 6, padding: "10px 14px",
-                fontSize: 14, fontWeight: 600, color: "#6DB344", cursor: "pointer", width: "100%", textAlign: "left",
-                marginBottom: showPfSection ? 12 : 0
-              }}>
-                {showPfSection ? "Hide" : "+"} Prefinish / Warehouse Notes
-              </button>
-              {showPfSection && (
-                <div>
-                  <label style={lbl}>Job Notes</label>
-                  <textarea style={{ ...inp, minHeight: 60, resize: "vertical", fontFamily: "inherit" }}
-                    value={job.prefinishNotes} onChange={e => updateJob("prefinishNotes", e.target.value)}
-                    placeholder="e.g. Premium Teak stain, 2 coats, sand between coats..." />
-                </div>
-              )}
+              <div>
+                <label style={lbl}>Job Notes</label>
+                <textarea style={{ ...inp, minHeight: 60, resize: "vertical", fontFamily: "inherit" }}
+                  value={job.prefinishNotes} onChange={e => updateJob("prefinishNotes", e.target.value)}
+                  placeholder={`e.g. ${globalTrim.finish || "Premium Teak (Zar)"}, 2 coats, sand between coats...`} />
+                {!job.prefinishNotes && globalTrim.finish && (
+                  <button onClick={() => updateJob("prefinishNotes", `${globalTrim.finishType}: ${globalTrim.finish}`)} style={{
+                    background: "none", border: "none", fontSize: 11, color: "#6DB344", cursor: "pointer", padding: "4px 0", fontWeight: 600
+                  }}>
+                    Auto-fill: {globalTrim.finishType}: {globalTrim.finish}
+                  </button>
+                )}
+              </div>
 
               {/* PF Windows checkbox */}
               <div style={{ marginTop: 14 }}>
@@ -2834,10 +2835,13 @@
               background: "#fff", borderRadius: 8, padding: 18, marginBottom: 14,
               boxShadow: "0 2px 10px rgba(0,0,0,0.05)", border: "1px solid #E8E8E8"
             }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#6DB344", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-                Bay Material
-              </div>
-              {(job.bayMaterials || []).map((item, idx) => (
+              <button onClick={() => setShowBayMaterial(p => !p)} style={{
+                background: "none", border: "none", padding: 0, cursor: "pointer", width: "100%", textAlign: "left",
+                fontSize: 13, fontWeight: 700, color: "#6DB344", marginBottom: showBayMaterial ? 12 : 0, display: "flex", alignItems: "center", gap: 8
+              }}>
+                {showBayMaterial ? "▾" : "▸"} Bay Material {(job.bayMaterials || []).length > 0 && <span style={{ fontSize: 11, fontWeight: 400, color: "#999" }}>({job.bayMaterials.length} item{job.bayMaterials.length !== 1 ? "s" : ""})</span>}
+              </button>
+              {showBayMaterial && (job.bayMaterials || []).map((item, idx) => (
                 <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
                   <input style={{ ...inp, flex: 2, marginBottom: 0 }} value={item.description}
                     onChange={e => {
@@ -2876,6 +2880,7 @@
                   background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
                 }}>+ Other</button>
               </div>
+              )}
             </div>
 
             {/* Board Summary + Recalculate */}
