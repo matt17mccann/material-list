@@ -799,11 +799,12 @@
         if (!isUnitComplete(unit)) return;
         const mats = calcMaterials(unit);
         mats.forEach(m => {
+          if (m.category === "Threshold") return; // thresholds are pre-made products, not cut from stock
           for (let i = 0; i < m.qty; i++) {
             allCuts.push({
               length: m.length + MIN_CUTOFF, // add 5" for bad ends
               rawLength: m.length,
-              materialType: m.name.includes("Jamb") || m.name.includes("Sill") || m.name.includes("Stool") ? "Jamb Extension" : m.name.includes("Threshold") ? "Threshold" : m.name.includes("Apron") ? "Apron" : m.category === "Stop" ? "Stop" : "Casing",
+              materialType: m.name.includes("Jamb") || m.name.includes("Sill") || m.name.includes("Stool") ? "Jamb Extension" : m.name.includes("Apron") ? "Apron" : m.category === "Stop" ? "Stop" : "Casing",
               species: m.species,
               finish: unit.finish || "",
               profile: m.profile || null,
@@ -1128,13 +1129,24 @@
           }
         });
 
+        // Thresholds — pre-made products, listed as line items
+        const thresholdCounts = {};
+        units.forEach(unit => {
+          if (!isUnitComplete(unit)) return;
+          if (unit.unitType === "Window") return;
+          const desc = unit.thresholdSpecies || '1-1/4" x 8\' Oak';
+          thresholdCounts[desc] = (thresholdCounts[desc] || 0) + 1;
+        });
+        Object.entries(thresholdCounts).forEach(([desc, qty]) => {
+          rows.push({ category: "THRESHOLD", description: desc, quantity: qty });
+        });
+
         // Aggregate boards by material type + species + stock length
         const boardGroups = {};
         boards.forEach(board => {
-          const isJamb = board.materialType !== "Casing" && board.materialType !== "Stop";
+          const isJamb = board.materialType === "Jamb Extension" || board.materialType === "Apron";
           let label, cat;
           if (isJamb) {
-            // Jamb extensions, stools, aprons, thresholds — show stock dimensions e.g. "Oak 5/8x6x8'"
             const stockLabel = board.jambStock ? board.jambStock.label : "5/8x6";
             label = `${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}`;
             cat = "JAMB MATERIAL";
@@ -1154,25 +1166,26 @@
         });
 
         // Sort: jamb material first, then casing
+        const catOrder = { "JAMB MATERIAL": 0 }; // everything else (casing/stop) = 1
+        const getCatOrder = (c) => catOrder[c] ?? 2;
         const sortedGroups = Object.values(boardGroups).sort((a, b) => {
-          if (a.category.includes("JAMB") && !b.category.includes("JAMB")) return -1;
-          if (!a.category.includes("JAMB") && b.category.includes("JAMB")) return 1;
+          const oa = getCatOrder(a.category), ob = getCatOrder(b.category);
+          if (oa !== ob) return oa - ob;
           return a.description.localeCompare(b.description);
         });
 
         // Insert a blank separator between coils and boards if both exist
         const hasExtras = rows.length > 0;
 
-        // Insert separator between jamb material and casing groups
+        // Insert separator between category groups (jamb → threshold → casing)
         const withSeparators = [];
-        let lastWasJamb = null;
+        let lastCategory = null;
         sortedGroups.forEach(row => {
-          const isJamb = row.category.includes("JAMB");
-          if (lastWasJamb === true && !isJamb) {
+          if (lastCategory && lastCategory !== row.category) {
             withSeparators.push(null); // separator line
           }
           withSeparators.push(row);
-          lastWasJamb = isJamb;
+          lastCategory = row.category;
         });
 
         return { extraRows: rows, boardRows: withSeparators, hasExtras };
