@@ -1025,7 +1025,7 @@
     }
 
     // ─── REPORT VIEW ───
-    function ReportView({ job, units, catalog, reportType, onBack, onEdit }) {
+    function ReportView({ job, units, catalog, offsets, globalTrim, reportType, onBack, onEdit }) {
       const reportRef = useRef();
       const [activeReport, setActiveReport] = useState(reportType || "checklist");
 
@@ -1310,7 +1310,7 @@
                   <span><strong>H:</strong> {toFraction(combineMeasurement(unit.heightWhole, unit.heightFrac))}"</span>
                   {hasJD && <span><strong>JD:</strong> {toFraction(combineMeasurement(unit.jambDepthWhole, unit.jambDepthFrac))}"</span>}
                   <span><strong>Species:</strong> {unit.species}</span>
-                  <span><strong>Profile:</strong> {unit.trimStyle === "Stops" ? (unit.stopProfile || "1x4") : unit.casingProfile}</span>
+                  <span><strong>Profile:</strong> {unit.trimStyle === "Stops" ? (unit.stopProfile || "1x4 Stop") : unit.casingProfile}</span>
                   <span><strong>Finish:</strong> {unit.finish}</span>
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -1769,7 +1769,7 @@
         }
 
         // Auto-set global trim from imported data
-        const importedTrim = { species: pdfSpecies, casingProfile: pdfCasing, finishType: pdfFinishType, finish: pdfFinish };
+        const importedTrim = { ...globalTrim, trimStyle: pdfTrimStyle, species: pdfSpecies, jambSpecies: pdfSpecies, casingProfile: pdfCasing, finishType: pdfFinishType, finish: pdfFinish };
         setGlobalTrim(importedTrim);
         setSameTrim(true);
 
@@ -2372,7 +2372,7 @@
 
       // ─── REPORT ───
       if (view === "report") {
-        return <ReportView job={job} units={units} catalog={catalog} reportType={reportType} onBack={() => setView(reportFrom === "saved" ? "saved" : "editor")} onEdit={() => setView("editor")} />;
+        return <ReportView job={job} units={units} catalog={catalog} offsets={offsets} globalTrim={globalTrim} reportType={reportType} onBack={() => setView(reportFrom === "saved" ? "saved" : "editor")} onEdit={() => setView("editor")} />;
       }
 
       // ─── EDITOR ───
@@ -3112,7 +3112,7 @@
                           {JAMB_STOCK_WIDTHS.map(j => <option key={j.label} value={j.label}>{j.label}</option>)}
                         </select>
                       ) : eb.materialType === "Stop" ? (
-                        <select style={sel} value={eb.profile || "1x4"} onChange={e => {
+                        <select style={sel} value={eb.profile || "1x4 Stop"} onChange={e => {
                           const updated = [...job.extraBoards];
                           updated[idx] = { ...eb, profile: e.target.value };
                           updateJob("extraBoards", updated);
