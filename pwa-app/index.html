@@ -105,14 +105,23 @@
 
     const UNIT_TYPES = ["Window", "Entry Door", "Patio Door"];
     const TRIM_STYLES = ["Picture Frame", "Traditional", "Stops"];
-    const THRESHOLD_SPECIES = ["Oak", "Maple"];
+    const THRESHOLD_OPTIONS = [
+      '1-1/4" x 8\' Oak',
+      '1-1/4" x 10\' Oak',
+      '1-1/4" x 8\' Maple',
+      '1-1/4" x 10\' Maple',
+      '1x4 x 8\' Oak',
+      '1x4 x 10\' Oak',
+      '1x4 x 8\' Maple',
+      '1x4 x 10\' Maple',
+    ];
 
     const JAMB_STOCK_WIDTHS = [
-      { label: '1x4', width: 3.5 },
-      { label: '1x6', width: 5.5 },
-      { label: '1x8', width: 7.25 },
-      { label: '1x10', width: 9.25 },
-      { label: '1x12', width: 11.25 },
+      { label: '5/8x4', width: 3.5, thickness: 0.625 },
+      { label: '5/8x6', width: 5.5, thickness: 0.625 },
+      { label: '3/4x8', width: 7.25, thickness: 0.75 },
+      { label: '3/4x10', width: 9.25, thickness: 0.75 },
+      { label: '3/4x12', width: 11.25, thickness: 0.75 },
     ];
 
     function getJambStockWidth(neededWidth) {
@@ -493,6 +502,13 @@
           { name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" }
         );
       }
+      // Update jamb thickness based on stock size (5/8x4, 5/8x6 = 5/8"; 3/4x8+ = 3/4")
+      materials.forEach(m => {
+        if (m.jambStock && m.jambStock.thickness != null) {
+          m.thickness = m.jambStock.thickness;
+        }
+      });
+
       // Apply custom trim overrides
       if (unit.customTrimPieces && unit.customTrimPieces.length > 0) {
         unit.customTrimPieces.forEach(ctp => {
@@ -530,7 +546,7 @@
         unitType: "Window",
         species: "Oak",
         trimStyle: "Traditional",
-        thresholdSpecies: "Oak",
+        thresholdSpecies: '1-1/4" x 8\' Oak',
         casingProfile: '2-1/2" Colonial (C115)',
         finishType: "Stain",
         finish: "Dark Walnut (Minwax)",
@@ -691,6 +707,7 @@
       entry_door: { sideCasing_length: 6, headCasing_length: 8, threshold_length: 8 },
       patio_door: { sideJamb_length: 2, headJamb_length: 2, sillJamb_length: 2, jamb_width: -4.5625, sideCasing_length: 6, headCasing_length: 8, threshold_length: 8 },
       thickness: 0.625,
+      boardWaste: 5,
     };
 
     function loadOffsets() {
@@ -752,13 +769,13 @@
 
     // ─── BOARD OPTIMIZER ───
     // Groups cuts by material type + species + finish, then bin-packs into standard lengths
-    function optimizeBoards(units, catalog, perUnit) {
+    function optimizeBoards(units, catalog, perUnit, boardWaste) {
       // Per-unit mode: run optimizer separately for each unit, then combine
       if (perUnit) {
         const PU_STOCK_LABELS = { 96: "8'", 120: "10'", 144: "12'" };
         let allBoards = [];
         units.forEach(unit => {
-          const result = optimizeBoards([unit], catalog, false);
+          const result = optimizeBoards([unit], catalog, false, boardWaste);
           allBoards.push(...result.boards);
         });
         allBoards.sort((a, b) => {
@@ -773,7 +790,7 @@
       const ALL_STOCK_LENGTHS = [96, 120, 144]; // 8ft, 10ft, 12ft in inches
       const STOCK_LABELS = { 96: "8'", 120: "10'", 144: "12'" };
 
-      const MIN_CUTOFF = 5; // minimum 5" off each end of board
+      const MIN_CUTOFF = boardWaste ?? 5; // configurable waste per board from offsets
       const KERF = 0.125; // 1/8" saw blade kerf between cuts
 
       // Collect all cuts from all units
@@ -920,8 +937,8 @@
       return { boards: allBoards, summary, STOCK_LABELS };
     }
 
-    function BoardSummary({ units, catalog, optimizePerUnit, extraBoards }) {
-      const result = optimizeBoards(units, catalog, optimizePerUnit);
+    function BoardSummary({ units, catalog, optimizePerUnit, extraBoards, boardWaste }) {
+      const result = optimizeBoards(units, catalog, optimizePerUnit, boardWaste);
       const boards = [...result.boards];
       const summary = { ...result.summary };
       const STOCK_LABELS = result.STOCK_LABELS;
@@ -1079,7 +1096,7 @@
 
       // ─── Aggregate materials for checklist view ───
       const buildChecklist = () => {
-        const result = optimizeBoards(units, catalog, job.optimizePerUnit);
+        const result = optimizeBoards(units, catalog, job.optimizePerUnit, offsets.boardWaste);
         const boards = [...result.boards];
         const STOCK_LABELS = result.STOCK_LABELS;
 
@@ -1146,7 +1163,19 @@
         // Insert a blank separator between coils and boards if both exist
         const hasExtras = rows.length > 0;
 
-        return { extraRows: rows, boardRows: sortedGroups, hasExtras };
+        // Insert separator between jamb material and casing groups
+        const withSeparators = [];
+        let lastWasJamb = null;
+        sortedGroups.forEach(row => {
+          const isJamb = row.category.includes("JAMB");
+          if (lastWasJamb === true && !isJamb) {
+            withSeparators.push(null); // separator line
+          }
+          withSeparators.push(row);
+          lastWasJamb = isJamb;
+        });
+
+        return { extraRows: rows, boardRows: withSeparators, hasExtras };
       };
 
       // ─── Report header (shared by both report types) ───
@@ -1250,7 +1279,7 @@
               </div>
             )}
 
-            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} extraBoards={job.extraBoards} /></div>
+            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} /></div>
 
             <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", display: "flex", justifyContent: "space-between" }}>
               <span>Materials Checklist | {job.address || ""}</span>
@@ -1328,24 +1357,27 @@
           })}
 
           {/* Prefinishing Notes */}
-          {(job.prefinishNotes || job.pfWindowsNeeded) && (
-            <div data-pdf-section="prefinish" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
-              <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
-                Prefinish / Warehouse Notes
+          <div data-pdf-section="prefinish" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
+            <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
+              Prefinish / Warehouse Notes
+            </div>
+            <div style={{ padding: "10px 14px", fontSize: 15, fontWeight: 700, background: "rgba(109,179,68,0.12)", borderBottom: "1px solid #c5e0b4", color: "#2d5016" }}>
+              {globalTrim.finishType}: {globalTrim.finish}
+            </div>
+            {job.prefinishNotes && (
+              <div style={{ padding: "10px 14px", fontSize: 13, background: "#fafbfa", borderBottom: "1px solid #ddd" }}>
+                {job.prefinishNotes}
               </div>
-              {job.prefinishNotes && (
-                <div style={{ padding: "10px 14px", fontSize: 13, background: "#fafbfa", borderBottom: "1px solid #ddd" }}>
-                  {job.prefinishNotes}
-                </div>
-              )}
+            )}
+            {(job.pfWindowsNeeded != null) && (
               <div style={{ padding: "10px 14px", fontSize: 13, background: "#fff", borderBottom: "1px solid #ddd" }}>
                 <strong>Windows needing PF:</strong> {job.pfWindowsNeeded ? "Yes" : "No"}
                 {job.pfWindowsNeeded && job.pfWindowsList && (
                   <span> — {job.pfWindowsList}</span>
                 )}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Extra Materials */}
           {(job.extraMaterials || []).length > 0 && (
@@ -1398,7 +1430,7 @@
             </div>
           )}
 
-          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} extraBoards={job.extraBoards} /></div>
+          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} /></div>
 
           <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", textAlign: "center" }}>
             Renewal by Andersen — Detailed Cut List • {new Date().toLocaleDateString()}
@@ -1484,6 +1516,7 @@
       const [expandedUnit, setExpandedUnit] = useState(0);
       const [showPfSection, setShowPfSection] = useState(false);
       const [showBayMaterial, setShowBayMaterial] = useState(false);
+      const [expandedCatalogItem, setExpandedCatalogItem] = useState(null);
       const [sameTrim, setSameTrim] = useState(true); // always start with common trim active
       const [globalTrim, setGlobalTrim] = useState({
         trimStyle: "Picture Frame",
@@ -1833,9 +1866,9 @@
         setView("report");
       };
 
-      const inp = { width: "100%", padding: "11px 14px", border: "1px solid #ddd", borderRadius: 6, fontSize: 16, background: "#fff", boxSizing: "border-box" };
+      const inp = { width: "100%", padding: "12px 14px", border: "1px solid #ddd", borderRadius: 6, fontSize: 17, background: "#fff", boxSizing: "border-box" };
       const sel = { ...inp, appearance: "auto" };
-      const lbl = { fontSize: 11, fontWeight: 700, color: "#777", marginBottom: 5, display: "block", letterSpacing: 0.8, textTransform: "uppercase" };
+      const lbl = { fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 5, display: "block", letterSpacing: 0.8, textTransform: "uppercase" };
 
       // ─── HOME SCREEN ───
       if (view === "home") {
@@ -1924,8 +1957,6 @@
       // ─── AVAILABLE LUMBER ───
       if (view === "lumber") {
         const updateCatalog = (updated) => { setCatalog(updated); saveCatalogToAPI(updated); };
-
-        const [expandedCatalogItem, setExpandedCatalogItem] = useState(null);
 
         const toggleAvail = (section, index, species, lengthKey) => {
           const arr = [...catalog[section]];
@@ -2188,6 +2219,8 @@
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>Jamb Thickness</div>
                 <OffsetRow label="Extension Thickness" desc="Applied to all jamb extensions" value={offsets.thickness ?? 0.625}
                   onChange={v => { const u = { ...offsets, thickness: parseFloat(v) || 0 }; setOffsetsState(u); saveOffsetsToAPI(u); }} />
+                <OffsetRow label="Board Waste (inches)" desc="Extra length added per board for split ends / bad ends" value={offsets.boardWaste ?? 5}
+                  onChange={v => { const u = { ...offsets, boardWaste: parseFloat(v) || 0 }; setOffsetsState(u); saveOffsetsToAPI(u); }} />
               </div>
             </div>
           </div>
@@ -2451,8 +2484,8 @@
               </div>
 
               <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#6DB344", marginBottom: 10 }}>Most Common Trim for Job</div>
-                <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Sets the default for all new units. Each unit can be overridden individually below.</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#6DB344", marginBottom: 10 }}>Most Common Trim for Job</div>
+                <div style={{ fontSize: 12, color: "#999", marginBottom: 10 }}>Sets the default for all new units. Each unit can be overridden individually below.</div>
                   <div style={{ marginBottom: 10 }}>
                     <label style={lbl}>Window Type</label>
                     <select style={sel} value={globalTrim.trimStyle || "Picture Frame"} onChange={e => updateGlobalTrim("trimStyle", e.target.value)}>
@@ -2647,7 +2680,17 @@
                             </div>
                             {customMode["species_"+idx]
                               ? <input style={inp} value={unit.species} onChange={e => updateUnit(idx, "species", e.target.value)} placeholder="Type custom species..." />
-                              : <select style={sel} value={unit.species} onChange={e => updateUnit(idx, "species", e.target.value)}>
+                              : <select style={sel} value={unit.species} onChange={e => {
+                                  const newSp = e.target.value;
+                                  const updates = { species: newSp };
+                                  // Reset knotty pine profile if switching away from Pine
+                                  if (newSp !== "Pine") {
+                                    const profile = CASING_PROFILES.find(p => p.label === unit.casingProfile);
+                                    if (profile && profile.pineOnly) updates.casingProfile = '2-1/2" Colonial (C115)';
+                                  }
+                                  setUnits(p => p.map((u, i) => i === idx ? { ...u, ...updates } : u));
+                                  setSubmitted(false);
+                                }}>
                                   {SPECIES.map(s => {
                                     const avail = isSpeciesAvailableInCatalog(catalog, s);
                                     return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
@@ -2760,10 +2803,18 @@
                           </div>
                           {needsThreshold && (
                             <div>
-                              <label style={lbl}>Threshold Species</label>
-                              <select style={sel} value={unit.thresholdSpecies} onChange={e => updateUnit(idx, "thresholdSpecies", e.target.value)}>
-                                {THRESHOLD_SPECIES.map(s => <option key={s}>{s}</option>)}
-                              </select>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <label style={lbl}>Threshold</label>
+                                <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>
+                                  <input type="checkbox" checked={!!customMode["thresh_"+idx]} onChange={() => setCustomMode(p => ({ ...p, ["thresh_"+idx]: !p["thresh_"+idx] }))} style={{ width: 13, height: 13 }} /> Custom
+                                </label>
+                              </div>
+                              {customMode["thresh_"+idx]
+                                ? <input style={inp} value={unit.thresholdSpecies} onChange={e => updateUnit(idx, "thresholdSpecies", e.target.value)} placeholder="Type custom threshold..." />
+                                : <select style={sel} value={unit.thresholdSpecies} onChange={e => updateUnit(idx, "thresholdSpecies", e.target.value)}>
+                                    {THRESHOLD_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                              }
                             </div>
                           )}
                         </div>
@@ -3137,12 +3188,12 @@
 
               <div>
                 <label style={lbl}>Job Notes</label>
-                <textarea style={{ ...inp, minHeight: 60, resize: "vertical", fontFamily: "inherit" }}
+                <textarea style={{ ...inp, minHeight: 80, resize: "vertical", fontFamily: "inherit", fontSize: 18 }}
                   value={job.prefinishNotes} onChange={e => updateJob("prefinishNotes", e.target.value)}
                   placeholder={`e.g. ${globalTrim.finish || "Premium Teak (Zar)"}, 2 coats, sand between coats...`} />
                 {!job.prefinishNotes && globalTrim.finish && (
                   <button onClick={() => updateJob("prefinishNotes", `${globalTrim.finishType}: ${globalTrim.finish}`)} style={{
-                    background: "none", border: "none", fontSize: 11, color: "#6DB344", cursor: "pointer", padding: "4px 0", fontWeight: 600
+                    background: "none", border: "none", fontSize: 13, color: "#6DB344", cursor: "pointer", padding: "6px 0", fontWeight: 600
                   }}>
                     Auto-fill: {globalTrim.finishType}: {globalTrim.finish}
                   </button>
@@ -3151,7 +3202,7 @@
 
               {/* PF Windows checkbox */}
               <div style={{ marginTop: 14 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, fontWeight: 600, color: "#333", cursor: "pointer" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 16, fontWeight: 600, color: "#333", cursor: "pointer" }}>
                   <input type="checkbox" checked={job.pfWindowsNeeded || false}
                     onChange={e => { updateJob("pfWindowsNeeded", e.target.checked); if (!e.target.checked) updateJob("pfWindowsList", ""); }}
                     style={{ width: 20, height: 20, accentColor: "#6DB344" }} />
@@ -3309,7 +3360,7 @@
                 </label>
               </div>
               {allComplete && units.length > 0 ? (() => {
-                const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog, job.optimizePerUnit);
+                const { boards, summary, STOCK_LABELS } = optimizeBoards(units, catalog, job.optimizePerUnit, offsets.boardWaste);
                 return (
                   <div style={{ padding: "12px 16px" }}>
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
