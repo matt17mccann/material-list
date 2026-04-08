@@ -2618,6 +2618,9 @@
                       }
                     </div>
                   </div>
+                  <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(109,179,68,0.12)", borderRadius: 6, border: "1px solid rgba(109,179,68,0.25)", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#2d5016" }}>{globalTrim.finishType}: {globalTrim.finish}</span>
+                  </div>
                   {/* Global Jamb Depth */}
                   <div style={{ marginTop: 10 }}>
                     <FractionInput
@@ -3054,10 +3057,12 @@
                             <input id={`unitExtraMat_${idx}`} style={{ ...inp, flex: 1, marginBottom: 0, fontSize: 12 }} placeholder="Type extra material..." onKeyDown={e => {
                               if (e.key === "Enter" && e.target.value.trim()) {
                                 const desc = e.target.value.trim();
-                                const updated = [...(unit.manualMaterials || []), { description: desc, qty: 1 }];
-                                updateUnit(idx, "manualMaterials", updated);
-                                const alreadyInJob = (job.extraMaterials || []).some(m => m.description === desc);
-                                if (!alreadyInJob) updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Other", description: desc, quantity: 1 }]);
+                                updateUnit(idx, "manualMaterials", [...(unit.manualMaterials || []), { description: desc, qty: 1 }]);
+                                setJob(prev => {
+                                  const existing = prev.extraMaterials || [];
+                                  if (existing.some(m => m.description === desc)) return prev;
+                                  return { ...prev, extraMaterials: [...existing, { category: "Other", description: desc, quantity: 1 }] };
+                                });
                                 e.target.value = "";
                               }
                             }} />
@@ -3065,10 +3070,12 @@
                               const el = document.getElementById(`unitExtraMat_${idx}`);
                               if (el && el.value.trim()) {
                                 const desc = el.value.trim();
-                                const updated = [...(unit.manualMaterials || []), { description: desc, qty: 1 }];
-                                updateUnit(idx, "manualMaterials", updated);
-                                const alreadyInJob = (job.extraMaterials || []).some(m => m.description === desc);
-                                if (!alreadyInJob) updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Other", description: desc, quantity: 1 }]);
+                                updateUnit(idx, "manualMaterials", [...(unit.manualMaterials || []), { description: desc, qty: 1 }]);
+                                setJob(prev => {
+                                  const existing = prev.extraMaterials || [];
+                                  if (existing.some(m => m.description === desc)) return prev;
+                                  return { ...prev, extraMaterials: [...existing, { category: "Other", description: desc, quantity: 1 }] };
+                                });
                                 el.value = "";
                               }
                             }} style={{
