@@ -1521,7 +1521,7 @@
             <button onClick={handleEmail} style={{
               background: "#6DB344", border: "none", color: "#fff",
               padding: "8px 16px", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer", marginLeft: "auto"
-            }}>Email</button>
+            }}>Share</button>
           </div>
 
           {activeReport === "checklist" ? <ChecklistReport /> : <DetailedReport />}
@@ -3035,23 +3035,13 @@
                             <div style={{ fontSize: 12, fontWeight: 700, color: "#888", marginBottom: 6 }}>Extra Materials</div>
                           )}
                           {(unit.manualMaterials || []).map((mm, mi) => (
-                            <div key={mi} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                              <input style={{ ...inp, flex: 2, marginBottom: 0, fontSize: 12 }} value={mm.description}
-                                placeholder="Description" onChange={e => {
-                                  const updated = [...(unit.manualMaterials || [])];
-                                  updated[mi] = { ...mm, description: e.target.value };
-                                  updateUnit(idx, "manualMaterials", updated);
-                                }} />
-                              <input style={{ ...inp, width: 40, marginBottom: 0, fontSize: 12, textAlign: "center" }} type="number" min="1"
+                            <div key={mi} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, background: "#fafbfa", borderRadius: 6, padding: "6px 8px", border: "1px solid #E8E8E8" }}>
+                              <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: "#333" }}>{mm.description || "—"}</span>
+                              <span style={{ fontSize: 10, color: "#999", flexShrink: 0 }}>Qty</span>
+                              <input style={{ ...inp, width: 40, marginBottom: 0, fontSize: 12, textAlign: "center", fontWeight: 700 }} type="number" min="1"
                                 value={mm.qty} placeholder="Qty" onChange={e => {
                                   const updated = [...(unit.manualMaterials || [])];
                                   updated[mi] = { ...mm, qty: parseInt(e.target.value) || 1 };
-                                  updateUnit(idx, "manualMaterials", updated);
-                                }} />
-                              <input style={{ ...inp, width: 55, marginBottom: 0, fontSize: 12, textAlign: "center" }} type="number" step="0.0625"
-                                value={mm.length} placeholder="Length" onChange={e => {
-                                  const updated = [...(unit.manualMaterials || [])];
-                                  updated[mi] = { ...mm, length: parseFloat(e.target.value) || 0 };
                                   updateUnit(idx, "manualMaterials", updated);
                                 }} />
                               <button onClick={() => {
@@ -3060,13 +3050,32 @@
                               }} style={{ background: "none", border: "none", fontSize: 16, color: "#c0392b", cursor: "pointer", padding: "0 2px", flexShrink: 0 }}>✕</button>
                             </div>
                           ))}
-                          <button onClick={() => {
-                            const updated = [...(unit.manualMaterials || []), { description: "", qty: 1, length: 0 }];
-                            updateUnit(idx, "manualMaterials", updated);
-                          }} style={{
-                            width: "100%", padding: "7px 0", border: "1px dashed #ccc", borderRadius: 6,
-                            background: "transparent", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer"
-                          }}>+ Add Extra Material</button>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <input id={`unitExtraMat_${idx}`} style={{ ...inp, flex: 1, marginBottom: 0, fontSize: 12 }} placeholder="Type extra material..." onKeyDown={e => {
+                              if (e.key === "Enter" && e.target.value.trim()) {
+                                const desc = e.target.value.trim();
+                                const updated = [...(unit.manualMaterials || []), { description: desc, qty: 1 }];
+                                updateUnit(idx, "manualMaterials", updated);
+                                const alreadyInJob = (job.extraMaterials || []).some(m => m.description === desc);
+                                if (!alreadyInJob) updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Other", description: desc, quantity: 1 }]);
+                                e.target.value = "";
+                              }
+                            }} />
+                            <button onClick={() => {
+                              const el = document.getElementById(`unitExtraMat_${idx}`);
+                              if (el && el.value.trim()) {
+                                const desc = el.value.trim();
+                                const updated = [...(unit.manualMaterials || []), { description: desc, qty: 1 }];
+                                updateUnit(idx, "manualMaterials", updated);
+                                const alreadyInJob = (job.extraMaterials || []).some(m => m.description === desc);
+                                if (!alreadyInJob) updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Other", description: desc, quantity: 1 }]);
+                                el.value = "";
+                              }
+                            }} style={{
+                              padding: "6px 12px", border: "none", borderRadius: 6,
+                              background: "#6DB344", fontSize: 12, fontWeight: 700, color: "#fff", cursor: "pointer"
+                            }}>+ Add</button>
+                          </div>
                         </div>
 
                         {/* Actions */}
