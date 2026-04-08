@@ -16,7 +16,8 @@
   <title>Cut List Pro</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    body { font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; background: #F5F5F4; color: #1C1C1C; -webkit-font-smoothing: antialiased; letter-spacing: -0.01em; }
+    body { font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; background: #F5F5F4; color: #1C1C1C; -webkit-font-smoothing: antialiased; letter-spacing: -0.01em; overflow-anchor: none; }
+    html { scroll-behavior: auto; overflow-anchor: none; }
     #root { min-height: 100vh; min-height: -webkit-fill-available; }
     input, select, button { font-family: inherit; }
     input:focus, select:focus { outline: none; border-color: #6DB344 !important; box-shadow: 0 0 0 2px rgba(109,179,68,0.15); }
@@ -270,7 +271,7 @@
     }
 
     function parseRSuiteJSON(data) {
-      const jobInfo = { customerName: "", address: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
+      const jobInfo = { customerName: "", address: "", poNumber: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
 
       // Customer name
       const contact = (data.contactList || [])[0];
@@ -280,6 +281,14 @@
       const acct = data.account || {};
       const parts = [acct.ShippingStreet, acct.ShippingCity, acct.ShippingStateCode, acct.ShippingPostalCode].filter(Boolean).map(s => String(s).trim());
       jobInfo.address = parts.join(", ");
+
+      // PO number — check phone fields for values starting with R, RP, or RD
+      const phoneFields = [
+        contact?.Phone, contact?.MobilePhone, contact?.HomePhone, contact?.Fax,
+        acct?.Phone, acct?.Fax
+      ].filter(Boolean).map(s => String(s).trim());
+      const poMatch = phoneFields.find(p => /^R[PD]?\d/i.test(p));
+      if (poMatch) jobInfo.poNumber = poMatch;
 
       // Order items
       const oiList = data?.opptyContainer?.anOrderContainer?.oiContainerList || [];
@@ -1082,7 +1091,11 @@
         return pdf;
       };
 
-      const pdfFilename = () => `CutList_${(job.customerName || "Job").replace(/\s+/g, "_")}_${job.date || "undated"}.pdf`;
+      const pdfFilename = () => {
+        const lastName = (job.customerName || "").split(" ").pop() || "Job";
+        const po = job.poNumber ? ` (${job.poNumber})` : "";
+        return `${lastName} Material List${po}.pdf`;
+      };
 
       const handlePDF = async () => {
         const pdf = await generatePDFDoc();
@@ -1783,6 +1796,7 @@
         if (jobInfo) {
           if (jobInfo.customerName) updateJob("customerName", jobInfo.customerName);
           if (jobInfo.address) updateJob("address", jobInfo.address);
+          if (jobInfo.poNumber) updateJob("poNumber", jobInfo.poNumber);
         }
 
         // Extract job-wide trim details from the 900 line item info
@@ -2493,7 +2507,7 @@
                 </div>
                 <div>
                   <label style={lbl}>Date</label>
-                  <input style={inp} type="date" value={job.date} onChange={e => updateJob("date", e.target.value)} />
+                  <input style={{ ...inp, width: "100%", maxWidth: "100%", WebkitAppearance: "none" }} type="date" value={job.date} onChange={e => updateJob("date", e.target.value)} />
                 </div>
               </div>
             </div>
