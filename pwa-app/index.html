@@ -106,6 +106,7 @@
     const UNIT_TYPES = ["Window", "Entry Door", "Patio Door"];
     const TRIM_STYLES = ["Picture Frame", "Traditional", "Stops"];
     const THRESHOLD_OPTIONS = [
+      'None',
       '1-1/4" x 8\' Oak',
       '1-1/4" x 10\' Oak',
       '1-1/4" x 8\' Maple',
@@ -181,7 +182,7 @@
       { label: 'Eased Edge 1-1/4" Stop', width: 1.25, code: 'STOP-EASE', pineOnly: false },
     ];
 
-    const STOP_COVERAGES = ["All Sides", "Sides and Top"];
+    const STOP_COVERAGES = ["All Sides", "Sides and Top", "None"];
 
     function getAvailableProfiles(species) {
       return CASING_PROFILES.filter(p => !p.pineOnly || species === "Pine");
@@ -456,21 +457,27 @@
 
       if (unit.unitType === "Window") {
         if (unit.trimStyle === "Stops") {
-          const stopW = getStopProfileWidth(unit.stopProfile);
-          const isAllSides = unit.stopCoverage !== "Sides and Top";
-          materials.push(
-            { name: "Side Stop", qty: 2, length: h, width: stopW, thickness: null, species: unit.species, category: "Stop", profile: unit.stopProfile },
-            { name: isAllSides ? "Top/Bottom Stop" : "Top Stop", qty: isAllSides ? 2 : 1, length: w, width: stopW, thickness: null, species: unit.species, category: "Stop", profile: unit.stopProfile }
-          );
+          if (unit.stopProfile !== "None" && unit.stopCoverage !== "None") {
+            const stopW = getStopProfileWidth(unit.stopProfile);
+            const isAllSides = unit.stopCoverage !== "Sides and Top";
+            materials.push(
+              { name: "Side Stop", qty: 2, length: h, width: stopW, thickness: null, species: unit.species, category: "Stop", profile: unit.stopProfile },
+              { name: isAllSides ? "Top/Bottom Stop" : "Top Stop", qty: isAllSides ? 2 : 1, length: w, width: stopW, thickness: null, species: unit.species, category: "Stop", profile: unit.stopProfile }
+            );
+          }
         } else if (unit.trimStyle === "Picture Frame") {
           const o = off.window_pf;
           const jw = jd + o.jamb_width;
           materials.push(
             { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
             { name: "Top/Bottom Jamb Extension", qty: 2, length: w + o.topBottomJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-            { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-            { name: "Top/Bottom Casing", qty: 2, length: w + o.topBottomCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
           );
+          if (unit.casingProfile !== "None") {
+            materials.push(
+              { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+              { name: "Top/Bottom Casing", qty: 2, length: w + o.topBottomCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
+            );
+          }
         } else {
           const o = off.window_trad;
           const jw = jd + o.jamb_width;
@@ -478,18 +485,26 @@
             { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
             { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
             { name: "Sill / Stool", qty: 1, length: w + o.stool_length, width: jw + o.stool_width_extra, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw + o.stool_width_extra) },
-            { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-            { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-            { name: "Apron", qty: 1, length: w + o.apron_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
           );
+          if (unit.casingProfile !== "None") {
+            materials.push(
+              { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+              { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+              { name: "Apron", qty: 1, length: w + o.apron_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
+            );
+          }
         }
       } else if (unit.unitType === "Entry Door") {
         const o = off.entry_door;
-        materials.push(
-          { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-          { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-          { name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" }
-        );
+        if (unit.casingProfile !== "None") {
+          materials.push(
+            { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+          );
+        }
+        if (unit.thresholdSpecies !== "None") {
+          materials.push({ name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" });
+        }
       } else if (unit.unitType === "Patio Door") {
         const o = off.patio_door;
         const jw = jd + o.jamb_width;
@@ -497,10 +512,16 @@
           { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
           { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
           { name: "Sill Jamb Extension", qty: 1, length: w + o.sillJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-          { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-          { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-          { name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" }
         );
+        if (unit.casingProfile !== "None") {
+          materials.push(
+            { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+          );
+        }
+        if (unit.thresholdSpecies !== "None") {
+          materials.push({ name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" });
+        }
       }
       // Update jamb thickness based on stock size (5/8x4, 5/8x6 = 5/8"; 3/4x8+ = 3/4")
       materials.forEach(m => {
@@ -1091,7 +1112,7 @@
         const body = encodeURIComponent(`Hi,\n\nPlease find the material cut list for:\n\nCustomer: ${job.customerName || ""}\nAddress: ${job.address || ""}\nDate: ${job.date || ""}\nPO #: ${job.poNumber || ""}\nMeasured by: ${job.techMeasurer || ""}\n\nThe PDF is attached separately.\n\nThanks`);
         pdf.save(filename);
         setTimeout(() => {
-          window.location.href = `mailto:?subject=${subject}&body=${body}`;
+          window.location.href = `mailto:nina@northlandrba.com?subject=${subject}&body=${body}`;
         }, 500);
       };
 
@@ -1135,6 +1156,7 @@
           if (!isUnitComplete(unit)) return;
           if (unit.unitType === "Window") return;
           const desc = unit.thresholdSpecies || '1-1/4" x 8\' Oak';
+          if (desc === "None") return;
           thresholdCounts[desc] = (thresholdCounts[desc] || 0) + 1;
         });
         Object.entries(thresholdCounts).forEach(([desc, qty]) => {
@@ -1916,7 +1938,7 @@
                 <div style={{ width: 40, height: 2, background: "#6DB344", margin: "12px auto 10px" }} />
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 2.5, textTransform: "uppercase" }}>Lake Superior Region</div>
                 <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.45)", letterSpacing: 1.5, textTransform: "uppercase", marginTop: 4 }}>Material Cut List</div>
-                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.2)", marginTop: 8 }}>v2.1 — Apr 3 2026</div>
+                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.2)", marginTop: 8 }}>v2.2 — Apr 8 2026</div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 6 }}>
                   <div style={{ width: 7, height: 7, borderRadius: "50%", background: isOnline ? "#6DB344" : "#f39c12", boxShadow: isOnline ? "0 0 6px rgba(109,179,68,0.5)" : "0 0 6px rgba(243,156,18,0.5)" }} />
                   <span style={{ fontSize: 10, color: isOnline ? "rgba(109,179,68,0.7)" : "rgba(243,156,18,0.7)" }}>{syncing ? "Syncing..." : isOnline ? "Connected" : "Offline"}</span>
@@ -2527,6 +2549,7 @@
                       {customMode.globalCasing
                         ? <input style={inp} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)} placeholder="Type custom profile..." />
                         : <select style={sel} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)}>
+                            <option value="None">None (no casing)</option>
                             {getAvailableProfiles(globalTrim.species).map(p => {
                               const avail = isProfileAvailableInCatalog(catalog, p.label, globalTrim.species);
                               return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
@@ -2679,7 +2702,7 @@
                             <div>
                               <label style={lbl}>Stop Coverage</label>
                               <select style={sel} value={unit.stopCoverage || "All Sides"} onChange={e => updateUnit(idx, "stopCoverage", e.target.value)}>
-                                {STOP_COVERAGES.map(c => <option key={c}>{c}</option>)}
+                                {STOP_COVERAGES.map(c => <option key={c} value={c}>{c === "None" ? "None (no stops)" : c}</option>)}
                               </select>
                             </div>
                           )}
@@ -2723,6 +2746,7 @@
                             {customMode["stop_"+idx]
                               ? <input style={inp} value={unit.stopProfile || "1x4 Stop"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)} placeholder="Type custom stop profile..." />
                               : <select style={sel} value={unit.stopProfile || "1x4 Stop"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)}>
+                                  <option value="None">None (no stops)</option>
                                   {getAvailableStopProfiles(unit.species).map(p => (
                                     <option key={p.label} value={p.label}>{p.label}</option>
                                   ))}
@@ -2740,6 +2764,7 @@
                             {customMode["casing_"+idx]
                               ? <input style={inp} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)} placeholder="Type custom profile..." />
                               : <select style={sel} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)}>
+                                  <option value="None">None (no casing)</option>
                                   {getAvailableProfiles(unit.species).map(p => {
                                     const avail = isProfileAvailableInCatalog(catalog, p.label, unit.species);
                                     return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
@@ -3173,18 +3198,25 @@
                   )}
                 </div>
               ))}
-              <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 11, color: "#999", marginTop: 8, marginBottom: 6, borderTop: "1px solid #eee", paddingTop: 8 }}>
+                Quick add using job trim: <strong>{globalTrim.species} / {globalTrim.casingProfile}</strong>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Casing", species: globalTrim.species, profile: globalTrim.casingProfile, stockLength: "120", note: "" }])} style={{
-                  flex: 1, minWidth: 100, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
-                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                  flex: 1, minWidth: 100, padding: "12px 0", border: "none", borderRadius: 8,
+                  background: "#6DB344", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
                 }}>+ Casing</button>
                 <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Jamb Extension", species: globalTrim.jambSpecies || globalTrim.species, profile: "1x6", stockLength: "120", note: "" }])} style={{
-                  flex: 1, minWidth: 100, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
-                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                  flex: 1, minWidth: 100, padding: "12px 0", border: "none", borderRadius: 8,
+                  background: "#6DB344", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
                 }}>+ Jamb</button>
+                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Stop", species: globalTrim.species, profile: globalTrim.stopProfile || "1x4 Stop", stockLength: "120", note: "" }])} style={{
+                  flex: 1, minWidth: 100, padding: "12px 0", border: "none", borderRadius: 8,
+                  background: "#6DB344", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
+                }}>+ Stop</button>
                 <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Other", species: globalTrim.species, profile: "", stockLength: "120", note: "" }])} style={{
-                  flex: 1, minWidth: 100, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
-                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
+                  flex: 1, minWidth: 100, padding: "12px 0", border: "none", borderRadius: 8,
+                  background: "#555", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
                 }}>+ Other</button>
               </div>
             </div>
@@ -3242,26 +3274,10 @@
                 Extra Materials
               </div>
               {(job.extraMaterials || []).map((item, idx) => (
-                <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                  {item.category === "Coil" ? (
-                    <select style={{ ...sel, flex: 2, marginBottom: 0 }} value={item.description}
-                      onChange={e => {
-                        const updated = [...job.extraMaterials];
-                        updated[idx] = { ...item, description: e.target.value };
-                        updateJob("extraMaterials", updated);
-                      }}>
-                      {COIL_COLORS.map(c => <option key={c} value={`Coil - ${c}`}>Coil - {c}</option>)}
-                    </select>
-                  ) : (
-                    <input style={{ ...inp, flex: 2, marginBottom: 0 }} value={item.description}
-                      onChange={e => {
-                        const updated = [...job.extraMaterials];
-                        updated[idx] = { ...item, description: e.target.value };
-                        updateJob("extraMaterials", updated);
-                      }}
-                      placeholder="Description" />
-                  )}
-                  <input style={{ ...inp, width: 60, flexShrink: 0, marginBottom: 0, textAlign: "center" }} type="number" min="1"
+                <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, background: "#fafbfa", borderRadius: 6, padding: "8px 10px", border: "1px solid #E8E8E8" }}>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#333" }}>{item.description || "—"}</span>
+                  <span style={{ fontSize: 11, color: "#999", flexShrink: 0 }}>Qty</span>
+                  <input style={{ ...inp, width: 50, flexShrink: 0, marginBottom: 0, textAlign: "center", fontWeight: 700 }} type="number" min="1"
                     value={item.quantity} onChange={e => {
                       const updated = [...job.extraMaterials];
                       updated[idx] = { ...item, quantity: parseInt(e.target.value) || 1 };
@@ -3273,15 +3289,36 @@
                   }} style={{ background: "none", border: "none", fontSize: 18, color: "#c0392b", cursor: "pointer", padding: "0 4px", flexShrink: 0 }}>✕</button>
                 </div>
               ))}
-              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                <button onClick={() => updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Coil", description: "Coil - Terratone", quantity: 1 }])} style={{
-                  flex: 1, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
-                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
-                }}>+ Add Coil</button>
-                <button onClick={() => updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Other", description: "", quantity: 1 }])} style={{
-                  flex: 1, padding: "10px 0", border: "1px dashed #ccc", borderRadius: 6,
-                  background: "transparent", fontSize: 13, fontWeight: 700, color: "#6DB344", cursor: "pointer"
-                }}>+ Add Other</button>
+              {/* Coil quick-add buttons */}
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", marginTop: 8, marginBottom: 4 }}>Add Coil</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                {[...COIL_COLORS, ...(catalog.customCoils || [])].filter((v, i, a) => a.indexOf(v) === i).map(c => {
+                  const alreadyAdded = (job.extraMaterials || []).some(m => m.description === `Coil - ${c}`);
+                  return <button key={c} disabled={alreadyAdded} onClick={() => updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Coil", description: `Coil - ${c}`, quantity: 1 }])} style={{
+                    padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: alreadyAdded ? "default" : "pointer",
+                    border: "1px solid #ccc", background: alreadyAdded ? "#e8e8e8" : "#fff", color: alreadyAdded ? "#aaa" : "#333",
+                    opacity: alreadyAdded ? 0.5 : 1
+                  }}>{c}</button>;
+                })}
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", marginBottom: 4 }}>Add Other</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input id="extraMaterialCustom" style={{ ...inp, flex: 1, marginBottom: 0 }} placeholder="Type material description..." onKeyDown={e => {
+                  if (e.key === "Enter" && e.target.value.trim()) {
+                    updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Other", description: e.target.value.trim(), quantity: 1 }]);
+                    e.target.value = "";
+                  }
+                }} />
+                <button onClick={() => {
+                  const el = document.getElementById("extraMaterialCustom");
+                  if (el && el.value.trim()) {
+                    updateJob("extraMaterials", [...(job.extraMaterials || []), { category: "Other", description: el.value.trim(), quantity: 1 }]);
+                    el.value = "";
+                  }
+                }} style={{
+                  padding: "8px 16px", border: "1px solid #6DB344", borderRadius: 6,
+                  background: "#6DB344", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
+                }}>+ Add</button>
               </div>
             </div>
 
