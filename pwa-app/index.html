@@ -1792,15 +1792,15 @@
           ? jobInfo.casingProfile : '2-1/2" Colonial (C115)';
 
         // Determine finish type and color from the 900 line item
-        let pdfFinishType = "Stain";
-        let pdfFinish = "Dark Walnut (Minwax)";
+        let pdfFinishType = "";
+        let pdfFinish = "";
+        let finishNotFound = true;
         if (jobInfo?.finishNote) {
-          // Match stain by exact label OR by short name (e.g. "Premium Teak" matches "Premium Teak (Zar)")
           const isStain = STAINS.find(s => s.label === jobInfo.finishNote || s.label.startsWith(jobInfo.finishNote + " ("));
           const isPaint = PAINTS.includes(jobInfo.finishNote);
-          if (isStain) { pdfFinishType = "Stain"; pdfFinish = isStain.label; }
-          else if (isPaint) { pdfFinishType = "Paint"; pdfFinish = jobInfo.finishNote; }
-          else { pdfFinishType = "Stain"; pdfFinish = jobInfo.finishNote; } // custom stain
+          if (isStain) { pdfFinishType = "Stain"; pdfFinish = isStain.label; finishNotFound = false; }
+          else if (isPaint) { pdfFinishType = "Paint"; pdfFinish = jobInfo.finishNote; finishNotFound = false; }
+          else { pdfFinishType = "Stain"; pdfFinish = jobInfo.finishNote; finishNotFound = false; }
         }
 
         // Auto-set global trim from imported data
@@ -2522,7 +2522,7 @@
                 <div style={{ fontSize: 16, fontWeight: 700, color: "#6DB344", marginBottom: 10 }}>Most Common Trim for Job</div>
                 <div style={{ fontSize: 12, color: "#999", marginBottom: 10 }}>Sets the default for all new units. Each unit can be overridden individually below.</div>
                   <div style={{ marginBottom: 10 }}>
-                    <label style={lbl}>Window Type</label>
+                    <label style={lbl}>Trim Style</label>
                     <select style={sel} value={globalTrim.trimStyle || "Picture Frame"} onChange={e => updateGlobalTrim("trimStyle", e.target.value)}>
                       {TRIM_STYLES.map(t => <option key={t}>{t}</option>)}
                     </select>
@@ -3523,6 +3523,11 @@
                         {pdfPreview.jobInfo.species ? ` | ${pdfPreview.jobInfo.species}` : ""}
                         {pdfPreview.jobInfo.casingProfile ? ` | ${pdfPreview.jobInfo.casingProfile.split(" (")[0]}` : ""}
                         {pdfPreview.jobInfo.finishNote ? ` | ${pdfPreview.jobInfo.finishNote}` : ""}
+                      </div>
+                    )}
+                    {pdfPreview.jobInfo && !pdfPreview.jobInfo.finishNote && (
+                      <div style={{ fontSize: 12, color: "#c0392b", marginTop: 4, fontWeight: 700, background: "#fdecea", padding: "4px 8px", borderRadius: 4 }}>
+                        Stain/finish not found — select manually after import
                       </div>
                     )}
                   </div>
