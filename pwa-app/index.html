@@ -1108,7 +1108,8 @@
           }
         }
 
-        const subject = encodeURIComponent(`Material Cut List - ${job.customerName || "Job"}`);
+        const lastName = (job.customerName || "").split(" ").pop() || "Job";
+        const subject = encodeURIComponent(`${lastName} ${job.poNumber || ""} Material List`.trim());
         const body = encodeURIComponent(`Hi,\n\nPlease find the material cut list for:\n\nCustomer: ${job.customerName || ""}\nAddress: ${job.address || ""}\nDate: ${job.date || ""}\nPO #: ${job.poNumber || ""}\nMeasured by: ${job.techMeasurer || ""}\n\nThe PDF is attached separately.\n\nThanks`);
         pdf.save(filename);
         setTimeout(() => {
@@ -1284,6 +1285,9 @@
                 <div style={{ display: "flex", padding: "8px 14px", background: "#1a1a1a", color: "#fff", fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>
                   Prefinish / Warehouse Notes
                 </div>
+                <div style={{ padding: "10px 14px", fontSize: 15, fontWeight: 700, background: "#d4edda", borderBottom: "1px solid #c5e0b4", color: "#2d5016" }}>
+                  {globalTrim.finishType}: {globalTrim.finish}
+                </div>
                 {job.prefinishNotes && (
                   <div style={{ padding: "10px 14px", fontSize: 14, borderBottom: "1px solid #ddd" }}>
                     {job.prefinishNotes}
@@ -1396,7 +1400,7 @@
             <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
               Prefinish / Warehouse Notes
             </div>
-            <div style={{ padding: "10px 14px", fontSize: 15, fontWeight: 700, background: "rgba(109,179,68,0.12)", borderBottom: "1px solid #c5e0b4", color: "#2d5016" }}>
+            <div style={{ padding: "10px 14px", fontSize: 15, fontWeight: 700, background: "#d4edda", borderBottom: "1px solid #c5e0b4", color: "#2d5016" }}>
               {globalTrim.finishType}: {globalTrim.finish}
             </div>
             {job.prefinishNotes && (
