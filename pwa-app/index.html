@@ -292,9 +292,9 @@
         const uid = oi.Unit_Id__c;
         if (!uid) continue;
 
-        // 900 = job misc (species/casing/finish info)
-        if (uid === "900") {
-          miscNotes = oi.Notes__c || "";
+        // 900+ = job misc (species/casing/finish info), not real units
+        if (parseInt(uid) >= 900) {
+          if (uid === "900") miscNotes = oi.Notes__c || "";
           continue;
         }
 
@@ -3246,7 +3246,6 @@
               </div>
 
               <div>
-                <label style={lbl}>Job Notes</label>
                 <textarea style={{ ...inp, minHeight: 80, resize: "vertical", fontFamily: "inherit", fontSize: 18 }}
                   value={job.prefinishNotes} onChange={e => updateJob("prefinishNotes", e.target.value)}
                   placeholder={`e.g. ${globalTrim.finish || "Premium Teak (Zar)"}, 2 coats, sand between coats...`} />
