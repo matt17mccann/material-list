@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Cut List Pro">
+  <meta name="apple-mobile-web-app-title" content="RBA Material List">
   <meta name="theme-color" content="#6DB344">
   <meta name="description" content="Window & Door Material Cut List Calculator">
   <link rel="manifest" href="manifest.json">
@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <title>Cut List Pro</title>
+  <title>RBA Material List</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body { font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; background: #F5F5F4; color: #1C1C1C; -webkit-font-smoothing: antialiased; letter-spacing: -0.01em; overflow-anchor: none; }
@@ -1126,10 +1126,14 @@
 
         const subject = encodeURIComponent(emailSubject);
         const body = encodeURIComponent(`Hi,\n\nPlease find the material cut list for:\n\nCustomer: ${job.customerName || ""}\nAddress: ${job.address || ""}\nDate: ${job.date || ""}\nPO #: ${job.poNumber || ""}\nMeasured by: ${job.techMeasurer || ""}\n\nThe PDF is attached separately.\n\nThanks`);
-        pdf.save(filename);
-        setTimeout(() => {
-          window.location.href = `mailto:nina@northlandrba.com?subject=${subject}&body=${body}`;
-        }, 500);
+        const pdfUrl = pdf.output("bloburl");
+        const dlLink = document.createElement("a");
+        dlLink.href = pdfUrl;
+        dlLink.download = filename;
+        dlLink.click();
+        const mailLink = document.createElement("a");
+        mailLink.href = `mailto:nina@northlandrba.com?subject=${subject}&body=${body}`;
+        setTimeout(() => mailLink.click(), 300);
       };
 
       // ─── Aggregate materials for checklist view ───

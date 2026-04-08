@@ -1,6 +1,6 @@
 {
-  "name": "Cut List Pro",
-  "short_name": "Cut List",
+  "name": "RBA Material List",
+  "short_name": "RBA Material",
   "description": "Window & Door Material Cut List Calculator",
   "start_url": "/",
   "display": "standalone",
