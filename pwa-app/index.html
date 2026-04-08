@@ -1070,8 +1070,8 @@
 
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i];
-          const canvas = await html2canvas(section, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
-          const imgData = canvas.toDataURL("image/png");
+          const canvas = await html2canvas(section, { scale: 1.5, useCORS: true, backgroundColor: "#ffffff" });
+          const imgData = canvas.toDataURL("image/jpeg", 0.75);
           const sectionW = pdfW - (margin * 2);
           const sectionH = (canvas.height * sectionW) / canvas.width;
 
@@ -1081,10 +1081,10 @@
           }
           if (sectionH > pageH - (margin * 2)) {
             const scale = (pageH - (margin * 2)) / sectionH;
-            pdf.addImage(imgData, "PNG", margin, currentY, sectionW * scale, sectionH * scale);
+            pdf.addImage(imgData, "JPEG", margin, currentY, sectionW * scale, sectionH * scale);
             currentY += sectionH * scale + 4;
           } else {
-            pdf.addImage(imgData, "PNG", margin, currentY, sectionW, sectionH);
+            pdf.addImage(imgData, "JPEG", margin, currentY, sectionW, sectionH);
             currentY += sectionH + 4;
           }
         }
