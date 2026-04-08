@@ -502,8 +502,8 @@
             { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
           );
         }
-        if (unit.thresholdSpecies !== "None") {
-          materials.push({ name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" });
+        if (unit.thresholdSpecies && unit.thresholdSpecies !== "None") {
+          materials.push({ name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies, category: "Threshold" });
         }
       } else if (unit.unitType === "Patio Door") {
         const o = off.patio_door;
@@ -519,8 +519,8 @@
             { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
           );
         }
-        if (unit.thresholdSpecies !== "None") {
-          materials.push({ name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies || "Oak", category: "Threshold" });
+        if (unit.thresholdSpecies && unit.thresholdSpecies !== "None") {
+          materials.push({ name: "Threshold", qty: 1, length: w + o.threshold_length, width: null, thickness: null, species: unit.thresholdSpecies, category: "Threshold" });
         }
       }
       // Update jamb thickness based on stock size (5/8x4, 5/8x6 = 5/8"; 3/4x8+ = 3/4")
@@ -1094,12 +1094,15 @@
         const filename = pdfFilename();
         const pdfBlob = pdf.output("blob");
 
+        const lastName = (job.customerName || "").split(" ").pop() || "Job";
+        const emailSubject = `${lastName} ${job.poNumber || ""} Material List`.trim();
+
         if (navigator.share && navigator.canShare) {
           const file = new File([pdfBlob], filename, { type: "application/pdf" });
           try {
             await navigator.share({
-              title: `Cut List - ${job.customerName || "Job"}`,
-              text: `Material Cut List for ${job.customerName || "Job"} at ${job.address || ""}`,
+              title: emailSubject,
+              text: emailSubject,
               files: [file],
             });
             return;
@@ -1108,8 +1111,7 @@
           }
         }
 
-        const lastName = (job.customerName || "").split(" ").pop() || "Job";
-        const subject = encodeURIComponent(`${lastName} ${job.poNumber || ""} Material List`.trim());
+        const subject = encodeURIComponent(emailSubject);
         const body = encodeURIComponent(`Hi,\n\nPlease find the material cut list for:\n\nCustomer: ${job.customerName || ""}\nAddress: ${job.address || ""}\nDate: ${job.date || ""}\nPO #: ${job.poNumber || ""}\nMeasured by: ${job.techMeasurer || ""}\n\nThe PDF is attached separately.\n\nThanks`);
         pdf.save(filename);
         setTimeout(() => {
@@ -1156,8 +1158,8 @@
         units.forEach(unit => {
           if (!isUnitComplete(unit)) return;
           if (unit.unitType === "Window") return;
-          const desc = unit.thresholdSpecies || '1-1/4" x 8\' Oak';
-          if (desc === "None") return;
+          const desc = unit.thresholdSpecies;
+          if (!desc || desc === "None") return;
           thresholdCounts[desc] = (thresholdCounts[desc] || 0) + 1;
         });
         Object.entries(thresholdCounts).forEach(([desc, qty]) => {
