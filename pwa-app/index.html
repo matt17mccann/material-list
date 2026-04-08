@@ -303,7 +303,8 @@
 
         // 900+ = job misc (species/casing/finish info), not real units
         if (parseInt(uid) >= 900) {
-          if (uid === "900") miscNotes = oi.Notes__c || "";
+          const parts = [oi.Notes__c, oi.Product_Name__c, oi.Name, oi.Description__c].filter(Boolean).join(" ");
+          if (parts) miscNotes += (miscNotes ? "\n" : "") + parts;
           continue;
         }
 
@@ -1810,7 +1811,7 @@
           ? jobInfo.casingProfile : '2-1/2" Colonial (C115)';
 
         // Determine finish type and color from the 900 line item
-        let pdfFinishType = "";
+        let pdfFinishType = "Stain";
         let pdfFinish = "";
         let finishNotFound = true;
         if (jobInfo?.finishNote) {
