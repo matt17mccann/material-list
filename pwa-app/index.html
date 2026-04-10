@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="RBA Material List">
@@ -329,24 +329,61 @@
 
       // Parse 900 notes for species, casing, trim, finish
       if (miscNotes) {
-        const specM = miscNotes.match(/\b(oak|pine|maple|basswood)\b/i);
-        if (specM) jobInfo.species = specM[1].charAt(0).toUpperCase() + specM[1].slice(1).toLowerCase();
+        // Species — match full word, case-insensitive, also handle "white oak" etc.
+        const specPatterns = [
+          [/\bwhite\s+oak\b/i, "Oak"], [/\bred\s+oak\b/i, "Oak"],
+          [/\boak\b/i, "Oak"], [/\bpine\b/i, "Pine"], [/\bmaple\b/i, "Maple"],
+          [/\bbasswood\b/i, "Basswood"], [/\bpoplar\b/i, "Poplar"],
+        ];
+        for (const [pat, sp] of specPatterns) { if (pat.test(miscNotes)) { jobInfo.species = sp; break; } }
 
+        // Casing profile — expanded patterns for common shorthand
         const casingMap = [
-          [/\bC115\b/, '2-1/2" Colonial (C115)'], [/\bC118\b/, '2-1/2" Colonial (C118)'],
-          [/\bH115\b/, '2-1/4" Colonial (H115)'], [/lakeside/i, '2-1/2" Lakeside Colonial (RBA-Lside-2.5)'],
-          [/3.?1\/4.{0,6}colonial/i, '3-1/4" Colonial (RBA-Col-3.25)'],
-          [/2.?1\/2.{0,6}flat/i, '2-1/2" Flat (RBA-Flat-2.5)'], [/3.?1\/4.{0,6}flat/i, '3-1/4" Flat (RBA-Flat-3.25)'],
-          [/2.?1\/2.{0,6}ranch/i, '2-1/2" Ranch'], [/2.?1\/4.{0,6}ranch/i, '2-1/4" Ranch'],
-          [/knotty.?pine/i, '1x4 Knotty Pine'], [/1x4.*s4s/i, '1x4 (RBA-S4S-3.5)'], [/1x3.*s4s/i, '1x3 (RBA-S4S-2.5)'],
+          [/\bC-?115\b/i, '2-1/2" Colonial (C115)'], [/\bC-?118\b/i, '2-1/2" Colonial (C118)'],
+          [/\bH-?115\b/i, '2-1/4" Colonial (H115)'], [/lakeside/i, '2-1/2" Lakeside Colonial (RBA-Lside-2.5)'],
+          [/3[\s.-]?1\/4.{0,8}colonial/i, '3-1/4" Colonial (RBA-Col-3.25)'],
+          [/2[\s.-]?1\/2.{0,8}colonial/i, '2-1/2" Colonial (C115)'],
+          [/2[\s.-]?1\/4.{0,8}colonial/i, '2-1/4" Colonial (H115)'],
+          [/2[\s.-]?1\/2.{0,8}flat/i, '2-1/2" Flat (RBA-Flat-2.5)'], [/3[\s.-]?1\/4.{0,8}flat/i, '3-1/4" Flat (RBA-Flat-3.25)'],
+          [/2[\s.-]?1\/2.{0,8}ranch/i, '2-1/2" Ranch'], [/2[\s.-]?1\/4.{0,8}ranch/i, '2-1/4" Ranch'],
+          [/knotty[\s-]?pine/i, '1x4 Knotty Pine'],
+          [/\bS4S[\s-]?3[\s.]?5\b/i, '1x4 (RBA-S4S-3.5)'], [/\b1x4[\s-]?S4S\b/i, '1x4 (RBA-S4S-3.5)'],
+          [/\bS4S[\s-]?2[\s.]?5\b/i, '1x3 (RBA-S4S-2.5)'], [/\b1x3[\s-]?S4S\b/i, '1x3 (RBA-S4S-2.5)'],
+          [/\bRBA[\s-]?S4S\b/i, '1x4 (RBA-S4S-3.5)'],
+          [/\b1x4\b.*\b(flat|s4s)\b/i, '1x4 (RBA-S4S-3.5)'], [/\b1x3\b.*\b(flat|s4s)\b/i, '1x3 (RBA-S4S-2.5)'],
         ];
         for (const [pat, label] of casingMap) { if (pat.test(miscNotes)) { jobInfo.casingProfile = label; break; } }
 
         if (/picture[\s-]?frame/i.test(miscNotes)) jobInfo.trimStyle = "Picture Frame";
         else if (/traditional/i.test(miscNotes)) jobInfo.trimStyle = "Traditional";
 
-        const finishes = ["Premium Teak","Dark Walnut","Golden Oak","Provincial","Colonial Maple","Clear Poly","Golden Hickory","Honey Maple","Fruitwood","Aged Bourbon","River Stream","Dark River Stream","Honey Lite","RBA White","RBA Black","RBA Canvas"];
-        for (const f of finishes) { if (miscNotes.includes(f)) { jobInfo.finishNote = f; break; } }
+        // Finish — check stains first (with brand-name fuzzy matching), then paints
+        const stainPatterns = [
+          [/premium\s*teak/i, "Premium Teak (Zar)"], [/dark\s*walnut/i, "Dark Walnut (Minwax)"],
+          [/golden\s*oak/i, "Golden Oak (Minwax)"], [/provincial/i, "Provincial (Minwax)"],
+          [/colonial\s*maple/i, "Colonial Maple (Minwax)"], [/clear\s*poly/i, "Clear Poly (Minwax)"],
+          [/golden\s*hickory/i, "Golden Hickory (Sherwin-Williams)"], [/honey\s*maple/i, "Honey Maple (Sherwin-Williams)"],
+          [/fruitwood/i, "Fruitwood (Sherwin-Williams)"], [/aged\s*bourbon/i, "Aged Bourbon (Zar)"],
+          [/dark\s*river\s*stream/i, "Dark River Stream (Zar)"], [/river\s*stream/i, "River Stream (Zar)"],
+          [/honey\s*lite/i, "Honey Lite (Custom)"],
+        ];
+        const paintPatterns = [
+          [/\bRBA\s*White\b/i, "RBA White"], [/\bRBA\s*Black\b/i, "RBA Black"],
+          [/\bRBA\s*Canvas\b/i, "RBA Canvas"], [/\bRBA\s*Terratone\b/i, "RBA Terratone"],
+          [/\bRBA\s*Sandtone\b/i, "RBA Sandtone"], [/\bRBA\s*Dark\s*Bronze\b/i, "RBA Dark Bronze"],
+          [/\bwhite\s*paint\b/i, "RBA White"], [/\bblack\s*paint\b/i, "RBA Black"],
+          [/\bterratone\b/i, "RBA Terratone"], [/\bsandtone\b/i, "RBA Sandtone"],
+          [/\bdark\s*bronze\b/i, "RBA Dark Bronze"],
+        ];
+        let finishFound = false;
+        for (const [pat, label] of stainPatterns) {
+          if (pat.test(miscNotes)) { jobInfo.finishNote = label; finishFound = true; break; }
+        }
+        if (!finishFound) {
+          for (const [pat, label] of paintPatterns) {
+            if (pat.test(miscNotes)) { jobInfo.finishNote = label; finishFound = true; break; }
+          }
+        }
       }
 
       return { jobInfo, units: units.sort((a, b) => parseInt(a.label) - parseInt(b.label)) };
@@ -361,7 +398,7 @@
     }
 
     function parseInstallerPackageText(text) {
-      const jobInfo = { customerName: "", address: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
+      const jobInfo = { customerName: "", address: "", poNumber: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
 
       // --- Customer name: appears after "dba:" or "RENEWAL BY ANDERSEN" header line ---
       const nameM = text.match(/(?:dba:|RENEWAL BY ANDERSEN)[^\n]*\n\s*([A-Z][a-z]+(?: [A-Z][a-z]+)+)/);
@@ -371,36 +408,60 @@
       const addrM = text.match(/(\d+\s+[^\n,]{5,60}(?:Road|Rd|Avenue|Ave|Street|St|Drive|Dr|Lane|Ln|Way|Court|Ct|Blvd|County Road|Cty Rd)[^\n]*)\s*\n\s*([A-Za-z][\w\s]+,\s*[A-Z]{2}\s+\d{5})/i);
       if (addrM) jobInfo.address = `${addrM[1].trim()}, ${addrM[2].trim()}`;
 
+      // --- PO number: starts with R, RD, or RP followed by digits, often near phone numbers ---
+      const poM = text.match(/\b(R[PD]?\d[\d-]{3,15})\b/i);
+      if (poM) jobInfo.poNumber = poM[1].toUpperCase();
+
       // --- Species (from 900 line) ---
-      const specM = text.match(/\b(oak|pine|maple|basswood)\b/i);
-      if (specM) jobInfo.species = specM[1].charAt(0).toUpperCase() + specM[1].slice(1).toLowerCase();
+      const specPatterns = [
+        [/\bwhite\s+oak\b/i, "Oak"], [/\bred\s+oak\b/i, "Oak"],
+        [/\boak\b/i, "Oak"], [/\bpine\b/i, "Pine"], [/\bmaple\b/i, "Maple"],
+        [/\bbasswood\b/i, "Basswood"], [/\bpoplar\b/i, "Poplar"],
+      ];
+      for (const [pat, sp] of specPatterns) { if (pat.test(text)) { jobInfo.species = sp; break; } }
 
       // --- Casing profile (from 900 line) ---
       const casingMap = [
-        [/\bC115\b/, '2-1/2" Colonial (C115)'],
-        [/\bC118\b/, '2-1/2" Colonial (C118)'],
-        [/\bH115\b/, '2-1/4" Colonial (H115)'],
-        [/lakeside/i, '2-1/2" Lakeside Colonial (RBA-Lside-2.5)'],
-        [/3.?1\/4.{0,6}colonial/i, '3-1/4" Colonial (RBA-Col-3.25)'],
-        [/2.?1\/2.{0,6}flat/i, '2-1/2" Flat (RBA-Flat-2.5)'],
-        [/3.?1\/4.{0,6}flat/i, '3-1/4" Flat (RBA-Flat-3.25)'],
-        [/2.?1\/2.{0,6}ranch/i, '2-1/2" Ranch'],
-        [/2.?1\/4.{0,6}ranch/i, '2-1/4" Ranch'],
-        [/knotty.?pine/i, '1x4 Knotty Pine'],
-        [/1x4.*s4s/i, '1x4 (RBA-S4S-3.5)'],
-        [/1x3.*s4s/i, '1x3 (RBA-S4S-2.5)'],
+        [/\bC-?115\b/i, '2-1/2" Colonial (C115)'], [/\bC-?118\b/i, '2-1/2" Colonial (C118)'],
+        [/\bH-?115\b/i, '2-1/4" Colonial (H115)'], [/lakeside/i, '2-1/2" Lakeside Colonial (RBA-Lside-2.5)'],
+        [/3[\s.-]?1\/4.{0,8}colonial/i, '3-1/4" Colonial (RBA-Col-3.25)'],
+        [/2[\s.-]?1\/2.{0,8}colonial/i, '2-1/2" Colonial (C115)'],
+        [/2[\s.-]?1\/4.{0,8}colonial/i, '2-1/4" Colonial (H115)'],
+        [/2[\s.-]?1\/2.{0,8}flat/i, '2-1/2" Flat (RBA-Flat-2.5)'], [/3[\s.-]?1\/4.{0,8}flat/i, '3-1/4" Flat (RBA-Flat-3.25)'],
+        [/2[\s.-]?1\/2.{0,8}ranch/i, '2-1/2" Ranch'], [/2[\s.-]?1\/4.{0,8}ranch/i, '2-1/4" Ranch'],
+        [/knotty[\s-]?pine/i, '1x4 Knotty Pine'],
+        [/\bS4S[\s-]?3[\s.]?5\b/i, '1x4 (RBA-S4S-3.5)'], [/\b1x4[\s-]?S4S\b/i, '1x4 (RBA-S4S-3.5)'],
+        [/\bS4S[\s-]?2[\s.]?5\b/i, '1x3 (RBA-S4S-2.5)'], [/\b1x3[\s-]?S4S\b/i, '1x3 (RBA-S4S-2.5)'],
+        [/\bRBA[\s-]?S4S\b/i, '1x4 (RBA-S4S-3.5)'],
+        [/\b1x4\b.*\b(flat|s4s)\b/i, '1x4 (RBA-S4S-3.5)'], [/\b1x3\b.*\b(flat|s4s)\b/i, '1x3 (RBA-S4S-2.5)'],
       ];
-      for (const [pat, label] of casingMap) {
-        if (pat.test(text)) { jobInfo.casingProfile = label; break; }
-      }
+      for (const [pat, label] of casingMap) { if (pat.test(text)) { jobInfo.casingProfile = label; break; } }
 
       // --- Trim style ---
       if (/picture[\s-]?frame/i.test(text)) jobInfo.trimStyle = "Picture Frame";
       else if (/traditional/i.test(text)) jobInfo.trimStyle = "Traditional";
 
-      // --- Finish note ---
-      const finishes = ["Premium Teak","Dark Walnut","Golden Oak","Provincial","Colonial Maple","Clear Poly","Golden Hickory","Honey Maple","Fruitwood","Aged Bourbon","River Stream","Dark River Stream","Honey Lite","RBA White","RBA Black","RBA Canvas"];
-      for (const f of finishes) { if (text.includes(f)) { jobInfo.finishNote = f; break; } }
+      // --- Finish note (stains first with fuzzy matching, then paints) ---
+      const stainPats = [
+        [/premium\s*teak/i, "Premium Teak (Zar)"], [/dark\s*walnut/i, "Dark Walnut (Minwax)"],
+        [/golden\s*oak/i, "Golden Oak (Minwax)"], [/provincial/i, "Provincial (Minwax)"],
+        [/colonial\s*maple/i, "Colonial Maple (Minwax)"], [/clear\s*poly/i, "Clear Poly (Minwax)"],
+        [/golden\s*hickory/i, "Golden Hickory (Sherwin-Williams)"], [/honey\s*maple/i, "Honey Maple (Sherwin-Williams)"],
+        [/fruitwood/i, "Fruitwood (Sherwin-Williams)"], [/aged\s*bourbon/i, "Aged Bourbon (Zar)"],
+        [/dark\s*river\s*stream/i, "Dark River Stream (Zar)"], [/river\s*stream/i, "River Stream (Zar)"],
+        [/honey\s*lite/i, "Honey Lite (Custom)"],
+      ];
+      const paintPats = [
+        [/\bRBA\s*White\b/i, "RBA White"], [/\bRBA\s*Black\b/i, "RBA Black"],
+        [/\bRBA\s*Canvas\b/i, "RBA Canvas"], [/\bRBA\s*Terratone\b/i, "RBA Terratone"],
+        [/\bRBA\s*Sandtone\b/i, "RBA Sandtone"], [/\bRBA\s*Dark\s*Bronze\b/i, "RBA Dark Bronze"],
+        [/\bwhite\s*paint\b/i, "RBA White"], [/\bblack\s*paint\b/i, "RBA Black"],
+        [/\bterratone\b/i, "RBA Terratone"], [/\bsandtone\b/i, "RBA Sandtone"],
+        [/\bdark\s*bronze\b/i, "RBA Dark Bronze"],
+      ];
+      let finishFound = false;
+      for (const [pat, label] of stainPats) { if (pat.test(text)) { jobInfo.finishNote = label; finishFound = true; break; } }
+      if (!finishFound) { for (const [pat, label] of paintPats) { if (pat.test(text)) { jobInfo.finishNote = label; finishFound = true; break; } } }
 
       // --- Units ---
       // Match size pairs: "95-7/8" 59-1/4"" or "96" 59"" (two adjacent quoted dimensions)
@@ -1184,23 +1245,25 @@
           rows.push({ category: "THRESHOLD", description: desc, quantity: qty });
         });
 
-        // Aggregate boards by material type + species + stock length
+        // Aggregate boards by material type + species + finish (if toggle on) + stock length
+        const showFinish = job.showFinishOnChecklist;
         const boardGroups = {};
         boards.forEach(board => {
           const isJamb = board.materialType === "Jamb Extension" || board.materialType === "Apron";
+          const finishTag = showFinish && board.finish ? ` — ${board.finish}` : "";
           let label, cat;
           if (isJamb) {
             const stockLabel = board.jambStock ? board.jambStock.label : "5/8x6";
-            label = `${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}`;
+            label = `${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}${finishTag}`;
             cat = "JAMB MATERIAL";
           } else if (board.materialType === "Stop") {
             const profile = board.profile || "Stop";
-            label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}`;
+            label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
             cat = `${board.species.toUpperCase()} STOP`;
           } else {
             // Casing — e.g. "Oak (C115) Colonial Casing 2-1/2" - 10'"
             const profile = board.profile || "Casing";
-            label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}`;
+            label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
             cat = `${board.species.toUpperCase()} CASING`;
           }
           const key = cat + "|" + label;
@@ -1494,7 +1557,7 @@
       return (
         <div style={{ background: "#fff", minHeight: "100vh" }}>
           <div className="no-print" style={{
-            position: "sticky", top: 0, zIndex: 100, padding: "10px 16px",
+            position: "sticky", top: 0, zIndex: 100, padding: "calc(env(safe-area-inset-top, 8px) + 6px) 16px 10px 16px",
             background: "#1C1C1C", display: "flex", alignItems: "center",
             boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
           }}>
@@ -1564,7 +1627,7 @@
       const [view, setView] = useState("home");
       const [showInspo, setShowInspo] = useState(false);
       const [jobId, setJobId] = useState(null);
-      const [job, setJob] = useState({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], customTrimMode: false, optimizePerUnit: false });
+      const [job, setJob] = useState({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], customTrimMode: false, optimizePerUnit: false, showFinishOnChecklist: false });
       const [units, setUnits] = useState([emptyUnit(1)]);
       const [expandedUnit, setExpandedUnit] = useState(0);
       const [showPfSection, setShowPfSection] = useState(false);
@@ -1862,7 +1925,7 @@
       const startNewJob = () => {
         setSameTrim(true);
         setJobId(Date.now().toString());
-        setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], customTrimMode: false, optimizePerUnit: false });
+        setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], customTrimMode: false, optimizePerUnit: false, showFinishOnChecklist: false });
         setUnits([emptyUnit(1)]);
         setExpandedUnit(0);
         setSubmitted(false);
@@ -2097,7 +2160,7 @@
           <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "0 0 40px 0" }}>
             <div style={{
               position: "sticky", top: 0, zIndex: 100, background: "#1C1C1C",
-              padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "calc(env(safe-area-inset-top, 8px) + 6px) 16px 12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
               boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
             }}>
               <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
@@ -2227,7 +2290,7 @@
           <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "0 0 40px 0" }}>
             <div style={{
               position: "sticky", top: 0, zIndex: 100, background: "#1C1C1C",
-              padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "calc(env(safe-area-inset-top, 8px) + 6px) 16px 12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
               boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
             }}>
               <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
@@ -2358,7 +2421,7 @@
             {/* Top Bar */}
             <div style={{
               position: "sticky", top: 0, zIndex: 100, background: "#1C1C1C",
-              padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "calc(env(safe-area-inset-top, 8px) + 6px) 16px 12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
               boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
             }}>
               <button onClick={() => { setView("home"); setSavedSearch(""); }} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
@@ -2435,7 +2498,7 @@
           {/* Top Bar */}
           <div className="no-print" style={{
             position: "sticky", top: 0, zIndex: 100, background: "#1C1C1C",
-            padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
+            padding: "calc(env(safe-area-inset-top, 8px) + 6px) 16px 12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
             boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
           }}>
             <button onClick={() => setView("saved")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>{savedFilter === "submitted" ? "← Submitted Jobs" : "← Saved Jobs"}</button>
@@ -3436,11 +3499,17 @@
                   {recalculating ? "Recalculating..." : "Recalculate Boards"}
                 </button>
               </div>
-              <div style={{ padding: "8px 16px", borderBottom: "1px solid #E8E8E8", display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ padding: "8px 16px", borderBottom: "1px solid #E8E8E8", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
                   <input type="checkbox" checked={job.optimizePerUnit || false} onChange={e => updateJob("optimizePerUnit", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#6DB344" }} />
                   <span style={{ fontWeight: 600 }}>Calculate per unit</span>
-                  <span style={{ fontSize: 11, color: "#888", fontWeight: 400 }}>(less optimized, better grain matching)</span>
+                  <span style={{ fontSize: 11, color: "#888", fontWeight: 400 }}>(grain matching)</span>
+                </label>
+                <span style={{ color: "#ddd" }}>|</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                  <input type="checkbox" checked={job.showFinishOnChecklist || false} onChange={e => updateJob("showFinishOnChecklist", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#6DB344" }} />
+                  <span style={{ fontWeight: 600 }}>Show prefinish color</span>
+                  <span style={{ fontSize: 11, color: "#888", fontWeight: 400 }}>(on checklist)</span>
                 </label>
               </div>
               {allComplete && units.length > 0 ? (() => {
