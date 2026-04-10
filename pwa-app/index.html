@@ -159,7 +159,7 @@
     ];
 
 
-    const COIL_COLORS = ["White", "Black", "Canvas", "Terratone", "Sandtone", "Dark Bronze", "Forest Green", "Red Rock"];
+    const COIL_COLORS = ["White", "Black", "Canvas", "Terratone", "Sandtone", "Dark Bronze", "Forest Green", "Red Rock", "Cocoa Bean"];
 
     const CASING_PROFILES = [
       { label: '1x4 (RBA-S4S-3.5)', width: 3.5, code: 'RBA-S4S-3.5', pineOnly: false },
@@ -1046,7 +1046,7 @@
             stockLength: stockLen,
             materialType: eb.materialType || "Casing",
             species: eb.species || units[0]?.species || "Oak",
-            finish: defaultFinish,
+            finish: eb.finish || defaultFinish,
             profile: isJamb ? null : (eb.profile || null),
             jambStock: isJamb ? (JAMB_STOCK_WIDTHS.find(j => j.label === eb.profile) || { label: eb.profile || "1x6", width: 5.5 }) : null,
             cuts: [],
@@ -1214,7 +1214,7 @@
               stockLength: stockLen,
               materialType: eb.materialType || "Casing",
               species: eb.species || units[0]?.species || "Oak",
-              finish: defaultFinish,
+              finish: eb.finish || defaultFinish,
               profile: isJamb ? null : (eb.profile || null),
               jambStock: isJamb ? (JAMB_STOCK_WIDTHS.find(j => j.label === eb.profile) || { label: eb.profile || "1x6", width: 5.5 }) : null,
               isExtra: true
@@ -1562,7 +1562,7 @@
             boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
           }}>
             <button onClick={onBack} style={{
-              background: "none", border: "none", color: "#fff", fontSize: 15, cursor: "pointer", fontWeight: 600, marginRight: "auto", padding: "6px 0"
+              background: "none", border: "none", color: "#fff", fontSize: 15, cursor: "pointer", fontWeight: 600, marginRight: "auto", padding: "6px 0", marginLeft: 60
             }}>← Back</button>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1747,7 +1747,12 @@
         setExpandedUnit(idx + 1);
       };
       const applyGlobalToUnit = (u, g, force) => {
-        const updates = { trimStyle: g.trimStyle || "Picture Frame", species: g.species, jambSpecies: g.jambSpecies || g.species, jambMaterial: g.jambMaterial || "", casingProfile: g.casingProfile, finishType: g.finishType, finish: g.finish };
+        const updates = { trimStyle: g.trimStyle || "Picture Frame", species: g.species, jambSpecies: g.jambSpecies || g.species, jambMaterial: g.jambMaterial || "", casingProfile: g.casingProfile };
+        // When "Multiple" is selected, don't override per-unit finish
+        if (g.finishType !== "Multiple") {
+          updates.finishType = g.finishType;
+          updates.finish = g.finish;
+        }
         // Only apply jamb depth if global has a value AND (force=true OR unit has no value yet)
         if (g.jambDepthWhole !== "" && g.jambDepthWhole != null) {
           if (force || !u.jambDepthWhole) {
@@ -2163,7 +2168,7 @@
               padding: "max(env(safe-area-inset-top, 0px), 50px) 16px 12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
               boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
             }}>
-              <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
+              <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600, marginLeft: 60 }}>← Home</button>
               <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Available Material</div>
               <div style={{ width: 70 }} />
             </div>
@@ -2293,7 +2298,7 @@
               padding: "max(env(safe-area-inset-top, 0px), 50px) 16px 12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
               boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
             }}>
-              <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
+              <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600, marginLeft: 60 }}>← Home</button>
               <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Offsets</div>
               <div style={{ width: 70 }} />
             </div>
@@ -2424,7 +2429,7 @@
               padding: "max(env(safe-area-inset-top, 0px), 50px) 16px 12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
               boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
             }}>
-              <button onClick={() => { setView("home"); setSavedSearch(""); }} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
+              <button onClick={() => { setView("home"); setSavedSearch(""); }} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600, marginLeft: 60 }}>← Home</button>
               <div style={{ textAlign: "center", lineHeight: 1 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{savedFilter === "submitted" ? "Submitted Jobs" : "Saved Jobs"}</div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{filteredJobs.length} job{filteredJobs.length !== 1 ? "s" : ""}</div>
@@ -2501,7 +2506,7 @@
             padding: "max(env(safe-area-inset-top, 0px), 50px) 16px 12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
             boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
           }}>
-            <button onClick={() => setView("saved")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>{savedFilter === "submitted" ? "← Submitted Jobs" : "← Saved Jobs"}</button>
+            <button onClick={() => setView("saved")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600, marginLeft: 60 }}>{savedFilter === "submitted" ? "← Submitted Jobs" : "← Saved Jobs"}</button>
             <div onClick={() => setView("home")} style={{ textAlign: "center", lineHeight: 1, cursor: "pointer" }}>
               <RBaMark size={56} />
               <div style={{ fontSize: 8, fontWeight: 700, color: "#6DB344", letterSpacing: 2.5, textTransform: "uppercase", marginTop: 2 }}>Lake Superior Region</div>
@@ -2670,6 +2675,12 @@
                       <label style={lbl}>Finish Type</label>
                       <select style={sel} value={globalTrim.finishType} onChange={e => {
                         const newType = e.target.value;
+                        if (newType === "Multiple") {
+                          const updated = { ...globalTrim, finishType: "Multiple", finish: "Multiple" };
+                          setGlobalTrim(updated);
+                          // Don't override per-unit finishes — leave them as-is
+                          return;
+                        }
                         const newFinish = newType === "Stain" ? STAINS[0].label : PAINTS[0];
                         const updated = { ...globalTrim, finishType: newType, finish: newFinish };
                         if (globalTrim.species !== "Pine") {
@@ -2680,8 +2691,10 @@
                         setUnits(prev => prev.map(u => ({ ...u, finishType: newType, finish: newFinish })));
                       }}>
                         {FINISH_TYPES.map(t => <option key={t}>{t}</option>)}
+                        <option value="Multiple">Multiple (per unit)</option>
                       </select>
                     </div>
+                    {globalTrim.finishType !== "Multiple" && (
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <label style={lbl}>{globalTrim.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
@@ -2699,6 +2712,12 @@
                           </select>
                       }
                     </div>
+                    )}
+                    {globalTrim.finishType === "Multiple" && (
+                      <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: "#888", fontStyle: "italic", padding: "4px 0" }}>
+                        Set finish per unit below
+                      </div>
+                    )}
                   </div>
                   <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(109,179,68,0.12)", borderRadius: 6, border: "1px solid rgba(109,179,68,0.25)", display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: "#2d5016" }}>{globalTrim.finishType}: {globalTrim.finish}</span>
@@ -3283,6 +3302,17 @@
                         <option value="144">12'</option>
                       </select>
                     </div>
+                    <div>
+                      <label style={lbl}>Finish / Stain</label>
+                      <select style={sel} value={eb.finish || globalTrim.finish} onChange={e => {
+                        const updated = [...job.extraBoards];
+                        updated[idx] = { ...eb, finish: e.target.value };
+                        updateJob("extraBoards", updated);
+                      }}>
+                        {STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)}
+                        {PAINTS.map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </div>
                   </div>
                   {eb.note !== undefined && (
                     <div style={{ marginTop: 8 }}>
@@ -3300,19 +3330,19 @@
                 Quick add using job trim: <strong>{globalTrim.species} / {globalTrim.casingProfile}</strong>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Casing", species: globalTrim.species, profile: globalTrim.casingProfile, stockLength: "120", note: "" }])} style={{
+                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Casing", species: globalTrim.species, profile: globalTrim.casingProfile, stockLength: "120", finish: globalTrim.finish, note: "" }])} style={{
                   flex: 1, minWidth: 100, padding: "12px 0", border: "none", borderRadius: 8,
                   background: "#6DB344", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
                 }}>+ Casing</button>
-                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Jamb Extension", species: globalTrim.jambSpecies || globalTrim.species, profile: "1x6", stockLength: "120", note: "" }])} style={{
+                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Jamb Extension", species: globalTrim.jambSpecies || globalTrim.species, profile: "1x6", stockLength: "120", finish: globalTrim.finish, note: "" }])} style={{
                   flex: 1, minWidth: 100, padding: "12px 0", border: "none", borderRadius: 8,
                   background: "#6DB344", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
                 }}>+ Jamb</button>
-                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Stop", species: globalTrim.species, profile: globalTrim.stopProfile || "1x4 Stop", stockLength: "120", note: "" }])} style={{
+                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Stop", species: globalTrim.species, profile: globalTrim.stopProfile || "1x4 Stop", stockLength: "120", finish: globalTrim.finish, note: "" }])} style={{
                   flex: 1, minWidth: 100, padding: "12px 0", border: "none", borderRadius: 8,
                   background: "#6DB344", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
                 }}>+ Stop</button>
-                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Other", species: globalTrim.species, profile: "", stockLength: "120", note: "" }])} style={{
+                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Other", species: globalTrim.species, profile: "", stockLength: "120", finish: globalTrim.finish, note: "" }])} style={{
                   flex: 1, minWidth: 100, padding: "12px 0", border: "none", borderRadius: 8,
                   background: "#555", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
                 }}>+ Other</button>
