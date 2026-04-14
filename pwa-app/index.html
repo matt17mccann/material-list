@@ -1290,7 +1290,7 @@
         const showFinish = job.showFinishOnChecklist;
         const boardGroups = {};
         boards.forEach(board => {
-          const isStool = board.cutName && (board.cutName.includes("Stool") || board.cutName.includes("Sill"));
+          const isStool = board.cuts && board.cuts.some(c => c.cutName && (c.cutName.includes("Stool") || c.cutName.includes("Sill")));
           const isJamb = (board.materialType === "Jamb Extension" || board.materialType === "Apron") && !isStool;
           const finishTag = showFinish && board.finish ? ` — ${board.finish}` : "";
           let label, cat;
