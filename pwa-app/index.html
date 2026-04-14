@@ -1375,7 +1375,7 @@
         const allRows = [...materialRows, ...(materialRows.length > 0 && boardRows.length ? [null] : []), ...boardRows];
 
         return (
-          <div ref={reportRef} style={{ padding: "32px 28px", maxWidth: 900, margin: "0 auto", fontFamily: "Georgia, 'Times New Roman', serif" }}>
+          <div ref={reportRef} style={{ padding: "32px 28px", maxWidth: 900, margin: "0 auto", fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif" }}>
             <ReportHeader subtitle="Materials Checklist" />
 
             <div data-pdf-section="checklist">
@@ -1486,7 +1486,7 @@
 
       // ─── DETAILED REPORT (per-unit cut list — existing style) ───
       const DetailedReport = () => (
-        <div ref={reportRef} style={{ padding: "32px 28px", maxWidth: 900, margin: "0 auto", fontFamily: "Georgia, 'Times New Roman', serif" }}>
+        <div ref={reportRef} style={{ padding: "32px 28px", maxWidth: 900, margin: "0 auto", fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif" }}>
           <ReportHeader subtitle="Detailed Cut List" />
 
           {units.map((unit, i) => {
