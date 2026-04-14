@@ -572,10 +572,15 @@
           const o = off.window_trad;
           const jw = jd + o.jamb_width;
           if (!skipJambs) {
+            const stoolW = jw + o.stool_width_extra;
+            const stoolThick = unit.stool5_4 ? 1.25 : t;
+            const stoolStock = unit.stool5_4
+              ? (JAMB_STOCK_WIDTHS.find(j => j.traditionalOnly && j.width >= stoolW) || getJambStockWidth(stoolW))
+              : getJambStockWidth(stoolW);
             materials.push(
               { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
               { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
-              { name: "Sill / Stool", qty: 1, length: w + o.stool_length, width: jw + o.stool_width_extra, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw + o.stool_width_extra) },
+              { name: "Sill / Stool", qty: 1, length: w + o.stool_length, width: stoolW, thickness: stoolThick, species: jambSp, category: "Jamb", jambStock: stoolStock },
             );
           }
           if (!skipCasing) {
@@ -1697,6 +1702,7 @@
       const [savedSearch, setSavedSearch] = useState("");
       const [savedFilter, setSavedFilter] = useState("drafts"); // "drafts" or "submitted"
       const [savedSort, setSavedSort] = useState("newest"); // "newest", "oldest", "last_name", "status"
+      const [savedTechFilter, setSavedTechFilter] = useState(""); // filter by tech measurer
       const [reportFrom, setReportFrom] = useState("editor"); // where to go back from report view
       const [submitted, setSubmitted] = useState(false); // tracks if current job has been submitted
       const [reportType, setReportType] = useState("checklist"); // "checklist" or "detailed"
@@ -1785,7 +1791,7 @@
         setExpandedUnit(idx + 1);
       };
       const applyGlobalToUnit = (u, g, force) => {
-        const updates = { trimStyle: g.trimStyle || "Picture Frame", species: g.species, jambSpecies: g.jambSpecies || g.species, jambMaterial: g.jambMaterial || "", casingProfile: g.casingProfile };
+        const updates = { trimStyle: g.trimStyle || "Picture Frame", species: g.species, jambSpecies: g.jambSpecies || g.species, jambMaterial: g.jambMaterial || "", casingProfile: g.casingProfile, stool5_4: g.stool5_4 || false };
         // When "Multiple" is selected, don't override per-unit finish
         if (g.finishType !== "Multiple") {
           updates.finishType = g.finishType;
@@ -2410,6 +2416,9 @@
         const filteredJobs = savedJobs
           .filter(s => savedFilter === "submitted" ? s.submitted === true : !s.submitted)
           .filter(s => {
+            if (savedTechFilter && savedFilter === "submitted") {
+              if ((s.job.techMeasurer || "") !== savedTechFilter) return false;
+            }
             if (!searchLower) return true;
             return (s.job.customerName || "").toLowerCase().includes(searchLower)
               || (s.job.address || "").toLowerCase().includes(searchLower)
@@ -2503,7 +2512,7 @@
               />
 
               {/* Sort bar */}
-              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: savedFilter === "submitted" ? 8 : 12 }}>
                 {[
                   { key: "newest", label: "Newest" },
                   { key: "oldest", label: "Oldest" },
@@ -2518,6 +2527,21 @@
                   }}>{opt.label}</button>
                 ))}
               </div>
+              {/* Tech measurer filter — submitted jobs only */}
+              {savedFilter === "submitted" && (
+              <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#888", alignSelf: "center", marginRight: 2 }}>Tech:</span>
+                {["", "Matt McCann", "Darren Williams", "Steve Cvek"].map(tech => (
+                  <button key={tech} onClick={() => setSavedTechFilter(tech)} style={{
+                    padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                    border: savedTechFilter === tech ? "1.5px solid #2980b9" : "1px solid #ddd",
+                    background: savedTechFilter === tech ? "rgba(41,128,185,0.08)" : "#fff",
+                    color: savedTechFilter === tech ? "#2980b9" : "#999",
+                    transition: "all 0.15s"
+                  }}>{tech || "All"}</button>
+                ))}
+              </div>
+              )}
 
               {/* Job list — Quick View */}
               {filteredJobs.length === 0 ? (
@@ -2726,6 +2750,15 @@
                       </select>
                     </div>
                   </div>
+                  {(globalTrim.trimStyle || "Picture Frame") === "Traditional" && (
+                    <div style={{ marginTop: 8 }}>
+                      <label style={{ fontSize: 13, color: "#333", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: globalTrim.stool5_4 ? "rgba(230,126,34,0.1)" : "#f9f9f9", borderRadius: 6, border: globalTrim.stool5_4 ? "1px solid #e67e22" : "1px solid #e8e8e8" }}>
+                        <input type="checkbox" checked={!!globalTrim.stool5_4} onChange={() => updateGlobalTrim("stool5_4", !globalTrim.stool5_4)} style={{ width: 16, height: 16 }} />
+                        <span style={{ fontWeight: 600 }}>5/4" Stool</span>
+                        <span style={{ fontSize: 11, color: "#888" }}>Use 5/4" thick material for sill/stool</span>
+                      </label>
+                    </div>
+                  )}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
                     <div>
                       <label style={lbl}>Finish Type</label>
@@ -2971,6 +3004,15 @@
                                 <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
                               ))}
                             </select>
+                          </div>
+                          )}
+                          {needsJD && unit.trimStyle === "Traditional" && (
+                          <div style={{ gridColumn: "1 / -1" }}>
+                            <label style={{ fontSize: 12, color: "#333", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: unit.stool5_4 ? "rgba(230,126,34,0.1)" : "#f9f9f9", borderRadius: 6, border: unit.stool5_4 ? "1px solid #e67e22" : "1px solid #e8e8e8" }}>
+                              <input type="checkbox" checked={!!unit.stool5_4} onChange={() => updateUnit(idx, "stool5_4", !unit.stool5_4)} style={{ width: 15, height: 15 }} />
+                              <span style={{ fontWeight: 600 }}>5/4" Stool</span>
+                              <span style={{ fontSize: 10, color: "#888" }}>Use 5/4" thick sill/stool</span>
+                            </label>
                           </div>
                           )}
                           {/* Finish Type */}
