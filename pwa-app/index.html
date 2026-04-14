@@ -542,6 +542,11 @@
       const skipCasing = unit.casingProfile === "None" || unit.casingProfile === "Customer Supplying";
       const skipJambs = unit.jambMaterial === "Customer Supplying";
       const jambSp = unit.jambSpecies || unit.species;
+      // Manual jamb material override — use selected stock instead of auto-calculating
+      const manualJambStock = unit.jambMaterial && unit.jambMaterial !== "Customer Supplying"
+        ? JAMB_STOCK_WIDTHS.find(j => j.label === unit.jambMaterial) : null;
+      const resolveJambStock = (calcWidth) => manualJambStock || getJambStockWidth(calcWidth);
+      const resolveJambWidth = (calcWidth) => manualJambStock ? manualJambStock.width : calcWidth;
 
       if (unit.unitType === "Window") {
         if (unit.trimStyle === "Stops") {
@@ -558,8 +563,8 @@
           const jw = jd + o.jamb_width;
           if (!skipJambs) {
             materials.push(
-              { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
-              { name: "Top/Bottom Jamb Extension", qty: 2, length: w + o.topBottomJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
+              { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: resolveJambWidth(jw), thickness: t, species: jambSp, category: "Jamb", jambStock: resolveJambStock(jw) },
+              { name: "Top/Bottom Jamb Extension", qty: 2, length: w + o.topBottomJamb_length, width: resolveJambWidth(jw), thickness: t, species: jambSp, category: "Jamb", jambStock: resolveJambStock(jw) },
             );
           }
           if (!skipCasing) {
@@ -572,14 +577,14 @@
           const o = off.window_trad;
           const jw = jd + o.jamb_width;
           if (!skipJambs) {
-            const stoolW = jw + o.stool_width_extra;
+            const stoolW = resolveJambWidth(jw) + o.stool_width_extra;
             const stoolThick = unit.stool5_4 ? 1.25 : t;
             const stoolStock = unit.stool5_4
-              ? (JAMB_STOCK_WIDTHS.find(j => j.traditionalOnly && j.width >= stoolW) || getJambStockWidth(stoolW))
-              : getJambStockWidth(stoolW);
+              ? (JAMB_STOCK_WIDTHS.find(j => j.traditionalOnly && j.width >= stoolW) || resolveJambStock(stoolW))
+              : resolveJambStock(stoolW);
             materials.push(
-              { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
-              { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
+              { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: resolveJambWidth(jw), thickness: t, species: jambSp, category: "Jamb", jambStock: resolveJambStock(jw) },
+              { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: resolveJambWidth(jw), thickness: t, species: jambSp, category: "Jamb", jambStock: resolveJambStock(jw) },
               { name: "Sill / Stool", qty: 1, length: w + o.stool_length, width: stoolW, thickness: stoolThick, species: jambSp, category: "Jamb", jambStock: stoolStock },
             );
           }
@@ -607,9 +612,9 @@
         const jw = jd + o.jamb_width;
         if (!skipJambs) {
           materials.push(
-            { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
-            { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
-            { name: "Sill Jamb Extension", qty: 1, length: w + o.sillJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: resolveJambWidth(jw), thickness: t, species: jambSp, category: "Jamb", jambStock: resolveJambStock(jw) },
+            { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: resolveJambWidth(jw), thickness: t, species: jambSp, category: "Jamb", jambStock: resolveJambStock(jw) },
+            { name: "Sill Jamb Extension", qty: 1, length: w + o.sillJamb_length, width: resolveJambWidth(jw), thickness: t, species: jambSp, category: "Jamb", jambStock: resolveJambStock(jw) },
           );
         }
         if (!skipCasing) {
