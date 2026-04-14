@@ -1360,7 +1360,9 @@
       // ─── CHECKLIST REPORT (summary — like the warehouse PDF) ───
       const ChecklistReport = () => {
         const { extraRows, boardRows, hasExtras } = buildChecklist();
-        const allRows = [...extraRows, ...(hasExtras && boardRows.length ? [null] : []), ...boardRows];
+        const noteRows = extraRows.filter(r => r.isNote);
+        const materialRows = extraRows.filter(r => !r.isNote);
+        const allRows = [...materialRows, ...(materialRows.length > 0 && boardRows.length ? [null] : []), ...boardRows];
 
         return (
           <div ref={reportRef} style={{ padding: "32px 28px", maxWidth: 900, margin: "0 auto", fontFamily: "Georgia, 'Times New Roman', serif" }}>
@@ -1428,6 +1430,21 @@
                     <span> — {job.pfWindowsList}</span>
                   )}
                 </div>
+                {noteRows.map((note, ni) => (
+                  <div key={"note-" + ni} style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700, color: "#c0392b", background: "rgba(230,126,34,0.10)", borderBottom: "1px solid #e67e22" }}>
+                    {note.description}
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Customer supplying notes — shown even without prefinish section */}
+            {!(job.prefinishNotes || job.pfWindowsNeeded) && noteRows.length > 0 && (
+              <div data-pdf-section="notes" style={{ marginTop: 28, pageBreakInside: "avoid" }}>
+                {noteRows.map((note, ni) => (
+                  <div key={"note-" + ni} style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700, color: "#c0392b", background: "rgba(230,126,34,0.10)", borderBottom: "1px solid #e67e22" }}>
+                    {note.description}
+                  </div>
+                ))}
               </div>
             )}
 
