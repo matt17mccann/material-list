@@ -541,6 +541,7 @@
 
       const skipCasing = unit.casingProfile === "None" || unit.casingProfile === "Customer Supplying";
       const skipJambs = unit.jambMaterial === "Customer Supplying";
+      const jambSp = unit.jambSpecies || unit.species;
 
       if (unit.unitType === "Window") {
         if (unit.trimStyle === "Stops") {
@@ -557,8 +558,8 @@
           const jw = jd + o.jamb_width;
           if (!skipJambs) {
             materials.push(
-              { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-              { name: "Top/Bottom Jamb Extension", qty: 2, length: w + o.topBottomJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+              { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
+              { name: "Top/Bottom Jamb Extension", qty: 2, length: w + o.topBottomJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
             );
           }
           if (!skipCasing) {
@@ -572,9 +573,9 @@
           const jw = jd + o.jamb_width;
           if (!skipJambs) {
             materials.push(
-              { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-              { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-              { name: "Sill / Stool", qty: 1, length: w + o.stool_length, width: jw + o.stool_width_extra, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw + o.stool_width_extra) },
+              { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
+              { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
+              { name: "Sill / Stool", qty: 1, length: w + o.stool_length, width: jw + o.stool_width_extra, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw + o.stool_width_extra) },
             );
           }
           if (!skipCasing) {
@@ -601,9 +602,9 @@
         const jw = jd + o.jamb_width;
         if (!skipJambs) {
           materials.push(
-            { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-            { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-            { name: "Sill Jamb Extension", qty: 1, length: w + o.sillJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            { name: "Sill Jamb Extension", qty: 1, length: w + o.sillJamb_length, width: jw, thickness: t, species: jambSp, category: "Jamb", jambStock: getJambStockWidth(jw) },
           );
         }
         if (!skipCasing) {
@@ -3061,7 +3062,7 @@
                           const jambWidth = toFraction(jambMats[0].width);
                           return (
                             <div style={{ marginTop: 10, padding: "6px 10px", background: "#f5f9f2", borderRadius: 6, fontSize: 12, color: "#5a7a48", display: "flex", alignItems: "center", gap: 6 }}>
-                              <span style={{ fontWeight: 700 }}>Jamb:</span> {unit.species} {jambStockLabel} @ {jambWidth}"
+                              <span style={{ fontWeight: 700 }}>Jamb:</span> {unit.jambSpecies || unit.species} {jambStockLabel} @ {jambWidth}"
                             </div>
                           );
                         })()}
@@ -3116,7 +3117,10 @@
                                     updateUnit(idx, "customTrimPieces", updated);
                                   }} style={{ background: "none", border: "none", fontSize: 14, color: "#c0392b", cursor: "pointer" }}>✕</button>
                                 </div>
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                                {(() => {
+                                  const needsThickness = (ctp.piece || "Side Casing").includes("Jamb") || (ctp.piece || "").includes("Stool") || (ctp.piece || "").includes("Sill");
+                                  return (
+                                <div style={{ display: "grid", gridTemplateColumns: needsThickness ? "1fr 1fr 1fr" : "1fr 1fr", gap: 6 }}>
                                   <div>
                                     <label style={{ ...lbl, fontSize: 10 }}>Piece</label>
                                     <select style={{ ...sel, fontSize: 12 }} value={ctp.piece || "Side Casing"} onChange={e => {
@@ -3146,6 +3150,7 @@
                                       {SPECIES.map(s => <option key={s}>{s}</option>)}
                                     </select>
                                   </div>
+                                  {needsThickness && (
                                   <div>
                                     <label style={{ ...lbl, fontSize: 10 }}>Thickness</label>
                                     <select style={{ ...sel, fontSize: 12 }} value={ctp.thickness || ""} onChange={e => {
@@ -3159,7 +3164,10 @@
                                       <option value="1.25">5/4"</option>
                                     </select>
                                   </div>
+                                  )}
                                 </div>
+                                  );
+                                })()}
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginTop: 6 }}>
                                   <div>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
