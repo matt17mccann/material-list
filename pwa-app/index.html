@@ -1166,8 +1166,8 @@
 
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i];
-          const canvas = await html2canvas(section, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
-          const imgData = canvas.toDataURL("image/jpeg", 0.85);
+          const canvas = await html2canvas(section, { scale: 3, useCORS: true, backgroundColor: "#ffffff" });
+          const imgData = canvas.toDataURL("image/jpeg", 0.92);
           const sectionW = pdfW - (margin * 2);
           const sectionH = (canvas.height * sectionW) / canvas.width;
 
