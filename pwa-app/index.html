@@ -72,6 +72,17 @@
       { label: '15/16', value: 15/16 },
     ];
 
+    const stepperBtnStyle = { width: 32, height: 32, borderRadius: 6, border: "1px solid #ccc", background: "#f5f5f5", fontSize: 18, fontWeight: 700, color: "#333", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 1 };
+    function QtyStepper({ value, onChange, min = 1 }) {
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button type="button" onClick={() => onChange(Math.max(min, (value || 1) - 1))} style={stepperBtnStyle}>−</button>
+          <span style={{ minWidth: 24, textAlign: "center", fontWeight: 700, fontSize: 15 }}>{value || 1}</span>
+          <button type="button" onClick={() => onChange((value || 1) + 1)} style={stepperBtnStyle}>+</button>
+        </div>
+      );
+    }
+
     function FractionInput({ label, wholeValue, fracValue, onWholeChange, onFracChange, placeholder, labelStyle }) {
       return (
         <div>
@@ -124,6 +135,8 @@
       { label: '3/4x8', width: 7.25, thickness: 0.75 },
       { label: '3/4x10', width: 9.25, thickness: 0.75 },
       { label: '3/4x12', width: 11.25, thickness: 0.75 },
+      { label: '5/4x6', width: 5.5, thickness: 1.25, traditionalOnly: true },
+      { label: '5/4x8', width: 7.25, thickness: 1.25, traditionalOnly: true },
     ];
 
     function getJambStockWidth(neededWidth) {
@@ -526,6 +539,9 @@
       const t = off.thickness;
       const materials = [];
 
+      const skipCasing = unit.casingProfile === "None" || unit.casingProfile === "Customer Supplying";
+      const skipJambs = unit.jambMaterial === "Customer Supplying";
+
       if (unit.unitType === "Window") {
         if (unit.trimStyle === "Stops") {
           if (unit.stopProfile !== "None" && unit.stopCoverage !== "None") {
@@ -539,11 +555,13 @@
         } else if (unit.trimStyle === "Picture Frame") {
           const o = off.window_pf;
           const jw = jd + o.jamb_width;
-          materials.push(
-            { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-            { name: "Top/Bottom Jamb Extension", qty: 2, length: w + o.topBottomJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-          );
-          if (unit.casingProfile !== "None") {
+          if (!skipJambs) {
+            materials.push(
+              { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+              { name: "Top/Bottom Jamb Extension", qty: 2, length: w + o.topBottomJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            );
+          }
+          if (!skipCasing) {
             materials.push(
               { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
               { name: "Top/Bottom Casing", qty: 2, length: w + o.topBottomCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
@@ -552,12 +570,14 @@
         } else {
           const o = off.window_trad;
           const jw = jd + o.jamb_width;
-          materials.push(
-            { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-            { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-            { name: "Sill / Stool", qty: 1, length: w + o.stool_length, width: jw + o.stool_width_extra, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw + o.stool_width_extra) },
-          );
-          if (unit.casingProfile !== "None") {
+          if (!skipJambs) {
+            materials.push(
+              { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+              { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+              { name: "Sill / Stool", qty: 1, length: w + o.stool_length, width: jw + o.stool_width_extra, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw + o.stool_width_extra) },
+            );
+          }
+          if (!skipCasing) {
             materials.push(
               { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
               { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
@@ -567,7 +587,7 @@
         }
       } else if (unit.unitType === "Entry Door") {
         const o = off.entry_door;
-        if (unit.casingProfile !== "None") {
+        if (!skipCasing) {
           materials.push(
             { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
             { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
@@ -579,12 +599,14 @@
       } else if (unit.unitType === "Patio Door") {
         const o = off.patio_door;
         const jw = jd + o.jamb_width;
-        materials.push(
-          { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-          { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-          { name: "Sill Jamb Extension", qty: 1, length: w + o.sillJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
-        );
-        if (unit.casingProfile !== "None") {
+        if (!skipJambs) {
+          materials.push(
+            { name: "Side Jamb Extension", qty: 2, length: h + o.sideJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            { name: "Head Jamb Extension", qty: 1, length: w + o.headJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+            { name: "Sill Jamb Extension", qty: 1, length: w + o.sillJamb_length, width: jw, thickness: t, species: unit.species, category: "Jamb", jambStock: getJambStockWidth(jw) },
+          );
+        }
+        if (!skipCasing) {
           materials.push(
             { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
             { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
@@ -608,12 +630,13 @@
           const matchIdx = materials.findIndex(m => m.name === ctp.piece);
           const profileWidth = getProfileWidth(ctp.profile) || getStopProfileWidth(ctp.profile) || 3.5;
           const isJamb = ctp.piece.includes("Jamb") || ctp.piece.includes("Stool") || ctp.piece.includes("Sill");
+          const explicitThickness = ctp.thickness ? parseFloat(ctp.thickness) : null;
           const override = {
             name: ctp.piece,
             qty: ctp.qty || 1,
             length: matchIdx >= 0 ? materials[matchIdx].length : (ctp.piece.includes("Side") ? h : w),
             width: isJamb ? (materials[matchIdx]?.width || profileWidth) : profileWidth,
-            thickness: isJamb ? t : null,
+            thickness: explicitThickness != null ? explicitThickness : (isJamb ? t : null),
             species: ctp.species || unit.species,
             category: isJamb ? "Jamb" : (ctp.piece.includes("Stop") ? "Stop" : "Casing"),
             profile: isJamb ? null : ctp.profile,
@@ -1224,6 +1247,12 @@
 
         const rows = [];
 
+        // Customer supplying notes
+        const anyCustomerCasing = units.some(u => u.casingProfile === "Customer Supplying");
+        const anyCustomerJambs = units.some(u => u.jambMaterial === "Customer Supplying");
+        if (anyCustomerCasing) rows.push({ category: "NOTE", description: "*** CUSTOMER SUPPLYING CASING ***", quantity: "", isNote: true });
+        if (anyCustomerJambs) rows.push({ category: "NOTE", description: "*** CUSTOMER SUPPLYING JAMBS ***", quantity: "", isNote: true });
+
         // Coil / extra materials first
         (job.extraMaterials || []).forEach(item => {
           if (item.description) {
@@ -1343,6 +1372,13 @@
                 if (row === null) {
                   return <div key={"sep-" + i} style={{ height: 16, borderBottom: "2px solid #1a1a1a" }} />;
                 }
+                if (row.isNote) {
+                  return (
+                    <div key={i} style={{ padding: "12px 14px", background: "rgba(230,126,34,0.12)", borderBottom: "2px solid #e67e22", fontSize: 15, fontWeight: 800, color: "#c0392b", letterSpacing: 0.5 }}>
+                      {row.description}
+                    </div>
+                  );
+                }
                 return (
                   <div key={i} style={{ display: "flex", alignItems: "center", padding: "14px 14px", borderBottom: "1px solid #ddd" }}>
                     <div style={{ flex: "0 0 160px", fontSize: 12, fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: 0.5 }}>{row.category}</div>
@@ -1445,10 +1481,10 @@
                   <tbody>
                     {mats.map((m, j) => {
                       let thicknessDisplay = "—";
-                      if (m.category === "Jamb") {
+                      if (m.thickness != null) {
+                        thicknessDisplay = toFraction(m.thickness) + '"';
+                      } else if (m.category === "Jamb") {
                         thicknessDisplay = m.name.includes("Sill") || m.name.includes("Stool") ? '3/4"' : '5/8"';
-                      } else if (m.category === "Stop") {
-                        thicknessDisplay = "—";
                       }
                       return (
                         <tr key={j} style={{ borderBottom: "1px solid #ddd", background: j % 2 === 0 ? "#fff" : "#fafbfa" }}>
@@ -1651,6 +1687,7 @@
       const [catalog, setCatalog] = useState(loadCatalog);
       const [offsets, setOffsetsState] = useState(loadOffsets);
       const [customMode, setCustomMode] = useState({}); // tracks which fields are in "type custom" mode
+      const [jambSpeciesManuallySet, setJambSpeciesManuallySet] = useState(false);
       const [isOnline, setIsOnline] = useState(navigator.onLine);
       const [syncing, setSyncing] = useState(false);
       const [boardCalcKey, setBoardCalcKey] = useState(0); // bump to force board recalculation
@@ -1771,8 +1808,8 @@
             const profile = CASING_PROFILES.find(p => p.label === newGlobal.casingProfile);
             if (profile && profile.pineOnly) newGlobal.casingProfile = '2-1/2" Colonial (C115)';
           }
-          // Default jambSpecies to match casing species unless explicitly set
-          if (!newGlobal.jambSpecies || newGlobal.jambSpecies === globalTrim.species) {
+          // Default jambSpecies to match casing species unless user manually set it
+          if (!jambSpeciesManuallySet) {
             newGlobal.jambSpecies = value;
           }
         }
@@ -1893,6 +1930,7 @@
         // Auto-set global trim from imported data
         const importedTrim = { ...globalTrim, trimStyle: pdfTrimStyle, species: pdfSpecies, jambSpecies: pdfSpecies, casingProfile: pdfCasing, finishType: pdfFinishType, finish: pdfFinish };
         setGlobalTrim(importedTrim);
+        setJambSpeciesManuallySet(false);
         setSameTrim(true);
 
         const startNum = units.length + 1;
@@ -2637,6 +2675,7 @@
                         ? <input style={inp} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)} placeholder="Type custom profile..." />
                         : <select style={sel} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)}>
                             <option value="None">None (no casing)</option>
+                            <option value="Customer Supplying">Customer Supplying</option>
                             {getAvailableProfiles(globalTrim.species).map(p => {
                               const avail = isProfileAvailableInCatalog(catalog, p.label, globalTrim.species);
                               return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
@@ -2647,7 +2686,7 @@
                     {/* Jamb Species */}
                     <div>
                       <label style={lbl}>Jamb Species</label>
-                      <select style={sel} value={globalTrim.jambSpecies || globalTrim.species} onChange={e => updateGlobalTrim("jambSpecies", e.target.value)}>
+                      <select style={sel} value={globalTrim.jambSpecies || globalTrim.species} onChange={e => { setJambSpeciesManuallySet(true); updateGlobalTrim("jambSpecies", e.target.value); }}>
                         {SPECIES.map(s => {
                           const avail = isSpeciesAvailableInCatalog(catalog, s);
                           return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
@@ -2664,7 +2703,8 @@
                           const jw = jd + (offsets?.window_pf?.jamb_width || -2.75);
                           return getJambStockWidth(jw).label;
                         })()})</option>
-                        {JAMB_STOCK_WIDTHS.map(j => (
+                        <option value="Customer Supplying">Customer Supplying</option>
+                        {JAMB_STOCK_WIDTHS.filter(j => !j.traditionalOnly || (globalTrim.trimStyle || "Picture Frame") === "Traditional").map(j => (
                           <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
                         ))}
                       </select>
@@ -2869,6 +2909,7 @@
                               ? <input style={inp} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)} placeholder="Type custom profile..." />
                               : <select style={sel} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)}>
                                   <option value="None">None (no casing)</option>
+                                  <option value="Customer Supplying">Customer Supplying</option>
                                   {getAvailableProfiles(unit.species).map(p => {
                                     const avail = isProfileAvailableInCatalog(catalog, p.label, unit.species);
                                     return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
@@ -2908,7 +2949,8 @@
                                 const jw = jd + (offsets?.window_pf?.jamb_width || -2.75);
                                 return getJambStockWidth(jw).label;
                               })()})</option>
-                              {JAMB_STOCK_WIDTHS.map(j => (
+                              <option value="Customer Supplying">Customer Supplying</option>
+                              {JAMB_STOCK_WIDTHS.filter(j => !j.traditionalOnly || unit.trimStyle === "Traditional").map(j => (
                                 <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
                               ))}
                             </select>
@@ -3057,7 +3099,7 @@
                                     updateUnit(idx, "customTrimPieces", updated);
                                   }} style={{ background: "none", border: "none", fontSize: 14, color: "#c0392b", cursor: "pointer" }}>✕</button>
                                 </div>
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
                                   <div>
                                     <label style={{ ...lbl, fontSize: 10 }}>Piece</label>
                                     <select style={{ ...sel, fontSize: 12 }} value={ctp.piece || "Side Casing"} onChange={e => {
@@ -3067,6 +3109,7 @@
                                     }}>
                                       <option>Side Casing</option>
                                       <option>Top Casing</option>
+                                      <option>Bottom Casing</option>
                                       <option>Top/Bottom Casing</option>
                                       <option>Apron</option>
                                       <option>Side Jamb Extension</option>
@@ -3086,6 +3129,21 @@
                                       {SPECIES.map(s => <option key={s}>{s}</option>)}
                                     </select>
                                   </div>
+                                  <div>
+                                    <label style={{ ...lbl, fontSize: 10 }}>Thickness</label>
+                                    <select style={{ ...sel, fontSize: 12 }} value={ctp.thickness || ""} onChange={e => {
+                                      const updated = [...(unit.customTrimPieces || [])];
+                                      updated[ci] = { ...ctp, thickness: e.target.value };
+                                      updateUnit(idx, "customTrimPieces", updated);
+                                    }}>
+                                      <option value="">Auto</option>
+                                      <option value="0.625">5/8"</option>
+                                      <option value="0.75">3/4"</option>
+                                      <option value="1.25">5/4"</option>
+                                    </select>
+                                  </div>
+                                </div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginTop: 6 }}>
                                   <div>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                       <label style={{ ...lbl, fontSize: 10 }}>Profile</label>
@@ -3108,16 +3166,23 @@
                                           updated[ci] = { ...ctp, profile: e.target.value };
                                           updateUnit(idx, "customTrimPieces", updated);
                                         }}>
-                                          {CASING_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
-                                          {JAMB_STOCK_WIDTHS.map(j => <option key={j.label} value={j.label}>{j.label} (jamb)</option>)}
+                                          <optgroup label="Casing Profiles">
+                                            {CASING_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                                          </optgroup>
+                                          <optgroup label="Stop Profiles">
+                                            {STOP_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                                          </optgroup>
+                                          <optgroup label="Jamb Stock">
+                                            {JAMB_STOCK_WIDTHS.map(j => <option key={j.label} value={j.label}>{j.label}</option>)}
+                                          </optgroup>
                                         </select>
                                     }
                                   </div>
                                   <div>
                                     <label style={{ ...lbl, fontSize: 10 }}>Qty</label>
-                                    <input type="number" min="1" style={{ ...inp, fontSize: 12 }} value={ctp.qty || 1} onChange={e => {
+                                    <QtyStepper value={ctp.qty || 1} onChange={v => {
                                       const updated = [...(unit.customTrimPieces || [])];
-                                      updated[ci] = { ...ctp, qty: parseInt(e.target.value) || 1 };
+                                      updated[ci] = { ...ctp, qty: v };
                                       updateUnit(idx, "customTrimPieces", updated);
                                     }} />
                                   </div>
@@ -3141,11 +3206,9 @@
                           {(unit.manualMaterials || []).map((mm, mi) => (
                             <div key={mi} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, background: "#fafbfa", borderRadius: 6, padding: "6px 8px", border: "1px solid #E8E8E8" }}>
                               <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: "#333" }}>{mm.description || "—"}</span>
-                              <span style={{ fontSize: 10, color: "#999", flexShrink: 0 }}>Qty</span>
-                              <input style={{ ...inp, width: 40, marginBottom: 0, fontSize: 12, textAlign: "center", fontWeight: 700 }} type="number" min="1"
-                                value={mm.qty} placeholder="Qty" onChange={e => {
+                              <QtyStepper value={mm.qty || 1} onChange={v => {
                                   const updated = [...(unit.manualMaterials || [])];
-                                  updated[mi] = { ...mm, qty: parseInt(e.target.value) || 1 };
+                                  updated[mi] = { ...mm, qty: v };
                                   updateUnit(idx, "manualMaterials", updated);
                                 }} />
                               <button onClick={() => {
@@ -3403,11 +3466,9 @@
               {(job.extraMaterials || []).map((item, idx) => (
                 <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, background: "#fafbfa", borderRadius: 6, padding: "8px 10px", border: "1px solid #E8E8E8" }}>
                   <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#333" }}>{item.description || "—"}</span>
-                  <span style={{ fontSize: 11, color: "#999", flexShrink: 0 }}>Qty</span>
-                  <input style={{ ...inp, width: 50, flexShrink: 0, marginBottom: 0, textAlign: "center", fontWeight: 700 }} type="number" min="1"
-                    value={item.quantity} onChange={e => {
+                  <QtyStepper value={item.quantity || 1} onChange={v => {
                       const updated = [...job.extraMaterials];
-                      updated[idx] = { ...item, quantity: parseInt(e.target.value) || 1 };
+                      updated[idx] = { ...item, quantity: v };
                       updateJob("extraMaterials", updated);
                     }} />
                   <button onClick={() => {
@@ -3471,10 +3532,9 @@
                         updateJob("bayMaterials", updated);
                       }}
                       placeholder="Description" />
-                    <input style={{ ...inp, width: 60, flexShrink: 0, marginBottom: 0, textAlign: "center" }} type="number" min="1"
-                      value={item.quantity} onChange={e => {
+                    <QtyStepper value={item.quantity || 1} onChange={v => {
                         const updated = [...job.bayMaterials];
-                        updated[idx] = { ...item, quantity: parseInt(e.target.value) || 1 };
+                        updated[idx] = { ...item, quantity: v };
                         updateJob("bayMaterials", updated);
                       }} />
                     <button onClick={() => {
