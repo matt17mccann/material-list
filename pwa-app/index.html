@@ -664,7 +664,7 @@
         thresholdSpecies: '1-1/4" x 8\' Oak',
         casingProfile: '2-1/2" Colonial (C115)',
         finishType: "Stain",
-        finish: "Dark Walnut (Minwax)",
+        finish: "",
         widthWhole: "",
         widthFrac: 0,
         heightWhole: "",
@@ -1677,7 +1677,7 @@
         jambMaterial: "",
         casingProfile: '2-1/2" Colonial (C115)',
         finishType: "Stain",
-        finish: "Dark Walnut (Minwax)",
+        finish: "",
         jambDepthWhole: "",
         jambDepthFrac: 0,
       });
@@ -1981,7 +1981,7 @@
         const existing = savedJobs.find(j => j.id === jobId);
         const status = isSubmit ? "submitted" : (existing?.status === "complete" ? "in_progress" : (existing?.status || "in_progress"));
         const submitted = isSubmit ? true : (existing?.submitted || false);
-        const data = { id: jobId, job, units, savedAt: new Date().toISOString(), status, submitted, starred: existing?.starred || false };
+        const data = { id: jobId, job, units, globalTrim, savedAt: new Date().toISOString(), status, submitted, starred: existing?.starred || false };
         const synced = await saveJobToAPI(data);
         const jobs = await fetchJobsFromAPI();
         setSavedJobs(jobs);
@@ -1996,6 +1996,14 @@
         setJobId(saved.id);
         setJob(saved.job);
         setUnits(saved.units);
+        if (saved.globalTrim) {
+          setGlobalTrim(saved.globalTrim);
+          setJambSpeciesManuallySet(saved.globalTrim.jambSpecies && saved.globalTrim.jambSpecies !== saved.globalTrim.species);
+        } else if (saved.units && saved.units.length > 0) {
+          // Reconstruct globalTrim from first unit for older saved jobs
+          const u = saved.units[0];
+          setGlobalTrim(prev => ({ ...prev, trimStyle: u.trimStyle || prev.trimStyle, species: u.species || prev.species, jambSpecies: u.jambSpecies || u.species || prev.species, jambMaterial: u.jambMaterial || "", casingProfile: u.casingProfile || prev.casingProfile, finishType: u.finishType || prev.finishType, finish: u.finish || prev.finish, jambDepthWhole: u.jambDepthWhole || "", jambDepthFrac: u.jambDepthFrac || 0 }));
+        }
         setExpandedUnit(0);
         setSubmitted(saved.status && saved.status !== "in_progress");
         setShowPfSection(!!(saved.job.prefinishNotes));
@@ -2020,6 +2028,13 @@
         setJobId(saved.id);
         setJob(saved.job);
         setUnits(saved.units);
+        if (saved.globalTrim) {
+          setGlobalTrim(saved.globalTrim);
+          setJambSpeciesManuallySet(saved.globalTrim.jambSpecies && saved.globalTrim.jambSpecies !== saved.globalTrim.species);
+        } else if (saved.units && saved.units.length > 0) {
+          const u = saved.units[0];
+          setGlobalTrim(prev => ({ ...prev, trimStyle: u.trimStyle || prev.trimStyle, species: u.species || prev.species, jambSpecies: u.jambSpecies || u.species || prev.species, jambMaterial: u.jambMaterial || "", casingProfile: u.casingProfile || prev.casingProfile, finishType: u.finishType || prev.finishType, finish: u.finish || prev.finish, jambDepthWhole: u.jambDepthWhole || "", jambDepthFrac: u.jambDepthFrac || 0 }));
+        }
         setSubmitted(true);
         setReportType("checklist");
         setReportFrom("saved");
@@ -2721,7 +2736,7 @@
                           // Don't override per-unit finishes — leave them as-is
                           return;
                         }
-                        const newFinish = newType === "Stain" ? STAINS[0].label : PAINTS[0];
+                        const newFinish = "";
                         const updated = { ...globalTrim, finishType: newType, finish: newFinish };
                         if (globalTrim.species !== "Pine") {
                           const profile = CASING_PROFILES.find(p => p.label === updated.casingProfile);
@@ -2745,6 +2760,7 @@
                       {customMode.globalFinish
                         ? <input style={inp} value={globalTrim.finish} onChange={e => updateGlobalTrim("finish", e.target.value)} placeholder="Type custom color..." />
                         : <select style={sel} value={globalTrim.finish} onChange={e => updateGlobalTrim("finish", e.target.value)}>
+                            <option value="">Not yet selected</option>
                             {globalTrim.finishType === "Stain"
                               ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
                               : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
@@ -2760,7 +2776,7 @@
                     )}
                   </div>
                   <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(109,179,68,0.12)", borderRadius: 6, border: "1px solid rgba(109,179,68,0.25)", display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#2d5016" }}>{globalTrim.finishType}: {globalTrim.finish}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#2d5016" }}>{globalTrim.finishType}: {globalTrim.finish || "Not yet selected"}</span>
                   </div>
                   {/* Global Jamb Depth */}
                   <div style={{ marginTop: 10 }}>
@@ -2961,7 +2977,7 @@
                             <label style={lbl}>Finish Type</label>
                             <select style={sel} value={unit.finishType} onChange={e => {
                               const newType = e.target.value;
-                              const newFinish = newType === "Stain" ? STAINS[0].label : PAINTS[0];
+                              const newFinish = "";
                               setUnits(p => p.map((u, i) => i === idx ? { ...u, finishType: newType, finish: newFinish } : u));
                             }}>
                               {FINISH_TYPES.map(t => <option key={t}>{t}</option>)}
@@ -2978,6 +2994,7 @@
                             {customMode["finish_"+idx]
                               ? <input style={inp} value={unit.finish} onChange={e => updateUnit(idx, "finish", e.target.value)} placeholder="Type custom color..." />
                               : <select style={sel} value={unit.finish} onChange={e => updateUnit(idx, "finish", e.target.value)}>
+                                  <option value="">Not yet selected</option>
                                   {unit.finishType === "Stain"
                                     ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
                                     : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
