@@ -1253,11 +1253,17 @@
 
         const rows = [];
 
-        // Customer supplying notes
-        const anyCustomerCasing = units.some(u => u.casingProfile === "Customer Supplying");
-        const anyCustomerJambs = units.some(u => u.jambMaterial === "Customer Supplying");
-        if (anyCustomerCasing) rows.push({ category: "NOTE", description: "*** CUSTOMER SUPPLYING CASING ***", quantity: "", isNote: true });
-        if (anyCustomerJambs) rows.push({ category: "NOTE", description: "*** CUSTOMER SUPPLYING JAMBS ***", quantity: "", isNote: true });
+        // Customer supplying notes — list which units
+        const casingUnits = units.filter(u => u.casingProfile === "Customer Supplying").map(u => u.label || "?");
+        const jambUnits = units.filter(u => u.jambMaterial === "Customer Supplying").map(u => u.label || "?");
+        if (casingUnits.length > 0) {
+          const unitList = casingUnits.length === units.length ? "All Units" : ("Units: " + casingUnits.join(", "));
+          rows.push({ category: "NOTE", description: `CUSTOMER SUPPLYING CASING — ${unitList}`, quantity: "", isNote: true });
+        }
+        if (jambUnits.length > 0) {
+          const unitList = jambUnits.length === units.length ? "All Units" : ("Units: " + jambUnits.join(", "));
+          rows.push({ category: "NOTE", description: `CUSTOMER SUPPLYING JAMBS — ${unitList}`, quantity: "", isNote: true });
+        }
 
         // Coil / extra materials first
         (job.extraMaterials || []).forEach(item => {
@@ -1380,8 +1386,9 @@
                 }
                 if (row.isNote) {
                   return (
-                    <div key={i} style={{ padding: "12px 14px", background: "rgba(230,126,34,0.12)", borderBottom: "2px solid #e67e22", fontSize: 15, fontWeight: 800, color: "#c0392b", letterSpacing: 0.5 }}>
-                      {row.description}
+                    <div key={i} style={{ display: "flex", alignItems: "center", padding: "10px 14px", background: "rgba(230,126,34,0.10)", borderBottom: "1px solid #e67e22" }}>
+                      <div style={{ flex: "0 0 160px", fontSize: 11, fontWeight: 700, color: "#e67e22", textTransform: "uppercase", letterSpacing: 0.5 }}>NOTE</div>
+                      <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: "#c0392b" }}>{row.description}</div>
                     </div>
                   );
                 }
