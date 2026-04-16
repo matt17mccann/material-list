@@ -1157,15 +1157,6 @@
 
       const [pdfBusy, setPdfBusy] = useState(false);
 
-      // Release canvas memory immediately — critical on iOS Safari which
-      // hoards allocations and silently renders blank canvases after ~6.
-      const releaseCanvas = (canvas) => {
-        canvas.width = 1;
-        canvas.height = 1;
-        const ctx = canvas.getContext("2d");
-        if (ctx) ctx.clearRect(0, 0, 1, 1);
-      };
-
       const generatePDFDoc = async () => {
         if (!reportRef.current) throw new Error("Report not ready");
         const sections = reportRef.current.querySelectorAll("[data-pdf-section]");
@@ -1176,41 +1167,13 @@
         const margin = 5;
         let currentY = margin;
 
-        // iOS Safari caps single canvas at ~16.7M pixels.
-        // At scale 2 + 900px width = 1800px canvas width → safe up to ~9300px tall.
-        // Scale 3 risks hitting the limit on large sections. Always use 2.
-        const canvasScale = 2;
-
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i];
           const sectionName = section.getAttribute("data-pdf-section");
-
-          // Section must be visible and in the DOM for html2canvas to work
-          if (!section.offsetWidth || !section.offsetHeight) continue;
-
-          const canvas = await html2canvas(section, {
-            scale: canvasScale,
-            useCORS: true,
-            backgroundColor: "#ffffff",
-            logging: false,
-          });
-
-          // Validate canvas dimensions before doing math
-          if (!canvas.width || !canvas.height) {
-            releaseCanvas(canvas);
-            continue;
-          }
-
-          // Capture dimensions and image data BEFORE releasing canvas memory
-          const canvasW = canvas.width;
-          const canvasH = canvas.height;
+          const canvas = await html2canvas(section, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
           const imgData = canvas.toDataURL("image/jpeg", 0.92);
-
-          // Free canvas memory immediately — prevents iOS silent blank renders
-          releaseCanvas(canvas);
-
           const sectionW = pdfW - (margin * 2);
-          const sectionH = (canvasH * sectionW) / canvasW;
+          const sectionH = (canvas.height * sectionW) / canvas.width;
 
           // Board summary always starts on a new page
           if (sectionName === "board-summary" && currentY > margin + 10) {
