@@ -1157,6 +1157,36 @@
 
       const [pdfBusy, setPdfBusy] = useState(false);
 
+      // Render a DOM element to canvas by cloning it into a clean temp container.
+      // This avoids the html2canvas "cloned iframe" bug on iOS Safari.
+      const renderSectionToCanvas = async (section, scale) => {
+        const container = document.createElement("div");
+        container.style.cssText = "position:fixed;left:-9999px;top:0;background:#fff;z-index:-1;";
+        // Match the report's max width so layout is consistent
+        container.style.width = section.offsetWidth + "px";
+        document.body.appendChild(container);
+        const clone = section.cloneNode(true);
+        container.appendChild(clone);
+        // Copy computed styles for elements that need them (tables, flex, etc.)
+        const copyComputedFonts = (src, dst) => {
+          const srcStyle = window.getComputedStyle(src);
+          dst.style.fontFamily = srcStyle.fontFamily;
+        };
+        copyComputedFonts(section, clone);
+        try {
+          const canvas = await html2canvas(clone, {
+            scale: scale,
+            useCORS: true,
+            allowTaint: true,
+            backgroundColor: "#ffffff",
+            logging: false,
+          });
+          return canvas;
+        } finally {
+          document.body.removeChild(container);
+        }
+      };
+
       const generatePDFDoc = async () => {
         if (!reportRef.current) throw new Error("Report not ready");
         const sections = reportRef.current.querySelectorAll("[data-pdf-section]");
@@ -1174,21 +1204,28 @@
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i];
           const sectionName = section.getAttribute("data-pdf-section");
+
+          // Try the clean-container approach first, fall back to direct render
           let canvas;
           try {
-            canvas = await html2canvas(section, {
-              scale: canvasScale,
-              useCORS: true,
-              allowTaint: true,
-              backgroundColor: "#ffffff",
-              foreignObjectRendering: false,
-              removeContainer: true,
-              logging: false,
-            });
-          } catch (canvasErr) {
-            console.warn("html2canvas failed on section", sectionName, canvasErr);
-            continue; // skip this section rather than killing the whole PDF
+            canvas = await renderSectionToCanvas(section, canvasScale);
+          } catch (err1) {
+            console.warn("Clone render failed for", sectionName, "— trying direct render:", err1);
+            try {
+              canvas = await html2canvas(section, {
+                scale: canvasScale,
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: "#ffffff",
+                foreignObjectRendering: false,
+                logging: false,
+              });
+            } catch (err2) {
+              console.error("Both render methods failed for section", sectionName, err2);
+              throw new Error("PDF render failed on section: " + sectionName);
+            }
           }
+
           const imgData = canvas.toDataURL("image/jpeg", 0.92);
           const sectionW = pdfW - (margin * 2);
           const sectionH = (canvas.height * sectionW) / canvas.width;
