@@ -1157,34 +1157,13 @@
 
       const [pdfBusy, setPdfBusy] = useState(false);
 
-      // Render a DOM element to canvas by cloning it into a clean temp container.
-      // This avoids the html2canvas "cloned iframe" bug on iOS Safari.
-      const renderSectionToCanvas = async (section, scale) => {
-        const container = document.createElement("div");
-        container.style.cssText = "position:fixed;left:-9999px;top:0;background:#fff;z-index:-1;";
-        // Match the report's max width so layout is consistent
-        container.style.width = section.offsetWidth + "px";
-        document.body.appendChild(container);
-        const clone = section.cloneNode(true);
-        container.appendChild(clone);
-        // Copy computed styles for elements that need them (tables, flex, etc.)
-        const copyComputedFonts = (src, dst) => {
-          const srcStyle = window.getComputedStyle(src);
-          dst.style.fontFamily = srcStyle.fontFamily;
-        };
-        copyComputedFonts(section, clone);
-        try {
-          const canvas = await html2canvas(clone, {
-            scale: scale,
-            useCORS: true,
-            allowTaint: true,
-            backgroundColor: "#ffffff",
-            logging: false,
-          });
-          return canvas;
-        } finally {
-          document.body.removeChild(container);
-        }
+      // Release canvas memory immediately — critical on iOS Safari which
+      // hoards allocations and silently renders blank canvases after ~6.
+      const releaseCanvas = (canvas) => {
+        canvas.width = 1;
+        canvas.height = 1;
+        const ctx = canvas.getContext("2d");
+        if (ctx) ctx.clearRect(0, 0, 1, 1);
       };
 
       const generatePDFDoc = async () => {
@@ -1197,38 +1176,41 @@
         const margin = 5;
         let currentY = margin;
 
-        // Use scale 2 on iOS to avoid memory limits
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-        const canvasScale = isIOS ? 2 : 3;
+        // iOS Safari caps single canvas at ~16.7M pixels.
+        // At scale 2 + 900px width = 1800px canvas width → safe up to ~9300px tall.
+        // Scale 3 risks hitting the limit on large sections. Always use 2.
+        const canvasScale = 2;
 
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i];
           const sectionName = section.getAttribute("data-pdf-section");
 
-          // Try the clean-container approach first, fall back to direct render
-          let canvas;
-          try {
-            canvas = await renderSectionToCanvas(section, canvasScale);
-          } catch (err1) {
-            console.warn("Clone render failed for", sectionName, "— trying direct render:", err1);
-            try {
-              canvas = await html2canvas(section, {
-                scale: canvasScale,
-                useCORS: true,
-                allowTaint: true,
-                backgroundColor: "#ffffff",
-                foreignObjectRendering: false,
-                logging: false,
-              });
-            } catch (err2) {
-              console.error("Both render methods failed for section", sectionName, err2);
-              throw new Error("PDF render failed on section: " + sectionName);
-            }
+          // Section must be visible and in the DOM for html2canvas to work
+          if (!section.offsetWidth || !section.offsetHeight) continue;
+
+          const canvas = await html2canvas(section, {
+            scale: canvasScale,
+            useCORS: true,
+            backgroundColor: "#ffffff",
+            logging: false,
+          });
+
+          // Validate canvas dimensions before doing math
+          if (!canvas.width || !canvas.height) {
+            releaseCanvas(canvas);
+            continue;
           }
 
+          // Capture dimensions and image data BEFORE releasing canvas memory
+          const canvasW = canvas.width;
+          const canvasH = canvas.height;
           const imgData = canvas.toDataURL("image/jpeg", 0.92);
+
+          // Free canvas memory immediately — prevents iOS silent blank renders
+          releaseCanvas(canvas);
+
           const sectionW = pdfW - (margin * 2);
-          const sectionH = (canvas.height * sectionW) / canvas.width;
+          const sectionH = (canvasH * sectionW) / canvasW;
 
           // Board summary always starts on a new page
           if (sectionName === "board-summary" && currentY > margin + 10) {
@@ -1239,9 +1221,9 @@
             currentY = margin;
           }
           if (sectionH > pageH - (margin * 2)) {
-            const scale = (pageH - (margin * 2)) / sectionH;
-            pdf.addImage(imgData, "JPEG", margin, currentY, sectionW * scale, sectionH * scale);
-            currentY += sectionH * scale + 4;
+            const fitScale = (pageH - (margin * 2)) / sectionH;
+            pdf.addImage(imgData, "JPEG", margin, currentY, sectionW * fitScale, sectionH * fitScale);
+            currentY += sectionH * fitScale + 4;
           } else {
             pdf.addImage(imgData, "JPEG", margin, currentY, sectionW, sectionH);
             currentY += sectionH + 4;
