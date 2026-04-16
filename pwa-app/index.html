@@ -1213,7 +1213,7 @@
           pdf.save(pdfFilename());
         } catch (err) {
           console.error("Save PDF failed:", err);
-          alert("Failed to generate PDF: " + err.message);
+          alert("Failed to generate PDF: " + (err && err.message ? err.message : String(err)));
         } finally {
           setPdfBusy(false);
         }
@@ -1235,7 +1235,7 @@
           }
         } catch (err) {
           console.error("Print failed:", err);
-          alert("Failed to generate PDF: " + err.message);
+          alert("Failed to generate PDF: " + (err && err.message ? err.message : String(err)));
         } finally {
           setPdfBusy(false);
         }
@@ -1278,7 +1278,7 @@
           setTimeout(() => mailLink.click(), 500);
         } catch (err) {
           console.error("Share failed:", err);
-          alert("Failed to share: " + err.message);
+          alert("Failed to share: " + (err && err.message ? err.message : String(err)));
         } finally {
           setPdfBusy(false);
         }
