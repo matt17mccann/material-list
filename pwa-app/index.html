@@ -1159,39 +1159,52 @@
 
       const generatePDFDoc = async () => {
         if (!reportRef.current) throw new Error("Report not ready");
-        const sections = reportRef.current.querySelectorAll("[data-pdf-section]");
-        if (!sections.length) throw new Error("No report sections found");
+
+        // Render the ENTIRE report as one canvas — avoids html2canvas's broken
+        // per-element iframe cloning that fails on iOS Safari.
+        // Pick scale based on total pixel count to stay under iOS 16M px limit.
+        const el = reportRef.current;
+        const totalPixels = el.scrollWidth * el.scrollHeight * 4; // scale 2 = 4x pixels
+        const scale = totalPixels > 14000000 ? 1 : 2;
+
+        const canvas = await html2canvas(el, { scale, useCORS: true, backgroundColor: "#ffffff" });
+
         const pdf = new jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
         const pdfW = pdf.internal.pageSize.getWidth();
         const pageH = pdf.internal.pageSize.getHeight();
         const margin = 5;
-        let currentY = margin;
+        const contentW = pdfW - margin * 2;
+        const contentH = pageH - margin * 2;
 
-        for (let i = 0; i < sections.length; i++) {
-          const section = sections[i];
-          const sectionName = section.getAttribute("data-pdf-section");
-          const canvas = await html2canvas(section, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
-          const imgData = canvas.toDataURL("image/jpeg", 0.92);
-          const sectionW = pdfW - (margin * 2);
-          const sectionH = (canvas.height * sectionW) / canvas.width;
+        // Scale the full canvas width to fit the PDF content width
+        const imgWidthPx = canvas.width;
+        const imgHeightPx = canvas.height;
+        const pxPerMm = imgWidthPx / contentW;
+        const totalImgH = imgHeightPx / pxPerMm; // total height in mm
 
-          // Board summary always starts on a new page
-          if (sectionName === "board-summary" && currentY > margin + 10) {
-            pdf.addPage();
-            currentY = margin;
-          } else if (currentY + sectionH > pageH - margin && currentY > margin + 10) {
-            pdf.addPage();
-            currentY = margin;
-          }
-          if (sectionH > pageH - (margin * 2)) {
-            const fitScale = (pageH - (margin * 2)) / sectionH;
-            pdf.addImage(imgData, "JPEG", margin, currentY, sectionW * fitScale, sectionH * fitScale);
-            currentY += sectionH * fitScale + 4;
-          } else {
-            pdf.addImage(imgData, "JPEG", margin, currentY, sectionW, sectionH);
-            currentY += sectionH + 4;
-          }
+        // Slice the single canvas into page-sized chunks
+        const pageContentH = contentH; // usable height per page in mm
+        const pageContentPx = pageContentH * pxPerMm; // usable height per page in px
+        const totalPages = Math.ceil(imgHeightPx / pageContentPx);
+
+        for (let p = 0; p < totalPages; p++) {
+          if (p > 0) pdf.addPage();
+
+          const srcY = p * pageContentPx;
+          const srcH = Math.min(pageContentPx, imgHeightPx - srcY);
+
+          // Create a sub-canvas for this page slice
+          const pageCanvas = document.createElement("canvas");
+          pageCanvas.width = imgWidthPx;
+          pageCanvas.height = srcH;
+          const ctx = pageCanvas.getContext("2d");
+          ctx.drawImage(canvas, 0, srcY, imgWidthPx, srcH, 0, 0, imgWidthPx, srcH);
+
+          const pageImg = pageCanvas.toDataURL("image/jpeg", 0.92);
+          const sliceH = srcH / pxPerMm;
+          pdf.addImage(pageImg, "JPEG", margin, margin, contentW, sliceH);
         }
+
         return pdf;
       };
 
