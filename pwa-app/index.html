@@ -1174,7 +1174,21 @@
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i];
           const sectionName = section.getAttribute("data-pdf-section");
-          const canvas = await html2canvas(section, { scale: canvasScale, useCORS: true, backgroundColor: "#ffffff" });
+          let canvas;
+          try {
+            canvas = await html2canvas(section, {
+              scale: canvasScale,
+              useCORS: true,
+              allowTaint: true,
+              backgroundColor: "#ffffff",
+              foreignObjectRendering: false,
+              removeContainer: true,
+              logging: false,
+            });
+          } catch (canvasErr) {
+            console.warn("html2canvas failed on section", sectionName, canvasErr);
+            continue; // skip this section rather than killing the whole PDF
+          }
           const imgData = canvas.toDataURL("image/jpeg", 0.92);
           const sectionW = pdfW - (margin * 2);
           const sectionH = (canvas.height * sectionW) / canvas.width;
