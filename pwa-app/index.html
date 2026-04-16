@@ -1155,18 +1155,26 @@
       const reportRef = useRef();
       const [activeReport, setActiveReport] = useState(reportType || "checklist");
 
+      const [pdfBusy, setPdfBusy] = useState(false);
+
       const generatePDFDoc = async () => {
+        if (!reportRef.current) throw new Error("Report not ready");
         const sections = reportRef.current.querySelectorAll("[data-pdf-section]");
+        if (!sections.length) throw new Error("No report sections found");
         const pdf = new jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
         const pdfW = pdf.internal.pageSize.getWidth();
         const pageH = pdf.internal.pageSize.getHeight();
         const margin = 5;
         let currentY = margin;
 
+        // Use scale 2 on iOS to avoid memory limits
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        const canvasScale = isIOS ? 2 : 3;
+
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i];
           const sectionName = section.getAttribute("data-pdf-section");
-          const canvas = await html2canvas(section, { scale: 3, useCORS: true, backgroundColor: "#ffffff" });
+          const canvas = await html2canvas(section, { scale: canvasScale, useCORS: true, backgroundColor: "#ffffff" });
           const imgData = canvas.toDataURL("image/jpeg", 0.92);
           const sectionW = pdfW - (margin * 2);
           const sectionH = (canvas.height * sectionW) / canvas.width;
@@ -1198,42 +1206,82 @@
       };
 
       const handlePDF = async () => {
-        const pdf = await generatePDFDoc();
-        pdf.save(pdfFilename());
+        if (pdfBusy) return;
+        setPdfBusy(true);
+        try {
+          const pdf = await generatePDFDoc();
+          pdf.save(pdfFilename());
+        } catch (err) {
+          console.error("Save PDF failed:", err);
+          alert("Failed to generate PDF: " + err.message);
+        } finally {
+          setPdfBusy(false);
+        }
+      };
+
+      const handlePrint = async () => {
+        if (pdfBusy) return;
+        setPdfBusy(true);
+        try {
+          const pdf = await generatePDFDoc();
+          const blob = pdf.output("blob");
+          const url = URL.createObjectURL(blob);
+          const win = window.open(url);
+          if (win) {
+            win.onload = () => { win.print(); };
+          } else {
+            // window.open blocked (common on iOS PWA) — fall back to download
+            pdf.save(pdfFilename());
+          }
+        } catch (err) {
+          console.error("Print failed:", err);
+          alert("Failed to generate PDF: " + err.message);
+        } finally {
+          setPdfBusy(false);
+        }
       };
 
       const handleEmail = async () => {
-        const pdf = await generatePDFDoc();
-        const filename = pdfFilename();
-        const pdfBlob = pdf.output("blob");
+        if (pdfBusy) return;
+        setPdfBusy(true);
+        try {
+          const pdf = await generatePDFDoc();
+          const filename = pdfFilename();
+          const pdfBlob = pdf.output("blob");
 
-        const lastName = (job.customerName || "").split(" ").pop() || "Job";
-        const emailSubject = `${lastName} ${job.poNumber || ""} Material List`.trim();
+          const lastName = (job.customerName || "").split(" ").pop() || "Job";
+          const emailSubject = `${lastName} ${job.poNumber || ""} Material List`.trim();
 
-        if (navigator.share && navigator.canShare) {
-          const file = new File([pdfBlob], filename, { type: "application/pdf" });
-          try {
-            await navigator.share({
-              title: emailSubject,
-              text: emailSubject,
-              files: [file],
-            });
-            return;
-          } catch (err) {
-            if (err.name === "AbortError") return;
+          if (navigator.share && navigator.canShare) {
+            const file = new File([pdfBlob], filename, { type: "application/pdf" });
+            if (navigator.canShare({ files: [file] })) {
+              try {
+                await navigator.share({
+                  title: emailSubject,
+                  text: emailSubject,
+                  files: [file],
+                });
+                return;
+              } catch (err) {
+                if (err.name === "AbortError") return;
+                // Fall through to mailto fallback
+              }
+            }
           }
-        }
 
-        const subject = encodeURIComponent(emailSubject);
-        const body = encodeURIComponent(`Hi,\n\nPlease find the material cut list for:\n\nCustomer: ${job.customerName || ""}\nAddress: ${job.address || ""}\nDate: ${job.date || ""}\nPO #: ${job.poNumber || ""}\nMeasured by: ${job.techMeasurer || ""}\n\nThe PDF is attached separately.\n\nThanks`);
-        const pdfUrl = pdf.output("bloburl");
-        const dlLink = document.createElement("a");
-        dlLink.href = pdfUrl;
-        dlLink.download = filename;
-        dlLink.click();
-        const mailLink = document.createElement("a");
-        mailLink.href = `mailto:nina@northlandrba.com?subject=${subject}&body=${body}`;
-        setTimeout(() => mailLink.click(), 300);
+          const subject = encodeURIComponent(emailSubject);
+          const body = encodeURIComponent(`Hi,\n\nPlease find the material cut list for:\n\nCustomer: ${job.customerName || ""}\nAddress: ${job.address || ""}\nDate: ${job.date || ""}\nPO #: ${job.poNumber || ""}\nMeasured by: ${job.techMeasurer || ""}\n\nThe PDF is attached separately.\n\nThanks`);
+          // Download PDF first, then open email
+          pdf.save(filename);
+          const mailLink = document.createElement("a");
+          mailLink.href = `mailto:nina@northlandrba.com?subject=${subject}&body=${body}`;
+          setTimeout(() => mailLink.click(), 500);
+        } catch (err) {
+          console.error("Share failed:", err);
+          alert("Failed to share: " + err.message);
+        } finally {
+          setPdfBusy(false);
+        }
       };
 
       // ─── Aggregate materials for checklist view ───
@@ -1662,27 +1710,23 @@
                 background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.25)", color: "#fff",
                 padding: "8px 14px", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer", letterSpacing: 0.5
               }}>EDIT JOB</button>}
-              <button onClick={async () => {
-                const pdf = await generatePDFDoc();
-                const blob = pdf.output("blob");
-                const url = URL.createObjectURL(blob);
-                const win = window.open(url);
-                if (win) { win.onload = () => { win.print(); }; }
-                else { pdf.save(`CutList_${(job.customerName || "Job").replace(/\s+/g, "_")}.pdf`); }
-              }} style={{
+              <button onClick={handlePrint} disabled={pdfBusy} style={{
                 background: "none", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.8)",
-                padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer"
-              }}>Print</button>
-              <button onClick={handlePDF} style={{
+                padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: pdfBusy ? "wait" : "pointer",
+                opacity: pdfBusy ? 0.5 : 1
+              }}>{pdfBusy ? "Working…" : "Print"}</button>
+              <button onClick={handlePDF} disabled={pdfBusy} style={{
                 background: "none", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.8)",
-                padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer"
-              }}>Save PDF</button>
+                padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: pdfBusy ? "wait" : "pointer",
+                opacity: pdfBusy ? 0.5 : 1
+              }}>{pdfBusy ? "Working…" : "Save PDF"}</button>
             </div>
 
-            <button onClick={handleEmail} style={{
+            <button onClick={handleEmail} disabled={pdfBusy} style={{
               background: "#6DB344", border: "none", color: "#fff",
-              padding: "8px 16px", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer", marginLeft: "auto"
-            }}>Share</button>
+              padding: "8px 16px", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: pdfBusy ? "wait" : "pointer",
+              marginLeft: "auto", opacity: pdfBusy ? 0.5 : 1
+            }}>{pdfBusy ? "Working…" : "Share"}</button>
           </div>
 
           {activeReport === "checklist" ? <ChecklistReport /> : <DetailedReport />}
