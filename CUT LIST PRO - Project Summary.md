@@ -36,7 +36,7 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 | Manual unit entry | **Working** | Full form for each unit with fraction inputs |
 | Material calculations | **Working** | All formulas for Windows (PF/Traditional/Stops), Entry Doors, Patio Doors. Separate species for casing vs jamb. |
 | Board optimizer | **Working** | Bin-packing, catalog-aware, whole-job or per-unit grain matching mode |
-| PDF report generation | **Working** | One combined PDF: Checklist (page 1) → Cut List (page 2+) → Board Summary (final page). Tabs still toggle on-screen view. |
+| PDF report generation | **Working** | PDF is Checklist (page 1) → Board Purchase Summary (page 2). Per-unit Detailed Cut List view exists on-screen but is intentionally not in the PDF yet. |
 | Print PDF | **Working** | Opens generated PDF in new tab for printing |
 | Share report | **Working** | Native share API with PDF attached + reliable `window.location.href` mailto fallback to nina@northlandrba.com |
 | Shared job storage | **Working** | Netlify Blobs — all devices read/write to same store. GlobalTrim persists across save/edit cycles. |
@@ -88,8 +88,8 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 ### Report / PDF
 | Feature | Notes |
 |---------|-------|
-| **Combined PDF layout** | One document for the warehouse: Checklist on page 1, per-unit Cut List on page 2+, Board Purchase Summary on its own final page. On-screen Checklist/Detailed tab toggle still works for browsing, but the PDF is always the full combined view. |
-| **Section-aware page breaks** | Renderer reads `data-pdf-section` / `data-pdf-new-page` markers on the report DOM. Hard breaks land exactly at Cut List start and Board Summary. Rows and tables don't get chopped mid-content. |
+| **PDF layout** | Checklist on page 1, Board Purchase Summary on its own page at the end. Per-unit Detailed Cut List still browsable on-screen via the tab toggle but not embedded in the PDF yet (pending formatting pass). |
+| **Section-aware page breaks** | Renderer reads `data-pdf-section` / `data-pdf-new-page` markers on the report DOM and forces a hard break before the Board Summary. Rows and tables don't get chopped mid-content. Ready to take on more sections (e.g. Cut List) without touching the slicer. |
 | **Job details upper-right** | Name, address, PO#, tech — positioned where installers expect them |
 | **Stain highlight** | RBA green (25% opacity) bar in Prefinish section showing finish type + color |
 | **Customer Supplying notes** | Appears below Prefinish/PF Windows section listing affected units |
