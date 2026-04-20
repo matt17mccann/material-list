@@ -1,6 +1,6 @@
 # RBA Material List — Project Summary
 ### Renewal by Andersen | Lake Superior Region
-**Last Updated:** April 8, 2026 (v2.2) | **Built by:** Matt McCann + Claude AI
+**Last Updated:** April 20, 2026 (v2.5) | **Built by:** Matt McCann + Claude AI
 
 ---
 
@@ -30,16 +30,16 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 ### Core Workflow
 | Feature | Status | Notes |
 |---------|--------|-------|
-| JSON file import (rSuite DL Export) | **Working** | Auto-fills customer, address, trim, stain/finish, all units with exact sizes |
+| JSON file import (rSuite DL Export) | **Working** | Auto-fills customer, address, PO# (from phone fields), trim, casing profile, stain/finish from all 900+ items, all units with exact sizes |
 | ZIP file import | **Working** | Extracts .json from ZIP for iPad users who can't unzip |
-| PDF file import (Installer Package) | **Working** | Regex parser + Claude API fallback |
+| PDF file import (Installer Package) | **Working** | Regex parser + Claude API fallback, PO# extraction (R/RD/RP prefix) |
 | Manual unit entry | **Working** | Full form for each unit with fraction inputs |
-| Material calculations | **Working** | All formulas for Windows (PF/Traditional/Stops), Entry Doors, Patio Doors |
+| Material calculations | **Working** | All formulas for Windows (PF/Traditional/Stops), Entry Doors, Patio Doors. Separate species for casing vs jamb. |
 | Board optimizer | **Working** | Bin-packing, catalog-aware, whole-job or per-unit grain matching mode |
-| PDF report generation | **Working** | Materials Checklist + Detailed Cut List views |
+| PDF report generation | **Working** | One combined PDF: Checklist (page 1) → Cut List (page 2+) → Board Summary (final page). Tabs still toggle on-screen view. |
 | Print PDF | **Working** | Opens generated PDF in new tab for printing |
-| Share report | **Working** | Native share API with PDF attached + mailto fallback to nina@northlandrba.com |
-| Shared job storage | **Working** | Netlify Blobs — all devices read/write to same store |
+| Share report | **Working** | Native share API with PDF attached + reliable `window.location.href` mailto fallback to nina@northlandrba.com |
+| Shared job storage | **Working** | Netlify Blobs — all devices read/write to same store. GlobalTrim persists across save/edit cycles. |
 | Shared lumber catalog | **Working** | Warehouse changes visible to all tech measurers |
 | Shared offsets | **Working** | Editable offset formulas + configurable board waste |
 | Offline support | **Working** | Service worker + localStorage fallback when offline |
@@ -47,42 +47,58 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 ### Editor Sections (in order)
 1. **Import Job File** — Upload .json, .zip, or .pdf, auto-fills everything
 2. **Job Info** — Customer, address, PO#, tech measurer, date
-3. **Trim Selection** — Trim Style (Picture Frame/Traditional/Stops), Casing Species + Profile, Jamb Species + Material, Finish Type + Color with green highlight banner, Jamb Depth. Custom Trim toggle for complex jobs. All with Custom checkbox for free-text entry. All dropdowns include "None" option to exclude material from the list.
-4. **Units** — Expandable accordion per unit. Each unit has: dimensions, trim style, casing species/profile, jamb species/material, finish, threshold (doors), custom trim overrides, manual materials. All fields have Custom checkbox.
-5. **Extra Boards** — Add any board type (Casing/Jamb/Stop/Other) with species, profile, stock length, and notes. Appear as real numbered boards in Board Summary.
-6. **Prefinish / Warehouse Notes** — Always-visible textarea with stain auto-fill + "Any Windows needing PF?" checkbox
-7. **Extra Materials** — Coil quick-tap color buttons, custom text input with Add button. Per-unit extra materials auto-populate to this section. Clean label + qty layout.
+3. **Trim Selection** — Trim Style (Picture Frame/Traditional/Stops), Casing Species + Profile, Jamb Species + Material, Finish Type + Color with green highlight banner, Jamb Depth. Custom Trim toggle for complex jobs. All with Custom checkbox for free-text entry. Dropdowns include "None", **"Customer Supplying"** options. **"Multiple (per unit)"** finish option forces per-unit color selection. **5/4" Stool** checkbox for Traditional trim.
+4. **Units** — Expandable accordion per unit. Each unit has: dimensions, trim style, casing species/profile, jamb species/material, finish type + color, threshold (doors), custom trim overrides, manual materials. All fields have Custom checkbox. Qty inputs use +/− stepper buttons.
+5. **Extra Boards** — Add any board type (Casing/Jamb/Stop/Other) with species, profile, stock length, **finish/stain color**, and notes. Appear as real numbered boards in Board Summary.
+6. **Prefinish / Warehouse Notes** — Always-visible textarea with stain auto-fill + "Any Windows needing PF?" checkbox. **Customer Supplying notes** auto-appear here listing affected units.
+7. **Extra Materials** — Coil quick-tap color buttons (White, Black, Canvas, Terratone, Sandtone, Dark Bronze, Forest Green, Red Rock, Cocoa Bean), custom text input with Add button. Per-unit extra materials auto-populate to this section.
 8. **Bay Material** — Collapsible section for Soffit, Plywood, Pink Foam, custom items
-9. **Board Summary** — Live preview of optimized board counts, per-unit toggle, recalculate button
+9. **Board Summary** — Live preview of optimized board counts, per-unit toggle, **show prefinish color toggle**, recalculate button
 
 ### Trim System
 | Feature | Notes |
 |---------|-------|
 | **Trim Style** | Picture Frame, Traditional, or Stops — set globally, override per unit |
 | **Stops** | 1x4 Stop, Colonial 3-1/4" Stop, Eased Edge 1-1/4" Stop with All Sides, Sides and Top, or None coverage |
-| **Casing Species + Profile** | Separate fields, both with Custom checkbox for free-text |
-| **Jamb Species + Material** | Jamb species defaults to casing species but overridable. Material auto-calculates from depth but overridable (5/8x4, 5/8x6, 3/4x8, 3/4x10, 3/4x12) |
+| **Casing Species + Profile** | Separate fields, both with Custom checkbox for free-text. "None" and "Customer Supplying" options. |
+| **Jamb Species + Material** | Jamb species fully independent from casing species. Material auto-calculates from depth but overridable (5/8x4, 5/8x6, 3/4x8, 3/4x10, 3/4x12, **5/4x6, 5/4x8 for Traditional**). "Customer Supplying" option. |
+| **5/4" Stool** | Checkbox visible when Traditional trim selected. Uses 5/4" thick material and picks 5/4x6 or 5/4x8 stock for sill/stool piece only. |
 | **Threshold** | Pre-made product dropdown: None, 1-1/4" or 1x4, Oak or Maple, 8' or 10'. Custom checkbox. "None" excludes from material list entirely. Shows as line item on checklist, not cut lumber. |
-| **Custom Trim Mode** | Orange toggle for complex jobs. Per-unit overrides for any piece (Side Casing, Top Casing, Apron, etc.) with independent species, profile, and quantity. Overrides replace auto-calculated pieces. |
+| **Custom Trim Mode** | Orange toggle for complex jobs. Per-unit overrides for any piece (Side Casing, Top Casing, **Bottom Casing**, Apron, etc.) with independent species, profile, **thickness** (Auto/5/8"/3/4"/5/4"), and quantity via +/− steppers. Profile dropdown organized with optgroups (Casing, Stop, Jamb Stock). Overrides replace auto-calculated pieces. |
+| **Finish Type** | Stain, Paint, or **Multiple (per unit)** — "Multiple" preserves per-unit finishes instead of overriding them globally. Default is **"Not yet selected"** instead of auto-picking a stain. |
+
+### Prefinish Color on Checklist
+| Feature | Notes |
+|---------|-------|
+| **"Show prefinish color" toggle** | In Board Summary section, next to "Calculate per unit" |
+| **When enabled** | Appends finish/stain color to every board description on the Materials Checklist PDF |
+| **Groups by finish** | Boards with different stains are already separated by the optimizer; this makes the color visible to the warehouse |
 
 ### Jamb Stock
-| Label | Width | Thickness |
-|-------|-------|-----------|
-| 5/8x4 | 3.5" | 5/8" |
-| 5/8x6 | 5.5" | 5/8" |
-| 3/4x8 | 7.25" | 3/4" |
-| 3/4x10 | 9.25" | 3/4" |
-| 3/4x12 | 11.25" | 3/4" |
+| Label | Width | Thickness | Availability |
+|-------|-------|-----------|-------------|
+| 5/8x4 | 3.5" | 5/8" | All trim styles |
+| 5/8x6 | 5.5" | 5/8" | All trim styles |
+| 3/4x8 | 7.25" | 3/4" | All trim styles |
+| 3/4x10 | 9.25" | 3/4" | All trim styles |
+| 3/4x12 | 11.25" | 3/4" | All trim styles |
+| 5/4x6 | 5.5" | 5/4" | Traditional only |
+| 5/4x8 | 7.25" | 5/4" | Traditional only |
 
 ### Report / PDF
 | Feature | Notes |
 |---------|-------|
+| **Combined PDF layout** | One document for the warehouse: Checklist on page 1, per-unit Cut List on page 2+, Board Purchase Summary on its own final page. On-screen Checklist/Detailed tab toggle still works for browsing, but the PDF is always the full combined view. |
+| **Section-aware page breaks** | Renderer reads `data-pdf-section` / `data-pdf-new-page` markers on the report DOM. Hard breaks land exactly at Cut List start and Board Summary. Rows and tables don't get chopped mid-content. |
 | **Job details upper-right** | Name, address, PO#, tech — positioned where installers expect them |
 | **Stain highlight** | RBA green (25% opacity) bar in Prefinish section showing finish type + color |
+| **Customer Supplying notes** | Appears below Prefinish/PF Windows section listing affected units |
+| **Stool separated** | Sill/Stool boards appear in their own STOOL category, labeled "Stool - Oak 5/8x6x10'" |
+| **Prefinish color on boards** | When toggle enabled, each board line shows its finish color (e.g. "Oak 5/8x6x10' — Dark Walnut (Minwax)") |
 | **PDF filename** | Auto-named: LastName Material List (PO#).pdf |
 | **Email subject** | Auto-filled: LastName PO# Material List |
-| **PDF size** | Optimized with JPEG compression at 75% quality, scale 1.5x |
-| **Category separators** | Thick lines between coils/thresholds, jamb material, and casing |
+| **Canvas scaling** | Continuous scale capped at 2x — stays crisp on short reports and scales down smoothly on long ones to stay under the iOS 16M-pixel canvas limit. JPEG output at 92% quality. |
+| **Category separators** | Thick lines between coils/thresholds, jamb material, stool, and casing |
 | **Per-unit optimization note** | Shows when grain matching mode is active |
 | **Thresholds as line items** | Pre-made products listed like coils, not as cut boards |
 | **Extra boards numbered** | Extra boards appear with real board numbers and "(Extra)" label |
@@ -93,7 +109,7 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 | **Casing Profiles** | Species x length availability grid, add/delete custom profiles |
 | **Jamb Stock** | Same grid format |
 | **Stop Profiles** | 1x4 Stop, Colonial 3-1/4" Stop, Eased Edge 1-1/4" Stop |
-| **Coil Colors** | Default colors + custom, alphabetically sorted |
+| **Coil Colors** | Default colors (incl. Cocoa Bean) + custom, alphabetically sorted |
 | **Bay Material Items** | Soffit, Plywood, Pink Foam + custom, alphabetically sorted |
 | **Stain Colors** | All built-in + custom, alphabetically sorted |
 | **Paint Colors** | All built-in + custom, alphabetically sorted |
@@ -104,6 +120,7 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 |---------|-------|
 | **Separate lists** | Home screen has "Saved Jobs" (drafts) and "Submitted Jobs" (finalized) with counts |
 | **Sort bar** | Sort by Newest, Oldest, or Last Name |
+| **Tech measurer filter** | Submitted Jobs view has filter buttons (All / Matt McCann / Darren Williams / Steve Cvek) |
 | **Search bar** | Filter by customer name, address, or PO# |
 | **Star/Priority flags** | Tap star to flag important jobs — starred float to top |
 | **Job Complete button** | Mark jobs as complete — they sink to the bottom with green styling |
@@ -111,6 +128,7 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 | **Click to view report** | All job cards open directly to the report/PDF view |
 | **EDIT JOB from report** | Edit button in the report toolbar to jump back to editor |
 | **Re-Submit** | Editing a previously submitted job shows "Re-Submit Job" instead of "Submit Job" |
+| **Job persistence** | GlobalTrim saves with job — no field resets when editing submitted jobs |
 
 ---
 
@@ -125,36 +143,44 @@ Every RBA job requires a material cut list — a detailed breakdown of every jam
 5. Customer name, address, species, casing, stain are filled in automatically
 6. Set the **Trim Style** (Picture Frame/Traditional/Stops) in Trim Selection
 7. Verify **Casing Species**, **Casing Profile**, **Jamb Species**, and **Finish**
-8. Fill in the **Jamb Depth** (sets all units at once, Jamb Material auto-calculates)
-9. Override any individual unit's trim if different
-10. For complex jobs, toggle **Custom Trim** to add per-piece overrides
-11. Add **Extra Boards** if needed (extra casing, jamb, or other boards)
-12. Fill in **Prefinish / Warehouse Notes** and check **Windows needing PF** if applicable
-13. Add extra materials (coils, bay material, custom items) as needed
-14. Check the **Board Summary** — shows exactly how many boards are needed
-15. Tap **Submit Job** to send to the warehouse, or **Save Progress** to save as draft
+8. If customer is supplying their own casing or jambs, select **"Customer Supplying"** from the appropriate dropdown
+9. If each window has a different stain, select **Multiple (per unit)** as the Finish Type
+10. Fill in the **Jamb Depth** (sets all units at once, Jamb Material auto-calculates)
+11. For Traditional trim, check **5/4" Stool** if the sill needs thicker material
+12. Override any individual unit's trim if different
+13. For complex jobs, toggle **Custom Trim** to add per-piece overrides (including Bottom Casing)
+14. Add **Extra Boards** if needed (each with its own species, profile, stock length, and finish)
+15. Fill in **Prefinish / Warehouse Notes** and check **Windows needing PF** if applicable
+16. Add extra materials (coils, bay material, custom items) as needed
+17. Check the **Board Summary** — shows exactly how many boards are needed
+18. Toggle **Show prefinish color** if the warehouse needs to see stain per board line
+19. Tap **Submit Job** to send to the warehouse, or **Save Progress** to save as draft
 
 ### For the Warehouse
 
 1. Open the same URL on any device
 2. Go to **Submitted Jobs** — all finalized jobs from tech measurers are visible
-3. Tap any job card to see its PDF report immediately
-4. The **Prefinish / Warehouse Notes** section highlights the stain selection in green
-5. Tap **EDIT JOB** in the report toolbar to modify any job
-6. Star priority jobs — they float to the top
-7. Tap **Job Complete** when materials are prepped
-8. Use **Available Material** to manage stock:
+3. Use the **Tech filter** to see only one measurer's jobs
+4. Tap any job card to see its PDF report immediately
+5. The **Prefinish / Warehouse Notes** section highlights the stain selection in green
+6. **Customer Supplying** notes list which units have customer-provided casing/jambs
+7. **Stools** appear in their own category for separate prefinish handling
+8. When "Show prefinish color" is on, each board line shows its finish color
+9. Tap **EDIT JOB** in the report toolbar to modify any job
+10. Star priority jobs — they float to the top
+11. Tap **Job Complete** when materials are prepped
+12. Use **Available Material** to manage stock:
    - Casing Profiles, Jamb Stock, Stop Profiles with species x length grids
    - Coil Colors, Bay Material Items, Stain/Paint Colors
    - All lists sorted alphabetically
-9. Use **Offsets** to adjust calculation formulas and board waste
+13. Use **Offsets** to adjust calculation formulas and board waste
 
 ---
 
 ## Technical Architecture
 
 ```
-Single HTML file (pwa-app/index.html ~3100 lines)
+Single HTML file (pwa-app/index.html ~4000 lines)
 +-- React 18.2 (CDN) + Babel standalone (in-browser JSX)
 +-- pdf.js 3.11 (CDN) for PDF text extraction
 +-- JSZip 3.10 (CDN) for ZIP file extraction
@@ -167,7 +193,7 @@ Hosted on Netlify (auto-deploy from GitHub)
 +-- GitHub repo: matt17mccann/material-list
 +-- Site: https://rba-material-list.netlify.app
 +-- Netlify Functions:
-|   +-- /api/jobs -- CRUD for shared job storage
+|   +-- /api/jobs -- CRUD for shared job storage (includes globalTrim)
 |   +-- /api/catalog -- GET/PUT shared lumber catalog
 |   +-- /api/offsets -- GET/PUT shared calculation offsets
 |   +-- /api/parse-pdf -- Claude API fallback for PDF extraction
@@ -186,6 +212,7 @@ Hosted on Netlify (auto-deploy from GitHub)
 - Side Jamb: H - 1.25" | Head Jamb: W | Jamb Width: JD - 2.75"
 - Sill/Stool: W + 10" (width: JD - 0.75") | Apron: W + 10"
 - Side Casing: H - 1" | Head Casing: W
+- **5/4" Stool option:** Uses 1.25" thickness, picks 5/4x6 or 5/4x8 stock
 
 **Windows -- Stops:**
 - Side Stop: H (exact) | Top/Bottom Stop: W (exact)
@@ -208,7 +235,7 @@ Hosted on Netlify (auto-deploy from GitHub)
 /Users/matthewmccann/Desktop/material list app/
 +-- .gitignore
 +-- pwa-app/
-|   +-- index.html          # The entire app (single file, ~3100 lines)
+|   +-- index.html          # The entire app (single file, ~4000 lines)
 |   +-- sw.js               # Service worker (v9)
 |   +-- manifest.json       # PWA manifest
 |   +-- icon.svg            # App icon source (SVG)

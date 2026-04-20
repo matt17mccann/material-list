@@ -1,10 +1,10 @@
 # RBA Material List — Next Steps & Vision
 ### Renewal by Andersen | Lake Superior Region
-**Last Updated:** April 8, 2026
+**Last Updated:** April 20, 2026
 
 ---
 
-## What's Done (Phases 1, 2 & 3)
+## What's Done (Phases 1–7)
 
 Everything needed for daily use by tech measurers and the warehouse is built and deployed:
 
@@ -50,17 +50,44 @@ Everything needed for daily use by tech measurers and the warehouse is built and
 - **Per-unit extra materials** — Auto-populate to job-level Extra Materials section
 - **Extra Boards improvements** — Solid green add buttons, auto-populate from job trim, + Stop button
 - **Stain highlight** — RBA green bar on both checklist and detailed PDF reports
-- **Stain not found warning** — Red bar in import preview when finish not detected, no random default
-- **Skip 900+ unit IDs** — ZIP/JSON parser ignores all 900+ items (901, 902, etc.)
-- **Scroll jump fix** — Disabled overflow-anchor for iPad stability
-- **Renamed to RBA Material List** — Title, manifest, meta tags updated
-- **Popup blocker fix** — PDF download + mailto use <a> clicks instead of window.location
+- **Parse all 900+ items** — ZIP/JSON parser reads Notes, Product_Name, Name, Description from all 900+ items for species, casing profile, and finish detection
+- **Fix finish type/color mismatch** — finishType defaults to "Stain" (not empty) so color dropdown shows correct options
+
+### Phase 5 (April 10, 2026 — v2.3)
+- **Prefinish color toggle** — "Show prefinish color" checkbox in Board Summary. When on, appends stain/paint color to every board description on the Materials Checklist (e.g. "Oak 5/8x6x10' — Dark Walnut (Minwax)")
+- **"Multiple (per unit)" finish option** — New Finish Type option that preserves per-unit finish colors instead of overriding them globally. Hides the global color picker and shows "Set finish per unit below"
+- **Extra boards get finish selector** — Each extra board now has its own Finish/Stain dropdown, used in both checklist and board summary
+- **Cocoa Bean coil hardwired** — Added to built-in COIL_COLORS so it's always available
+- **Improved JSON/PDF parser** — Fuzzy regex matching for species (white oak, red oak, poplar), stain colors (handles spacing variations, auto-appends brand names), paint colors (bare names like "Terratone" without RBA prefix), casing profiles (C-115, 2 1/2 colonial, RBA S4S, etc.)
+- **PO number in PDF parser** — Scans for R/RD/RP followed by digits in Installer Package PDFs
+- **Banner/header fix** — All sticky top bars use safe-area-inset-top + 50px minimum padding for macOS/iPad traffic light clearance. viewport-fit=cover meta tag added.
+- **Back buttons shifted right** — 60px left margin on all back/home buttons to clear macOS window controls
+
+### Phase 6 (April 14, 2026 — v2.4)
+- **"Customer Supplying" option** — Added to both Casing Profile and Jamb Material dropdowns (global + per-unit). Skips material calculation and auto-prints a note on the Materials Checklist PDF listing affected units (e.g. "CUSTOMER SUPPLYING CASING — Units: 101, 203"). Note appears below the Prefinish/PF Windows section.
+- **Jamb species independence** — Fixed bug where changing Casing Species would override Jamb Species. Now tracks a manual flag so jamb species stays put once you've set it.
+- **Jamb species in calculations** — Jamb pieces now use the selected jamb species instead of always using casing species. Fixed in calculation engine, cut list display, and jamb info badge.
+- **5/4" jamb stock** — Added 5/4x6 (5-1/2") and 5/4x8 (7-1/4") with 1.25" thickness. Only visible when Traditional trim style is selected.
+- **5/4" Stool checkbox** — When Traditional trim is selected, a "5/4" Stool" checkbox appears next to Jamb Material. Uses 5/4" thick material and picks the appropriate 5/4" jamb stock for the sill/stool piece only.
+- **Stool separated on checklist** — Sill/Stool boards now appear in their own STOOL category on the Materials Checklist, labeled "Stool - Oak 5/8x6x10'" so the prefinish crew can identify them immediately.
+- **"Bottom Casing" override** — Added to custom trim override piece types for Traditional trim jobs.
+- **Qty stepper buttons** — Replaced all quantity number inputs with +/− stepper buttons for easier iPad use. Applied to custom trim overrides, manual materials, extra materials, and bay materials.
+- **Improved custom trim overrides** — Reorganized to 3-column layout (Piece, Species, Thickness) with profile + qty on second row. Thickness dropdown (Auto/5/8"/3/4"/5/4") only shows for jamb/stool pieces. Profile dropdown organized with optgroups: Casing Profiles, Stop Profiles, Jamb Stock.
+- **Job persistence fix** — GlobalTrim (trim style, species, finish, jamb depth, etc.) now saves with the job and restores on edit. No more field resets when editing submitted jobs. Older saved jobs get globalTrim reconstructed from first unit.
+- **Default finish "Not yet selected"** — New jobs start with empty finish instead of auto-picking Dark Walnut. Switching finish type also resets to unselected.
+- **Tech measurer filter** — Submitted Jobs view has a filter bar (All / Matt McCann / Darren Williams / Steve Cvek) to quickly filter by who measured the job.
+
+### Phase 7 (April 20, 2026 — v2.5)
+- **Combined PDF output** — The Save PDF / Share / Print buttons now produce ONE document with the Materials Checklist on page 1, the per-unit Detailed Cut List starting on page 2, and the Board Purchase Summary on its own final page. The on-screen Checklist / Detailed tab toggle is kept for browsing but no longer affects what the PDF contains. Warehouse gets everything in one attachment.
+- **Section-aware page slicer** — The PDF renderer now reads `data-pdf-section` / `data-pdf-new-page` markers from the report DOM and forces page breaks at section boundaries. Rows and tables no longer get chopped mid-content. Replaces the naive fixed-pixel slicing introduced during the iOS Safari fix.
+- **Continuous scale cap** — PDF canvas scale now scales smoothly with report length (capped at 2x) instead of dropping abruptly from 2x to 1x at the iOS 16M-pixel limit. Long reports stay crisp.
+- **Share button mailto fix** — On the rare device where the native share sheet isn't available, the mailto fallback now uses `window.location.href` instead of a detached `<a>.click()`. Reliable across iOS PWA and desktop Safari.
 
 **Live at:** https://rba-material-list.netlify.app
 
 ---
 
-## Immediate Next Steps (Phase 4)
+## Immediate Next Steps (Phase 8)
 
 ### 1. Auto-Save
 **Priority:** HIGH | **Impact:** Prevents data loss
@@ -92,22 +119,11 @@ Camera capture on iPad, attach photos to individual units. Warehouse sees exactl
 - Store as base64 or upload to Netlify Blobs
 - Display in report view per unit
 
-### 4. Component File Split (When Ready)
-**Priority:** LOW | **Impact:** Developer experience
-
-The app is a single ~3100-line HTML file. When feature velocity slows, migrate to Vite + React with proper component files. This is a weekend project, not a rewrite.
-
-**What it would look like:**
-- `src/components/Editor.jsx`, `ReportView.jsx`, `BoardSummary.jsx`, etc.
-- `src/utils/calcMaterials.js`, `optimizeBoards.js`
-- Proper imports, hot reload, TypeScript optional
-- Keep Netlify deploy working, keep PWA/offline support
-
 ---
 
-## The Dream (Phase 5)
+## The Dream (Phase 9+)
 
-### 5. Inventory Tracking with Auto-Reorder Alerts
+### 4. Inventory Tracking with Auto-Reorder Alerts
 **The big one.** Every job's board optimizer output deducts from warehouse inventory. When stock drops below a threshold, an automated email goes to the supplier.
 
 **How it works:**
@@ -123,16 +139,16 @@ The app is a single ~3100-line HTML file. When feature velocity slows, migrate t
 
 4. When threshold is hit, system sends an email to the supplier contact
 
-### 6. Barcode/QR Labels
+### 5. Barcode/QR Labels
 Generate printable labels for each cut piece. Scan to verify during installation.
 
-### 7. Analytics Dashboard
+### 6. Analytics Dashboard
 - Jobs per week/month
 - Average waste percentage
 - Most-used profiles and species
 - Time from measurement to material prep
 
-### 8. Authentication & Multi-Team Support
+### 7. Authentication & Multi-Team Support
 Simple PIN or team login. Each affiliate gets their own team code, separated data, custom offsets and catalog. Foundation for selling to other affiliates.
 
 ---
@@ -160,7 +176,7 @@ See `sales-pitch/Cut List Pro - Sales Pitch.md` for the full pitch and pricing.
 
 ## Technical Debt
 
-1. **Single-file architecture** — ~3100-line HTML file. Splitting into proper React components with Vite would improve maintainability. Not urgent while iterating fast.
+1. **Single-file architecture** — ~4000-line HTML file. Manageable for now. When it hits 5000-6000 lines or a second developer joins, split into separate JS files (no build tool needed — just script tags in order).
 
 2. **No error boundaries** — A React error anywhere crashes the whole app (blank white screen). Adding an error boundary component would show a helpful message instead.
 
