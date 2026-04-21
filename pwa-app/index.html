@@ -1157,87 +1157,481 @@
 
       const [pdfBusy, setPdfBusy] = useState(false);
 
+      // Build a text-based PDF with a real text layer (editable, searchable,
+      // small file size). Reproduces the Checklist + Prefinish + Bay Material
+      // + Board Summary sections using jsPDF's native text/drawing APIs.
       const generatePDFDoc = async () => {
-        if (!reportRef.current) throw new Error("Report not ready");
-
-        // Render the ENTIRE report as one canvas — avoids html2canvas's broken
-        // per-element iframe cloning that fails on iOS Safari. Scale down
-        // smoothly if the report is tall enough to blow past iOS's ~16M px
-        // canvas limit.
-        const el = reportRef.current;
-        const MAX_CANVAS_AREA = 14000000;
-        const rawArea = el.scrollWidth * el.scrollHeight;
-        const scale = Math.min(2, Math.sqrt(MAX_CANVAS_AREA / rawArea));
-
-        // Collect break hints BEFORE rendering. Each hint is a Y-offset (in
-        // CSS px relative to the report root) where a slice is allowed or
-        // required. Hard hints force a page break; soft hints are preferred
-        // cut points when natural.
-        const elTop = el.getBoundingClientRect().top;
-        const breakHints = [];
-        el.querySelectorAll("[data-pdf-section], [data-pdf-new-page]").forEach(s => {
-          const rect = s.getBoundingClientRect();
-          breakHints.push({
-            y: rect.top - elTop,
-            hard: s.hasAttribute("data-pdf-new-page"),
-          });
-        });
-        breakHints.sort((a, b) => a.y - b.y);
-
-        const canvas = await html2canvas(el, { scale, useCORS: true, backgroundColor: "#ffffff" });
-
         const pdf = new jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-        const pdfW = pdf.internal.pageSize.getWidth();
+
+        // Embed Roboto so Adobe Acrobat can edit the text. PDF's standard
+        // fonts (Helvetica/Times) are referenced by name only — Acrobat
+        // refuses to edit text when fonts aren't embedded.
+        const ttfB64 = async (path) => {
+          const buf = await fetch(path).then(r => r.arrayBuffer());
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          const chunk = 0x8000;
+          for (let i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+          }
+          return btoa(binary);
+        };
+        const [regB64, boldB64] = await Promise.all([
+          ttfB64("./Roboto-Regular.ttf"),
+          ttfB64("./Roboto-Bold.ttf"),
+        ]);
+        pdf.addFileToVFS("Roboto-Regular.ttf", regB64);
+        pdf.addFileToVFS("Roboto-Bold.ttf", boldB64);
+        pdf.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+        pdf.addFont("Roboto-Bold.ttf", "Roboto", "bold");
+
+        const pageW = pdf.internal.pageSize.getWidth();
         const pageH = pdf.internal.pageSize.getHeight();
-        const margin = 5;
-        const contentW = pdfW - margin * 2;
-        const contentH = pageH - margin * 2;
+        const margin = 12;
+        const contentW = pageW - margin * 2;
+        const bottomLimit = pageH - margin - 4;
+        let y = margin;
 
-        const imgWidthPx = canvas.width;
-        const imgHeightPx = canvas.height;
-        const pxPerMm = imgWidthPx / contentW;
-        const pageContentPx = contentH * pxPerMm;
+        const GREEN = [109, 179, 68];
+        const DARK = [26, 26, 26];
+        const LIGHT_BG = [245, 245, 244];
+        const ZEBRA = [250, 252, 248];
+        const BORDER = [221, 221, 221];
+        const BORDER_BB = [187, 187, 187];
+        const TEXT_DARK = [26, 26, 26];
+        const TEXT_LABEL = [85, 85, 85];
+        const TEXT_MUTE = [153, 153, 153];
+        const NOTE_ORANGE_BG = [253, 240, 227];
+        const NOTE_ORANGE = [230, 126, 34];
+        const NOTE_RED = [192, 57, 43];
+        const PREFINISH_BG = [218, 232, 207];
+        const GREEN_BORDER = [197, 224, 180];
+        const CHECKBOX_BORDER = [204, 204, 204];
 
-        // Translate CSS-px hints to canvas-px (same as scale factor).
-        const hintsPx = breakHints.map(h => ({ y: Math.round(h.y * scale), hard: h.hard }));
+        const CAT_W = 40;
+        const QTY_W = 28;
+        const CB_W = 10;
+        const DESC_W = contentW - CAT_W - QTY_W - CB_W;
 
-        let srcY = 0;
-        let pageIdx = 0;
-        while (srcY < imgHeightPx - 1) {
-          if (pageIdx > 0) pdf.addPage();
+        const ensure = (needed) => {
+          if (y + needed > bottomLimit) {
+            pdf.addPage();
+            y = margin;
+            return true;
+          }
+          return false;
+        };
 
-          const target = Math.min(srcY + pageContentPx, imgHeightPx);
-          let srcH;
+        // ── HEADER ──
+        const renderHeader = () => {
+          try {
+            pdf.addImage(LOGO_FULL, "PNG", margin, y, 55, 14);
+          } catch (_) {}
 
-          // 1. Hard page break inside this range wins.
-          const hardBreak = hintsPx.find(h => h.hard && h.y > srcY + 4 && h.y <= target);
-          if (hardBreak) {
-            srcH = hardBreak.y - srcY;
-          } else if (target >= imgHeightPx) {
-            srcH = imgHeightPx - srcY;
-          } else {
-            // 2. Prefer a section boundary in the last 40% of the page so
-            // rows/tables don't get chopped mid-content.
-            const minAcceptable = srcY + pageContentPx * 0.6;
-            let softBreak = null;
-            for (let i = hintsPx.length - 1; i >= 0; i--) {
-              const h = hintsPx[i];
-              if (h.y > minAcceptable && h.y <= target) { softBreak = h; break; }
-            }
-            srcH = softBreak ? softBreak.y - srcY : target - srcY;
+          pdf.setFont("Roboto", "bold");
+          pdf.setFontSize(12);
+          pdf.setTextColor(...TEXT_DARK);
+          pdf.text(job.customerName || "—", pageW - margin, y + 4.5, { align: "right" });
+          pdf.setFont("Roboto", "normal");
+          pdf.setFontSize(10);
+          pdf.setTextColor(...TEXT_LABEL);
+          pdf.text(job.address || "—", pageW - margin, y + 9, { align: "right" });
+          pdf.text("PO# " + (job.poNumber || "—"), pageW - margin, y + 13.5, { align: "right" });
+          pdf.setFontSize(9);
+          pdf.text(`Tech: ${job.techMeasurer || "—"}  |  ${job.date || ""}`, pageW - margin, y + 18, { align: "right" });
+
+          pdf.setFontSize(8);
+          pdf.setTextColor(...TEXT_MUTE);
+          pdf.text("MATERIALS CHECKLIST", margin, y + 19);
+          pdf.setFontSize(9);
+          pdf.text(`${units.length} unit${units.length !== 1 ? "s" : ""}`, margin, y + 23);
+
+          y += 26;
+
+          pdf.setDrawColor(...GREEN);
+          pdf.setLineWidth(0.8);
+          pdf.line(margin, y, pageW - margin, y);
+          pdf.setLineWidth(0.2);
+          y += 6;
+        };
+
+        const renderChecklistBar = () => {
+          pdf.setFillColor(...DARK);
+          pdf.rect(margin, y, contentW, 7, "F");
+          pdf.setFont("Roboto", "bold");
+          pdf.setFontSize(9);
+          pdf.setTextColor(255, 255, 255);
+          pdf.text("CATEGORY", margin + 3, y + 4.8);
+          pdf.text("DESCRIPTION", margin + CAT_W + 3, y + 4.8);
+          pdf.text("QUANTITY", margin + CAT_W + DESC_W + QTY_W - 3, y + 4.8, { align: "right" });
+          y += 7;
+        };
+
+        const renderChecklistIntro = () => {
+          pdf.setFont("Roboto", "normal");
+          pdf.setFontSize(9);
+          pdf.setTextColor(...TEXT_MUTE);
+          pdf.text("This list includes the sum total of all materials for the entire job.", margin + 3, y + 4.5);
+          y += 7;
+          if (job.optimizePerUnit) {
+            pdf.setTextColor(...GREEN);
+            pdf.setFont("Roboto", "bold");
+            pdf.setFontSize(8);
+            pdf.text("Optimized per unit for grain matching", margin + 3, y + 3);
+            y += 5;
+          }
+          pdf.setDrawColor(...BORDER);
+          pdf.line(margin, y, pageW - margin, y);
+          y += 1;
+        };
+
+        const renderChecklistRow = (row) => {
+          if (row === null) {
+            ensure(4);
+            pdf.setFillColor(...DARK);
+            pdf.rect(margin, y + 2, contentW, 0.6, "F");
+            y += 4;
+            return;
           }
 
-          const pageCanvas = document.createElement("canvas");
-          pageCanvas.width = imgWidthPx;
-          pageCanvas.height = srcH;
-          pageCanvas.getContext("2d").drawImage(canvas, 0, srcY, imgWidthPx, srcH, 0, 0, imgWidthPx, srcH);
+          if (row.isNote) {
+            const rowH = 9;
+            if (ensure(rowH)) renderChecklistBar();
+            pdf.setFillColor(...NOTE_ORANGE_BG);
+            pdf.rect(margin, y, contentW, rowH, "F");
+            pdf.setFont("Roboto", "bold");
+            pdf.setFontSize(8);
+            pdf.setTextColor(...NOTE_ORANGE);
+            pdf.text("NOTE", margin + 3, y + 5.6);
+            pdf.setFontSize(10);
+            pdf.setTextColor(...NOTE_RED);
+            const descLines = pdf.splitTextToSize(row.description, DESC_W + QTY_W + CB_W - 4);
+            pdf.text(descLines[0], margin + CAT_W + 3, y + 5.6);
+            pdf.setDrawColor(...NOTE_ORANGE);
+            pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+            y += rowH;
+            return;
+          }
 
-          const pageImg = pageCanvas.toDataURL("image/jpeg", 0.92);
-          pdf.addImage(pageImg, "JPEG", margin, margin, contentW, srcH / pxPerMm);
+          const descLines = pdf.splitTextToSize(row.description, DESC_W - 4);
+          const rowH = Math.max(9, descLines.length * 5 + 4);
+          if (ensure(rowH)) renderChecklistBar();
 
-          srcY += srcH;
-          pageIdx++;
-        }
+          pdf.setFont("Roboto", "bold");
+          pdf.setFontSize(8.5);
+          pdf.setTextColor(...TEXT_LABEL);
+          pdf.text(row.category, margin + 3, y + 5.8);
+
+          pdf.setFont("Roboto", "bold");
+          pdf.setFontSize(11);
+          pdf.setTextColor(...TEXT_DARK);
+          descLines.forEach((ln, i) => {
+            pdf.text(ln, margin + CAT_W + 3, y + 5.8 + i * 5);
+          });
+
+          pdf.setFont("Roboto", "normal");
+          pdf.setFontSize(10);
+          pdf.setTextColor(...TEXT_DARK);
+          const qtyText = row.length ? `${row.quantity} x ${row.length}` : String(row.quantity);
+          pdf.text(qtyText, margin + CAT_W + DESC_W + QTY_W - 3, y + 5.8, { align: "right" });
+
+          const cbX = margin + CAT_W + DESC_W + QTY_W + CB_W / 2 - 2.5;
+          pdf.setDrawColor(...CHECKBOX_BORDER);
+          pdf.setLineWidth(0.4);
+          pdf.rect(cbX, y + rowH / 2 - 2.5, 5, 5, "S");
+          pdf.setLineWidth(0.2);
+
+          pdf.setDrawColor(...BORDER);
+          pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+          y += rowH;
+        };
+
+        const renderBlackHeaderBar = (label) => {
+          pdf.setFillColor(...DARK);
+          pdf.rect(margin, y, contentW, 7, "F");
+          pdf.setFont("Roboto", "bold");
+          pdf.setFontSize(9);
+          pdf.setTextColor(255, 255, 255);
+          pdf.text(label, margin + 3, y + 4.8);
+          y += 7;
+        };
+
+        const renderPrefinish = (noteRows) => {
+          const hasPrefinish = !!(job.prefinishNotes || job.pfWindowsNeeded);
+          if (!hasPrefinish && noteRows.length === 0) return;
+
+          y += 6;
+
+          if (hasPrefinish) {
+            ensure(20);
+            renderBlackHeaderBar("PREFINISH / WAREHOUSE NOTES");
+
+            if (job.prefinishNotes) {
+              const lines = pdf.splitTextToSize(job.prefinishNotes, contentW - 6);
+              const rowH = lines.length * 5 + 4;
+              ensure(rowH);
+              pdf.setFillColor(...PREFINISH_BG);
+              pdf.rect(margin, y, contentW, rowH, "F");
+              pdf.setFont("Roboto", "bold");
+              pdf.setFontSize(10);
+              pdf.setTextColor(...TEXT_DARK);
+              lines.forEach((ln, i) => pdf.text(ln, margin + 3, y + 5 + i * 5));
+              pdf.setDrawColor(...GREEN_BORDER);
+              pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+              y += rowH;
+            }
+
+            const wLine = `${job.pfWindowsNeeded ? "Yes" : "No"}${
+              job.pfWindowsNeeded && job.pfWindowsList ? " — " + job.pfWindowsList : ""
+            }`;
+            const wLines = pdf.splitTextToSize(wLine, contentW - 60);
+            const wRowH = Math.max(7, wLines.length * 5 + 2);
+            ensure(wRowH);
+            pdf.setFillColor(255, 255, 255);
+            pdf.rect(margin, y, contentW, wRowH, "F");
+            pdf.setFont("Roboto", "bold");
+            pdf.setFontSize(9.5);
+            pdf.setTextColor(...TEXT_DARK);
+            pdf.text("Windows needing PF:", margin + 3, y + 5);
+            pdf.setFont("Roboto", "normal");
+            wLines.forEach((ln, i) => {
+              pdf.text(ln, margin + 48, y + 5 + i * 5);
+            });
+            pdf.setDrawColor(...BORDER);
+            pdf.line(margin, y + wRowH, pageW - margin, y + wRowH);
+            y += wRowH;
+          }
+
+          noteRows.forEach((note) => {
+            const lines = pdf.splitTextToSize(note.description, contentW - 6);
+            const rowH = lines.length * 4.5 + 3;
+            ensure(rowH);
+            pdf.setFillColor(...NOTE_ORANGE_BG);
+            pdf.rect(margin, y, contentW, rowH, "F");
+            pdf.setFont("Roboto", "bold");
+            pdf.setFontSize(9);
+            pdf.setTextColor(...NOTE_RED);
+            lines.forEach((ln, i) => pdf.text(ln, margin + 3, y + 4.5 + i * 4.5));
+            pdf.setDrawColor(...NOTE_ORANGE);
+            pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+            y += rowH;
+          });
+        };
+
+        const renderBayMaterial = () => {
+          const items = (job.bayMaterials || []).filter(i => i.description);
+          if (items.length === 0) return;
+          y += 6;
+          ensure(12);
+          renderBlackHeaderBar("BAY MATERIAL");
+
+          items.forEach((item) => {
+            ensure(7);
+            pdf.setFillColor(255, 255, 255);
+            pdf.setFont("Roboto", "bold");
+            pdf.setFontSize(10);
+            pdf.setTextColor(...TEXT_DARK);
+            pdf.text(item.description, margin + 3, y + 4.8);
+            pdf.setFont("Roboto", "normal");
+            pdf.text(String(item.quantity), pageW - margin - 3, y + 4.8, { align: "right" });
+            pdf.setDrawColor(...BORDER);
+            pdf.line(margin, y + 7, pageW - margin, y + 7);
+            y += 7;
+          });
+        };
+
+        const renderBoardSummary = () => {
+          const result = optimizeBoards(units, catalog, job.optimizePerUnit, offsets.boardWaste);
+          const boards = [...result.boards];
+          const summary = { ...result.summary };
+          const STOCK_LABELS = result.STOCK_LABELS;
+
+          if (job.extraBoards && job.extraBoards.length > 0) {
+            const defaultFinish = units[0]?.finish || "";
+            job.extraBoards.forEach(eb => {
+              const stockLen = parseInt(eb.stockLength) || 120;
+              const isJamb = eb.materialType === "Jamb Extension";
+              boards.push({
+                stockLength: stockLen,
+                materialType: eb.materialType || "Casing",
+                species: eb.species || units[0]?.species || "Oak",
+                finish: eb.finish || defaultFinish,
+                profile: isJamb ? null : (eb.profile || null),
+                jambStock: isJamb ? (JAMB_STOCK_WIDTHS.find(j => j.label === eb.profile) || { label: eb.profile || "1x6", width: 5.5 }) : null,
+                cuts: [],
+                remaining: 0,
+                isExtra: true,
+              });
+              summary[stockLen] = (summary[stockLen] || 0) + 1;
+            });
+          }
+
+          if (boards.length === 0) return;
+
+          pdf.addPage();
+          y = margin;
+
+          pdf.setFillColor(...GREEN);
+          pdf.rect(margin, y, contentW, 9, "F");
+          pdf.setFont("Roboto", "bold");
+          pdf.setFontSize(12);
+          pdf.setTextColor(255, 255, 255);
+          pdf.text("Board Purchase Summary", margin + 3, y + 6.2);
+          if (job.optimizePerUnit) {
+            pdf.setFontSize(8);
+            pdf.setFont("Roboto", "normal");
+            pdf.text(" — Optimized per unit for grain matching", margin + 3 + pdf.getTextWidth("Board Purchase Summary"), y + 6.2);
+          }
+          y += 9;
+
+          pdf.setFillColor(...LIGHT_BG);
+          pdf.rect(margin, y, contentW, 8, "F");
+          pdf.setFont("Roboto", "bold");
+          pdf.setFontSize(10);
+          pdf.setTextColor(...TEXT_DARK);
+          let tx = margin + 3;
+          const writeTot = (lbl, val) => {
+            pdf.setFont("Roboto", "bold");
+            pdf.text(lbl, tx, y + 5.4);
+            const lw = pdf.getTextWidth(lbl);
+            pdf.setFont("Roboto", "normal");
+            const v = " " + String(val);
+            pdf.text(v, tx + lw, y + 5.4);
+            tx += lw + pdf.getTextWidth(v) + 6;
+          };
+          writeTot("Total Boards:", boards.length);
+          Object.entries(summary).sort((a, b) => Number(a[0]) - Number(b[0])).forEach(([len, count]) => {
+            writeTot(STOCK_LABELS[len] + ":", count);
+          });
+          y += 8;
+
+          const bsCols = [
+            { key: "num", label: "Board #", w: 18, align: "left" },
+            { key: "stock", label: "Stock", w: 16, align: "center" },
+            { key: "type", label: "Type / Size", w: 50, align: "left" },
+            { key: "species", label: "Species", w: 22, align: "left" },
+            { key: "finish", label: "Finish", w: 22, align: "left" },
+            { key: "cuts", label: "Cuts from this board", w: 42, align: "left" },
+            { key: "waste", label: "Waste", w: 16, align: "center" },
+          ];
+
+          const drawBsHeader = () => {
+            pdf.setFillColor(240, 240, 239);
+            pdf.rect(margin, y, contentW, 7, "F");
+            pdf.setDrawColor(...BORDER_BB);
+            pdf.setLineWidth(0.5);
+            pdf.line(margin, y + 7, pageW - margin, y + 7);
+            pdf.setLineWidth(0.2);
+            pdf.setFont("Roboto", "bold");
+            pdf.setFontSize(9);
+            pdf.setTextColor(...TEXT_DARK);
+            let cx = margin;
+            bsCols.forEach((c) => {
+              const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
+              pdf.text(c.label, tx2, y + 4.8, { align: c.align });
+              cx += c.w;
+            });
+            y += 7;
+          };
+          drawBsHeader();
+
+          pdf.setFont("Roboto", "normal");
+          pdf.setFontSize(8);
+          boards.forEach((board, i) => {
+            const cutsStr = (board.cuts || []).map(c => `${toFraction(c.rawLength)}" — ${c.source}`).join(", ");
+            const cutsCol = bsCols.find(c => c.key === "cuts");
+            const cutsLines = cutsStr ? pdf.splitTextToSize(cutsStr, cutsCol.w - 2) : [""];
+            const rowH = Math.max(6, cutsLines.length * 3.4 + 2);
+
+            if (y + rowH > bottomLimit) {
+              pdf.addPage();
+              y = margin;
+              drawBsHeader();
+              pdf.setFont("Roboto", "normal");
+              pdf.setFontSize(8);
+            }
+
+            if (i % 2 === 1) {
+              pdf.setFillColor(...ZEBRA);
+              pdf.rect(margin, y, contentW, rowH, "F");
+            }
+
+            const typeStr = `${board.species} ${board.materialType}` +
+              (board.jambStock ? ` (${board.jambStock.label})` : "") +
+              (board.profile ? ` — ${board.profile}` : "") +
+              (board.isExtra ? " (Extra)" : "");
+
+            const vals = {
+              num: String(i + 1),
+              stock: STOCK_LABELS[board.stockLength],
+              type: typeStr,
+              species: board.species,
+              finish: board.finish,
+              waste: toFraction(board.remaining || 0) + '"',
+            };
+
+            let cx = margin;
+            bsCols.forEach((c) => {
+              const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
+              if (c.key === "stock") {
+                pdf.setFont("Roboto", "bold");
+                pdf.setTextColor(...GREEN);
+              } else if (c.key === "num") {
+                pdf.setFont("Roboto", "bold");
+                pdf.setTextColor(...TEXT_DARK);
+              } else if (c.key === "waste") {
+                pdf.setFont("Roboto", "normal");
+                pdf.setTextColor(...((board.remaining || 0) > 24 ? NOTE_RED : TEXT_MUTE));
+              } else {
+                pdf.setFont("Roboto", "normal");
+                pdf.setTextColor(...TEXT_DARK);
+              }
+
+              if (c.key === "cuts") {
+                cutsLines.forEach((line, li) => {
+                  pdf.text(line, tx2, y + 4 + li * 3.4);
+                });
+              } else if (c.align === "left") {
+                const wrapped = pdf.splitTextToSize(vals[c.key], c.w - 2);
+                pdf.text(wrapped[0], tx2, y + 4);
+              } else {
+                pdf.text(vals[c.key], tx2, y + 4, { align: c.align });
+              }
+              cx += c.w;
+            });
+
+            pdf.setDrawColor(...BORDER);
+            pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+            y += rowH;
+          });
+        };
+
+        const writeFooters = () => {
+          const totalPages = pdf.internal.getNumberOfPages();
+          for (let p = 1; p <= totalPages; p++) {
+            pdf.setPage(p);
+            pdf.setFont("Roboto", "normal");
+            pdf.setFontSize(8);
+            pdf.setTextColor(...TEXT_MUTE);
+            const text = `Renewal by Andersen — ${job.address || ""}  •  ${new Date().toLocaleDateString()}  •  Page ${p} of ${totalPages}`;
+            pdf.text(text, pageW / 2, pageH - 6, { align: "center" });
+          }
+        };
+
+        renderHeader();
+        renderChecklistBar();
+        renderChecklistIntro();
+
+        const { extraRows, boardRows } = buildChecklist();
+        const noteRows = extraRows.filter(r => r.isNote);
+        const materialRows = extraRows.filter(r => !r.isNote);
+        const allRows = [...materialRows, ...(materialRows.length > 0 && boardRows.length ? [null] : []), ...boardRows];
+        allRows.forEach(renderChecklistRow);
+
+        renderPrefinish(noteRows);
+        renderBayMaterial();
+        renderBoardSummary();
+        writeFooters();
 
         return pdf;
       };
