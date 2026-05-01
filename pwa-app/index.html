@@ -1151,7 +1151,7 @@
     }
 
     // ─── REPORT VIEW ───
-    function ReportView({ job, units, catalog, offsets, globalTrim, reportType, onBack, onEdit }) {
+    function ReportView({ job, units, catalog, offsets, globalTrim, reportType, submitted, allComplete, isResubmit, onSubmit, onBack, onEdit }) {
       const reportRef = useRef();
       const [activeReport, setActiveReport] = useState(reportType || "checklist");
 
@@ -2263,6 +2263,23 @@
                 background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.25)", color: "#fff",
                 padding: "8px 14px", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer", letterSpacing: 0.5
               }}>EDIT JOB</button>}
+              {onSubmit && (
+                submitted ? (
+                  <span title="Job submitted" style={{
+                    background: "rgba(109,179,68,0.18)", border: "1px solid rgba(109,179,68,0.5)", color: "#bfe5a3",
+                    padding: "8px 12px", borderRadius: 6, fontWeight: 700, fontSize: 12, letterSpacing: 0.5, whiteSpace: "nowrap"
+                  }}>✓ SUBMITTED</span>
+                ) : (
+                  <button onClick={onSubmit} disabled={!allComplete} title={allComplete ? "" : "Complete all units to submit"} style={{
+                    background: allComplete ? "#6DB344" : "rgba(255,255,255,0.08)",
+                    border: allComplete ? "1px solid #6DB344" : "1px solid rgba(255,255,255,0.15)",
+                    color: allComplete ? "#fff" : "rgba(255,255,255,0.4)",
+                    padding: "8px 14px", borderRadius: 6, fontWeight: 800, fontSize: 12,
+                    cursor: allComplete ? "pointer" : "not-allowed", letterSpacing: 0.5,
+                    boxShadow: allComplete ? "0 2px 10px rgba(109,179,68,0.35)" : "none"
+                  }}>{isResubmit ? "RE-SUBMIT" : "SUBMIT JOB"}</button>
+                )
+              )}
               <button onClick={handlePrint} disabled={pdfBusy} style={{
                 background: "none", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.8)",
                 padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: pdfBusy ? "wait" : "pointer",
@@ -2687,7 +2704,7 @@
           const u = saved.units[0];
           setGlobalTrim(prev => ({ ...prev, trimStyle: u.trimStyle || prev.trimStyle, species: u.species || prev.species, jambSpecies: u.jambSpecies || u.species || prev.species, jambMaterial: u.jambMaterial || "", casingProfile: u.casingProfile || prev.casingProfile, finishType: u.finishType || prev.finishType, finish: u.finish || prev.finish, jambDepthWhole: u.jambDepthWhole || "", jambDepthFrac: u.jambDepthFrac || 0 }));
         }
-        setSubmitted(true);
+        setSubmitted(saved.submitted === true);
         setReportType("checklist");
         setReportFrom("saved");
         setView("report");
@@ -3217,7 +3234,7 @@
 
       // ─── REPORT ───
       if (view === "report") {
-        return <ReportView job={job} units={units} catalog={catalog} offsets={offsets} globalTrim={globalTrim} reportType={reportType} onBack={() => setView(reportFrom === "saved" ? "saved" : "editor")} onEdit={() => setView("editor")} />;
+        return <ReportView job={job} units={units} catalog={catalog} offsets={offsets} globalTrim={globalTrim} reportType={reportType} submitted={submitted} allComplete={allComplete} isResubmit={savedJobs.some(j => j.id === jobId)} onSubmit={() => saveJob(true)} onBack={() => setView(reportFrom === "saved" ? "saved" : "editor")} onEdit={() => setView("editor")} />;
       }
 
       // ─── EDITOR ───
@@ -3226,13 +3243,13 @@
           {/* Top Bar */}
           <div className="no-print" style={{
             position: "sticky", top: 0, zIndex: 100, background: "#1C1C1C",
-            padding: "max(env(safe-area-inset-top, 0px), 50px) 16px 12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
+            padding: "max(env(safe-area-inset-top, 0px), 20px) 16px 8px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
             boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
           }}>
             <button onClick={() => setView("saved")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600, marginLeft: 60 }}>{savedFilter === "submitted" ? "← Submitted Jobs" : "← Saved Jobs"}</button>
             <div onClick={() => setView("home")} style={{ textAlign: "center", lineHeight: 1, cursor: "pointer" }}>
-              <RBaMark size={56} />
-              <div style={{ fontSize: 8, fontWeight: 700, color: "#6DB344", letterSpacing: 2.5, textTransform: "uppercase", marginTop: 2 }}>Lake Superior Region</div>
+              <RBaMark size={80} />
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 2.5, textTransform: "uppercase", marginTop: 3 }}>Lake Superior Region</div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div title={isOnline ? "Connected — synced with team" : "Offline — saving locally"} style={{
