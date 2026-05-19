@@ -626,6 +626,13 @@
         }
       } else if (unit.unitType === "Entry Door") {
         const o = off.entry_door;
+        if (unit.entryDoorJambs && !skipJambs) {
+          const jw = jd + (o.jamb_width ?? -4.5625);
+          materials.push(
+            { name: "Side Jamb Extension", qty: 2, length: h + (o.sideJamb_length ?? 2), width: resolveJambWidth(jw), thickness: t, species: jambSp, category: "Jamb", jambStock: resolveJambStock(jw) },
+            { name: "Head Jamb Extension", qty: 1, length: w + (o.headJamb_length ?? 2), width: resolveJambWidth(jw), thickness: t, species: jambSp, category: "Jamb", jambStock: resolveJambStock(jw) },
+          );
+        }
         if (!skipCasing) {
           materials.push(
             { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
@@ -711,6 +718,7 @@
         jambDepthFrac: 0,
         jambSpecies: "Oak",
         jambMaterial: "",
+        entryDoorJambs: false,
         stopCoverage: "All Sides",
         stopProfile: "1x4 Stop",
         customTrimPieces: [],
@@ -721,7 +729,7 @@
     function isUnitComplete(u) {
       if (!u.heightWhole || !u.widthWhole) return false;
       // Stops trim style doesn't need jamb depth
-      if (u.unitType !== "Entry Door" && u.trimStyle !== "Stops" && !u.jambDepthWhole) return false;
+      if (u.trimStyle !== "Stops" && !u.jambDepthWhole) return false;
       return true;
     }
 
@@ -865,7 +873,7 @@
     const DEFAULT_OFFSETS = {
       window_pf: { sideJamb_length: -1.25, topBottomJamb_length: 0, jamb_width: -2.75, sideCasing_length: -1, topBottomCasing_length: 0 },
       window_trad: { sideJamb_length: -1.25, headJamb_length: 0, jamb_width: -2.75, stool_length: 10, stool_width_extra: 2, sideCasing_length: -1, headCasing_length: 0, apron_length: 10 },
-      entry_door: { sideCasing_length: 6, headCasing_length: 8, threshold_length: 8 },
+      entry_door: { sideCasing_length: 6, headCasing_length: 8, threshold_length: 8, sideJamb_length: 2, headJamb_length: 2, jamb_width: -4.5625 },
       patio_door: { sideJamb_length: 2, headJamb_length: 2, sillJamb_length: 2, jamb_width: -4.5625, sideCasing_length: 6, headCasing_length: 8, threshold_length: 8 },
       thickness: 0.625,
       boardWaste: 5,
@@ -2034,7 +2042,7 @@
 
           {units.map((unit, i) => {
             const mats = calcMaterials(unit);
-            const hasJD = unit.unitType !== "Entry Door" && unit.trimStyle !== "Stops";
+            const hasJD = unit.trimStyle !== "Stops" && unit.jambDepthWhole;
             return (
               <div key={unit.id} data-pdf-section={"unit-" + i} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
                 <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", display: "flex", justifyContent: "space-between", borderRadius: "6px 6px 0 0" }}>
@@ -2496,6 +2504,23 @@
         let newUnit = emptyUnit(units.length + 1);
         if (sameTrim) {
           newUnit = { ...newUnit, species: globalTrim.species, casingProfile: globalTrim.casingProfile, finishType: globalTrim.finishType, finish: globalTrim.finish };
+        }
+        // Autofill jamb depth from most common value across existing units (fallback: global)
+        const jdCounts = {};
+        units.forEach(u => {
+          if (u.jambDepthWhole !== "" && u.jambDepthWhole != null) {
+            const key = `${u.jambDepthWhole}|${u.jambDepthFrac || 0}`;
+            jdCounts[key] = (jdCounts[key] || 0) + 1;
+          }
+        });
+        const topJD = Object.entries(jdCounts).sort((a, b) => b[1] - a[1])[0];
+        if (topJD) {
+          const [whole, frac] = topJD[0].split("|");
+          newUnit.jambDepthWhole = whole;
+          newUnit.jambDepthFrac = Number(frac);
+        } else if (globalTrim.jambDepthWhole) {
+          newUnit.jambDepthWhole = globalTrim.jambDepthWhole;
+          newUnit.jambDepthFrac = globalTrim.jambDepthFrac || 0;
         }
         setUnits(p => [...p, newUnit]);
         setExpandedUnit(units.length);
@@ -3230,6 +3255,9 @@
                 { key: "sideCasing_length", label: "Side Casing Length", desc: "H + value" },
                 { key: "headCasing_length", label: "Head Casing Length", desc: "W + value" },
                 { key: "threshold_length", label: "Threshold Length", desc: "W + value" },
+                { key: "sideJamb_length", label: "Side Jamb Length", desc: "H + value (deep-jamb add-on)" },
+                { key: "headJamb_length", label: "Head Jamb Length", desc: "W + value (deep-jamb add-on)" },
+                { key: "jamb_width", label: "Jamb Width", desc: "JD + value (deep-jamb add-on)" },
               ]} />
               <OffsetCard title="Patio Doors" section="patio_door" fields={[
                 { key: "sideJamb_length", label: "Side Jamb Length", desc: "H + value" },
@@ -3683,7 +3711,8 @@
                 const expanded = expandedUnit === idx;
                 const complete = isUnitComplete(unit);
                 const mats = complete ? calcMaterials(unit) : [];
-                const needsJD = unit.unitType !== "Entry Door" && unit.trimStyle !== "Stops";
+                const needsJD = unit.trimStyle !== "Stops" && (unit.unitType !== "Entry Door" || unit.entryDoorJambs);
+                const needsJambDepth = unit.trimStyle !== "Stops";
                 const needsTrim = unit.unitType === "Window";
                 const needsThreshold = unit.unitType !== "Window";
 
@@ -3905,10 +3934,19 @@
                               }
                             </div>
                           )}
+                          {unit.unitType === "Entry Door" && (
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <label style={{ fontSize: 12, color: "#333", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: unit.entryDoorJambs ? "rgba(230,126,34,0.1)" : "#f9f9f9", borderRadius: 6, border: unit.entryDoorJambs ? "1px solid #e67e22" : "1px solid #e8e8e8" }}>
+                                <input type="checkbox" checked={!!unit.entryDoorJambs} onChange={() => updateUnit(idx, "entryDoorJambs", !unit.entryDoorJambs)} style={{ width: 15, height: 15 }} />
+                                <span style={{ fontWeight: 600 }}>Include jamb extension</span>
+                                <span style={{ fontSize: 10, color: "#888" }}>For deep walls — adds side/head jamb pieces</span>
+                              </label>
+                            </div>
+                          )}
                         </div>
 
                         {/* Measurements */}
-                        <div style={{ display: "grid", gridTemplateColumns: needsJD ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, marginTop: 12 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: needsJambDepth ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, marginTop: 12 }}>
                           <FractionInput
                             label="Width (in)"
                             wholeValue={unit.widthWhole}
@@ -3927,7 +3965,7 @@
                             placeholder="48"
                             labelStyle={lbl}
                           />
-                          {needsJD && (
+                          {needsJambDepth && (
                             <FractionInput
                               label="Jamb Depth (in)"
                               wholeValue={unit.jambDepthWhole}
