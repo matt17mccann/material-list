@@ -3811,7 +3811,7 @@
                               </label>
                             </div>
                             {customMode["stop_"+idx]
-                              ? <input style={inp} value={unit.stopProfile || "1x4 Stop"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)} placeholder="Type custom stop profile..." />
+                              ? <input style={inp} value={unit.stopProfile || ""} onChange={e => updateUnit(idx, "stopProfile", e.target.value)} placeholder="Type custom stop profile..." />
                               : <select style={sel} value={unit.stopProfile || "1x4 Stop"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)}>
                                   <option value="None">None (no stops)</option>
                                   {getAvailableStopProfiles(unit.species).map(p => (
