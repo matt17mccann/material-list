@@ -2405,6 +2405,7 @@
         jambSpecies: "Oak",
         jambMaterial: "",
         casingProfile: '2-1/2" Colonial (C115)',
+        stopProfile: "1x4 Stop",
         finishType: "Stain",
         finish: "",
         jambDepthWhole: "",
@@ -2503,7 +2504,7 @@
       const addUnit = () => {
         let newUnit = emptyUnit(units.length + 1);
         if (sameTrim) {
-          newUnit = { ...newUnit, species: globalTrim.species, casingProfile: globalTrim.casingProfile, finishType: globalTrim.finishType, finish: globalTrim.finish };
+          newUnit = { ...newUnit, species: globalTrim.species, casingProfile: globalTrim.casingProfile, stopProfile: globalTrim.stopProfile || "1x4 Stop", finishType: globalTrim.finishType, finish: globalTrim.finish };
         }
         // Autofill jamb depth from most common value across existing units (fallback: global)
         const jdCounts = {};
@@ -2532,7 +2533,7 @@
         setExpandedUnit(idx + 1);
       };
       const applyGlobalToUnit = (u, g, force) => {
-        const updates = { trimStyle: g.trimStyle || "Picture Frame", species: g.species, jambSpecies: g.jambSpecies || g.species, jambMaterial: g.jambMaterial || "", casingProfile: g.casingProfile, stool5_4: g.stool5_4 || false };
+        const updates = { trimStyle: g.trimStyle || "Picture Frame", species: g.species, jambSpecies: g.jambSpecies || g.species, jambMaterial: g.jambMaterial || "", casingProfile: g.casingProfile, stopProfile: g.stopProfile || "1x4 Stop", stool5_4: g.stool5_4 || false };
         // When "Multiple" is selected, don't override per-unit finish
         if (g.finishType !== "Multiple") {
           updates.finishType = g.finishType;
@@ -2796,7 +2797,7 @@
         } else if (savedUnits.length > 0) {
           // Reconstruct globalTrim from first unit for older saved jobs
           const u = savedUnits[0];
-          setGlobalTrim(prev => ({ ...prev, trimStyle: u.trimStyle || prev.trimStyle, species: u.species || prev.species, jambSpecies: u.jambSpecies || u.species || prev.species, jambMaterial: u.jambMaterial || "", casingProfile: u.casingProfile || prev.casingProfile, finishType: u.finishType || prev.finishType, finish: u.finish || prev.finish, jambDepthWhole: u.jambDepthWhole || "", jambDepthFrac: u.jambDepthFrac || 0 }));
+          setGlobalTrim(prev => ({ ...prev, trimStyle: u.trimStyle || prev.trimStyle, species: u.species || prev.species, jambSpecies: u.jambSpecies || u.species || prev.species, jambMaterial: u.jambMaterial || "", casingProfile: u.casingProfile || prev.casingProfile, stopProfile: u.stopProfile || prev.stopProfile, finishType: u.finishType || prev.finishType, finish: u.finish || prev.finish, jambDepthWhole: u.jambDepthWhole || "", jambDepthFrac: u.jambDepthFrac || 0 }));
         }
         setExpandedUnit(0);
         // Auto-expand collapsible sections when they have content
@@ -3575,7 +3576,26 @@
                         })}
                       </select>
                     </div>
-                    {/* Casing Profile */}
+                    {/* Casing / Stop Profile */}
+                    {globalTrim.trimStyle === "Stops" ? (
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <label style={lbl}>Stop Profile</label>
+                        <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                          <input type="checkbox" checked={!!customMode.globalStop} onChange={() => setCustomMode(p => ({ ...p, globalStop: !p.globalStop }))} style={{ width: 13, height: 13 }} /> Custom
+                        </label>
+                      </div>
+                      {customMode.globalStop
+                        ? <input style={inp} value={globalTrim.stopProfile || ""} onChange={e => updateGlobalTrim("stopProfile", e.target.value)} placeholder="Type custom stop profile..." />
+                        : <select style={sel} value={globalTrim.stopProfile || "1x4 Stop"} onChange={e => updateGlobalTrim("stopProfile", e.target.value)}>
+                            <option value="None">None (no stops)</option>
+                            {getAvailableStopProfiles(globalTrim.species).map(p => (
+                              <option key={p.label} value={p.label}>{p.label}</option>
+                            ))}
+                          </select>
+                      }
+                    </div>
+                    ) : (
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <label style={lbl}>Casing Profile</label>
@@ -3595,6 +3615,7 @@
                           </select>
                       }
                     </div>
+                    )}
                     {/* Jamb Species */}
                     <div>
                       <label style={lbl}>Jamb Species</label>
