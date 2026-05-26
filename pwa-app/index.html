@@ -271,6 +271,24 @@
       return lengths.size > 0 ? [...lengths] : ALL_LENGTHS.map(l => parseInt(l.key));
     }
 
+    // Lengths available for ONE specific catalog item (jamb width / casing profile),
+    // so unchecking a length on e.g. "5/8x6" doesn't leak in from other items in the section.
+    function getAvailableLengthsForItem(catalog, species, section, itemLabel) {
+      if (!catalog?.[section]) return ALL_LENGTHS.map(l => parseInt(l.key));
+      const item = (catalog[section] || []).find(it => it.label === itemLabel);
+      if (!item) return getAvailableLengthsForSpecies(catalog, species, section);
+      const lengths = new Set();
+      ALL_LENGTHS.forEach(l => {
+        if (item.availability?.[species]?.[l.key] !== false) lengths.add(parseInt(l.key));
+      });
+      (item.extraLengths || []).forEach(l => {
+        const n = parseInt(l);
+        if (!Number.isFinite(n) || n <= 0) return;
+        if (item.availability?.[species]?.[String(n)] !== false) lengths.add(n);
+      });
+      return lengths.size > 0 ? [...lengths] : ALL_LENGTHS.map(l => parseInt(l.key));
+    }
+
     function getProfileWidth(profileLabel) {
       const p = CASING_PROFILES.find(pr => pr.label === profileLabel);
       return p ? p.width : 2.5;
@@ -1025,7 +1043,8 @@
 
         // Determine available stock lengths for this group's species from catalog
         const section = group.materialType === "Casing" || group.materialType === "Stop" ? "casingProfiles" : "jambStock";
-        let STOCK_LENGTHS = catalog ? getAvailableLengthsForSpecies(catalog, group.species, section) : ALL_STOCK_LENGTHS;
+        const itemLabel = section === "jambStock" ? (group.jambStock ? group.jambStock.label : null) : group.profile;
+        let STOCK_LENGTHS = catalog ? getAvailableLengthsForItem(catalog, group.species, section, itemLabel) : ALL_STOCK_LENGTHS;
         STOCK_LENGTHS = STOCK_LENGTHS.filter(l => ALL_STOCK_LENGTHS.includes(l)).sort((a, b) => a - b);
         if (!STOCK_LENGTHS.length) STOCK_LENGTHS = ALL_STOCK_LENGTHS;
 
