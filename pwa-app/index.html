@@ -532,7 +532,7 @@
       function extractUnitsFromRegex(re) {
         let sm;
         // Use a stricter ID pattern: 3-digit number NOT inside a phone number
-        const idPat = /(?:^|\n)\s*([1-8]\d\d)\b/g;
+        const idPat = /(?:^|\n)\s*([1-8]\d\d[Ss]?)\b/g;
         while ((sm = re.exec(text)) !== null) {
           const w = parseFraction(sm[1]), h = parseFraction(sm[2]);
           // Skip tiny/zero dimensions (headers, misc lines)
@@ -546,6 +546,7 @@
           const idM = idsBefore.length > 0 ? idsBefore[idsBefore.length - 1] : idsAfter.length > 0 ? idsAfter[0] : null;
           if (!idM) continue;
           const uid = idM[1];
+          if (/[Ss]$/.test(uid)) continue; // storm door — no trim details needed
           if (parseInt(uid) >= 900) continue;
 
           // Unit type: scan nearby text
@@ -742,6 +743,11 @@
         customTrimPieces: [],
         manualMaterials: [],
       };
+    }
+
+    // Storm doors carry a trailing "S" on their unit ID (e.g. "101S") and need no trim.
+    function isStormDoor(u) {
+      return /^\s*\d+\s*[Ss]\s*$/.test(String(u?.label ?? ""));
     }
 
     function isUnitComplete(u) {
@@ -995,6 +1001,7 @@
       // Collect all cuts from all units
       const allCuts = [];
       units.forEach(unit => {
+        if (isStormDoor(unit)) return; // storm doors need no trim
         if (!isUnitComplete(unit)) return;
         const mats = calcMaterials(unit);
         mats.forEach(m => {
@@ -1039,7 +1046,7 @@
       // For each group, try ALL possible combinations of stock lengths and pick the one with least total waste
       const allBoards = [];
       Object.values(groups).forEach(group => {
-        const sorted = [...group.cuts].sort((a, b) => b.length - a.length);
+        const allSorted = [...group.cuts].sort((a, b) => b.length - a.length);
 
         // Determine available stock lengths for this group's species from catalog
         const section = group.materialType === "Casing" || group.materialType === "Stop" ? "casingProfiles" : "jambStock";
@@ -1047,6 +1054,38 @@
         let STOCK_LENGTHS = catalog ? getAvailableLengthsForItem(catalog, group.species, section, itemLabel) : ALL_STOCK_LENGTHS;
         STOCK_LENGTHS = STOCK_LENGTHS.filter(l => ALL_STOCK_LENGTHS.includes(l)).sort((a, b) => a - b);
         if (!STOCK_LENGTHS.length) STOCK_LENGTHS = ALL_STOCK_LENGTHS;
+        const maxStock = STOCK_LENGTHS[STOCK_LENGTHS.length - 1];
+
+        // Cuts longer than the longest available board can't be made from a single
+        // board — they must be spliced across multiple boards. Allocate those up front
+        // (ceil of needed length over the max board) so quantities are never short.
+        const splicedBoards = [];
+        const sorted = [];
+        allSorted.forEach(cut => {
+          if (cut.length > maxStock) {
+            const n = Math.ceil(cut.length / maxStock);
+            let remainingLen = cut.length;
+            for (let i = 0; i < n; i++) {
+              const seg = Math.min(remainingLen, maxStock);
+              remainingLen -= seg;
+              splicedBoards.push({
+                stockLength: maxStock,
+                cuts: [{ ...cut, rawLength: seg, length: seg, source: `${cut.source} (spliced ${i + 1}/${n} of ${toFraction(cut.rawLength)}")` }],
+                remaining: maxStock - seg,
+                materialType: group.materialType,
+                species: group.species,
+                finish: group.finish,
+                profile: group.profile,
+                jambStock: group.jambStock,
+                width: group.width,
+                thickness: group.thickness,
+                spliced: true,
+              });
+            }
+          } else {
+            sorted.push(cut);
+          }
+        });
 
         // Try each stock length strategy and pick the best
         let bestBoards = null;
@@ -1118,7 +1157,7 @@
           }
         }
 
-        allBoards.push(...bestBoards);
+        allBoards.push(...(bestBoards || []), ...splicedBoards);
       });
 
       // Sort boards: by material type, then species, then stock length
@@ -1846,6 +1885,7 @@
         // Thresholds — pre-made products, listed as line items
         const thresholdCounts = {};
         units.forEach(unit => {
+          if (isStormDoor(unit)) return; // storm doors need no trim
           if (!isUnitComplete(unit)) return;
           if (unit.unitType === "Window") return;
           const desc = unit.thresholdSpecies;
@@ -2738,6 +2778,8 @@
         setJobId(Date.now().toString());
         setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], customTrimMode: false, optimizePerUnit: true, showFinishOnChecklist: false });
         setUnits([emptyUnit(1)]);
+        // Jamb depth is measured per job — don't carry it into a new job
+        setGlobalTrim(prev => ({ ...prev, jambDepthWhole: "", jambDepthFrac: 0 }));
         setExpandedUnit(0);
         setSubmitted(false);
         setShowPfSection(false);
