@@ -24,6 +24,7 @@ export default async (req: Request, context: Context) => {
           id: data.id,
           job: data.job,
           units: data.units,
+          globalTrim: data.globalTrim,
           savedAt: data.savedAt,
           status: data.status || "in_progress",
           submitted: data.submitted || false,
