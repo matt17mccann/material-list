@@ -7,6 +7,8 @@ import type { Context, Config } from "@netlify/functions";
 //
 // Resubmits send the same `jobId`, so the joblist app should upsert by jobId
 // (create on first submit, replace the stored PDF on every resubmit).
+//
+// Connected to rba-joblist (JOBLIST_API_URL/KEY set in Netlify env, 2026-05-29).
 export default async (req: Request, context: Context) => {
   const url = process.env.JOBLIST_API_URL;
   const key = process.env.JOBLIST_API_KEY;
