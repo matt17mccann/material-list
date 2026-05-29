@@ -161,6 +161,26 @@
       return list.find(s => s.width >= neededWidth) || list[list.length - 1];
     }
 
+    // Basswood is only ever stocked in 5/8" thickness — RBA never carries 3/4" or
+    // 5/4" basswood. All basswood jamb/stool material is the 5/8" board of the
+    // matching width (overrides the normal 3/4"/5/4" stool + wide-jamb stock).
+    const BASSWOOD_STOCK_5_8 = [
+      { label: '5/8x4', width: 3.5, thickness: 0.625 },
+      { label: '5/8x6', width: 5.5, thickness: 0.625 },
+      { label: '5/8x8', width: 7.25, thickness: 0.625 },
+      { label: '5/8x10', width: 9.25, thickness: 0.625 },
+      { label: '5/8x12', width: 11.25, thickness: 0.625 },
+    ];
+    function basswoodStockFor(width) {
+      return BASSWOOD_STOCK_5_8.find(s => s.width >= width) || BASSWOOD_STOCK_5_8[BASSWOOD_STOCK_5_8.length - 1];
+    }
+    // Rewrite any nominal thickness prefix (1x, 3/4x, 5/4x) to 5/8x for basswood
+    // labels — safety net for extra boards / custom profiles that bypass calc.
+    function fixBasswoodThickness(species, label) {
+      if (species !== "Basswood" || !label) return label;
+      return String(label).replace(/^\s*(1|3\/4|5\/4|1-1\/4)x/i, "5/8x");
+    }
+
     const FINISH_TYPES = ["Stain", "Paint"];
     const STAINS = [
       { label: "Dark Walnut (Minwax)", brand: "Minwax" },
@@ -708,6 +728,14 @@
       materials.forEach(m => {
         if (m.jambStock && m.jambStock.thickness != null) {
           m.thickness = m.jambStock.thickness;
+        }
+      });
+      // Basswood only comes in 5/8" — force all basswood jamb/stool stock to the
+      // 5/8" board of the same width (no 3/4"/5/4" basswood is ever carried).
+      materials.forEach(m => {
+        if (m.species === "Basswood" && m.jambStock) {
+          m.jambStock = basswoodStockFor(m.jambStock.width);
+          m.thickness = 0.625;
         }
       });
 
@@ -1307,7 +1335,7 @@
                 <tr key={i} style={{ borderBottom: "1px solid #ddd", background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
                   <td style={{ padding: "6px 10px", fontWeight: 600 }}>{i + 1}</td>
                   <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{STOCK_LABELS[board.stockLength]}</td>
-                  <td style={{ padding: "6px 8px" }}>{board.species} {board.materialType}{board.jambStock ? ` (${board.jambStock.label})` : ""}{board.profile ? ` — ${board.profile}` : ""}{board.isExtra ? <span style={{ fontStyle: "italic", color: "#999", marginLeft: 6 }}>(Extra)</span> : ""}</td>
+                  <td style={{ padding: "6px 8px" }}>{board.species} {board.materialType}{board.jambStock ? ` (${fixBasswoodThickness(board.species, board.jambStock.label)})` : ""}{board.profile ? ` — ${fixBasswoodThickness(board.species, board.profile)}` : ""}{board.isExtra ? <span style={{ fontStyle: "italic", color: "#999", marginLeft: 6 }}>(Extra)</span> : ""}</td>
                   <td style={{ padding: "6px 8px" }}>{board.species}</td>
                   <td style={{ padding: "6px 8px" }}>{board.finish}</td>
                   <td style={{ padding: "6px 8px", fontSize: 11 }}>
@@ -1736,8 +1764,8 @@
             }
 
             const typeStr = `${board.species} ${board.materialType}` +
-              (board.jambStock ? ` (${board.jambStock.label})` : "") +
-              (board.profile ? ` — ${board.profile}` : "") +
+              (board.jambStock ? ` (${fixBasswoodThickness(board.species, board.jambStock.label)})` : "") +
+              (board.profile ? ` — ${fixBasswoodThickness(board.species, board.profile)}` : "") +
               (board.isExtra ? " (Extra)" : "");
 
             const vals = {
@@ -2004,24 +2032,24 @@
           const finishTag = showFinish && board.finish ? ` — ${board.finish}` : "";
           let label, cat;
           if (isStool) {
-            const stockLabel = board.jambStock ? board.jambStock.label : "5/8x6";
+            const stockLabel = fixBasswoodThickness(board.species, board.jambStock ? board.jambStock.label : "5/8x6");
             label = `Stool - ${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}${finishTag}`;
             cat = "STOOL";
           } else if (isJamb) {
-            const stockLabel = board.jambStock ? board.jambStock.label : "5/8x6";
+            const stockLabel = fixBasswoodThickness(board.species, board.jambStock ? board.jambStock.label : "5/8x6");
             label = `${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}${finishTag}`;
             cat = "JAMB MATERIAL";
           } else if (isApron) {
-            const profile = board.profile || "Casing";
+            const profile = fixBasswoodThickness(board.species, board.profile || "Casing");
             label = `Apron - ${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
             cat = `${board.species.toUpperCase()} APRON`;
           } else if (board.materialType === "Stop") {
-            const profile = board.profile || "Stop";
+            const profile = fixBasswoodThickness(board.species, board.profile || "Stop");
             label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
             cat = `${board.species.toUpperCase()} STOP`;
           } else {
             // Casing — e.g. "Oak (C115) Colonial Casing 2-1/2" - 10'"
-            const profile = board.profile || "Casing";
+            const profile = fixBasswoodThickness(board.species, board.profile || "Casing");
             label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
             cat = `${board.species.toUpperCase()} CASING`;
           }
