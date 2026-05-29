@@ -16,7 +16,7 @@ export default async (req: Request, context: Context) => {
 
   // Cheap capability check so the client can skip generating a PDF when unconfigured.
   if (req.method === "GET") {
-    return new Response(JSON.stringify({ configured }));
+    return new Response(JSON.stringify({ configured, hasUrl: !!url, hasKey: !!key }));
   }
 
   if (req.method !== "POST") {
