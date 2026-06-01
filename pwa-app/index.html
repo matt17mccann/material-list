@@ -1005,6 +1005,19 @@
       return data;
     }
 
+    // Re-sync casing profile labels from their rename map / stable code (e.g.
+    // "1x4 (RBA-S4S-3.5)" -> "5/8x4 (RBA-S4S-3.5)"). Units store the normalized label,
+    // so the catalog must match or the optimizer can't find a profile's availability.
+    function syncCasingLabels(data) {
+      if (!data) return data;
+      (data.casingProfiles || []).forEach(item => {
+        item.label = normalizeCasingProfile(item.label);
+        const canonical = CASING_PROFILES.find(p => p.code === item.code);
+        if (canonical && item.label !== canonical.label) item.label = canonical.label;
+      });
+      return data;
+    }
+
     function migrateCatalog(data) {
       if (data && !data.stopProfiles) {
         data.stopProfiles = STOP_PROFILES.map(p => ({
@@ -1019,6 +1032,7 @@
             if (!Array.isArray(item.extraLengths)) item.extraLengths = [];
           });
         });
+        syncCasingLabels(data);
         migrateJambStock(data);
       }
       return data;
@@ -1141,11 +1155,8 @@
             if (!Array.isArray(item.extraLengths)) item.extraLengths = [];
           });
         });
-        // Migrate: re-sync casing profile labels from their stable code (handles renames)
-        (parsed.casingProfiles || []).forEach(item => {
-          const canonical = CASING_PROFILES.find(p => p.code === item.code);
-          if (canonical && item.label !== canonical.label) item.label = canonical.label;
-        });
+        // Migrate: re-sync casing profile labels (handles renames) — see syncCasingLabels.
+        syncCasingLabels(parsed);
         // Migrate jamb stock: rename legacy "1xN" labels, ensure Basswood-only widths,
         // and dedupe — see migrateJambStock.
         migrateJambStock(parsed);
