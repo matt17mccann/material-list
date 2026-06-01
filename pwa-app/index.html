@@ -139,11 +139,35 @@
       { label: '5/4x8', width: 7.25, thickness: 1.25, traditionalOnly: true },
     ];
 
-    function getJambStockWidth(neededWidth) {
-      for (const stock of JAMB_STOCK_WIDTHS) {
+    // Infer jamb-stock thickness from its label prefix — catalog items store only
+    // label + width, so thickness comes from the nominal size.
+    function jambThicknessFromLabel(label) {
+      if (/^\s*5\/8x/i.test(label)) return 0.625;
+      if (/^\s*(5\/4|1-1\/4)x/i.test(label)) return 1.25;
+      return 0.75;
+    }
+    // Working jamb-stock list: the catalog (Available Material) overrides/extends the
+    // constant so inventory edits drive selection, while known labels keep the
+    // constant's structural metadata (thickness, traditionalOnly). Falls back to the
+    // constant when no catalog is supplied.
+    function jambStockList(catalog) {
+      if (!catalog?.jambStock?.length) return JAMB_STOCK_WIDTHS;
+      return catalog.jambStock.map(c => {
+        const base = JAMB_STOCK_WIDTHS.find(j => j.label === c.label);
+        return base
+          ? { ...base, width: c.width != null ? c.width : base.width }
+          : { label: c.label, width: c.width, thickness: jambThicknessFromLabel(c.label) };
+      }).slice().sort((a, b) => a.width - b.width);
+    }
+    function findJambStock(label, catalog) {
+      return jambStockList(catalog).find(j => j.label === label) || null;
+    }
+    function getJambStockWidth(neededWidth, catalog) {
+      const list = jambStockList(catalog);
+      for (const stock of list) {
         if (stock.width >= neededWidth) return stock;
       }
-      return JAMB_STOCK_WIDTHS[JAMB_STOCK_WIDTHS.length - 1];
+      return list[list.length - 1];
     }
 
     // Stools/sills are always milled from 3/4" stock (or 5/4" when toggled) — never
@@ -235,6 +259,13 @@
       return CASING_PROFILE_RENAMES[label] || label;
     }
 
+    // Legacy jamb-stock labels (catalogs predating the relabel stored nominal "1xN").
+    // Map them to the canonical stock labels so availability/custom-length toggles
+    // match what the material-list calc computes (5/8x4·6 jamb, 3/4x8·10·12 wide).
+    const JAMB_STOCK_RENAMES = {
+      '1x4': '5/8x4', '1x6': '5/8x6', '1x8': '3/4x8', '1x10': '3/4x10', '1x12': '3/4x12',
+    };
+
     const STOP_PROFILES = [
       { label: '1x4 Stop', width: 3.5, code: 'STOP-1x4', pineOnly: false },
       { label: 'Colonial 3-1/4" Stop', width: 3.25, code: 'STOP-COL', pineOnly: false },
@@ -243,16 +274,31 @@
 
     const STOP_COVERAGES = ["All Sides", "Sides and Top", "None"];
 
-    function getAvailableProfiles(species) {
-      return CASING_PROFILES.filter(p => !p.pineOnly || species === "Pine");
+    // Catalog is the source of truth for which profiles exist (so add/delete in the
+    // Available Material screen shows/hides options); known labels inherit pineOnly
+    // from the constant. Falls back to the constant when no catalog is supplied.
+    function getAvailableProfiles(species, catalog) {
+      const list = catalog?.casingProfiles?.length ? catalog.casingProfiles : CASING_PROFILES;
+      return list.filter(p => {
+        const known = CASING_PROFILES.find(c => c.label === p.label);
+        const pineOnly = p.pineOnly ?? known?.pineOnly ?? false;
+        return !pineOnly || species === "Pine";
+      });
     }
 
 
-    function getAvailableStopProfiles(species) {
-      return STOP_PROFILES.filter(p => !p.pineOnly || species === "Pine");
+    function getAvailableStopProfiles(species, catalog) {
+      const list = catalog?.stopProfiles?.length ? catalog.stopProfiles : STOP_PROFILES;
+      return list.filter(p => {
+        const known = STOP_PROFILES.find(c => c.label === p.label);
+        const pineOnly = p.pineOnly ?? known?.pineOnly ?? false;
+        return !pineOnly || species === "Pine";
+      });
     }
 
-    function getStopProfileWidth(profileLabel) {
+    function getStopProfileWidth(profileLabel, catalog) {
+      const c = catalog?.stopProfiles?.find(p => p.label === profileLabel);
+      if (c && c.width != null) return c.width;
       const p = STOP_PROFILES.find(pr => pr.label === profileLabel);
       return p ? p.width : 3.5;
     }
@@ -334,9 +380,21 @@
       return lengths.size > 0 ? [...lengths] : ALL_LENGTHS.map(l => parseInt(l.key));
     }
 
-    function getProfileWidth(profileLabel) {
+    function getProfileWidth(profileLabel, catalog) {
+      const c = catalog?.casingProfiles?.find(p => p.label === profileLabel);
+      if (c && c.width != null) return c.width;
       const p = CASING_PROFILES.find(pr => pr.label === profileLabel);
       return p ? p.width : 2.5;
+    }
+
+    // Finish color options — constant colors plus any custom stains/paints added in
+    // the Available Material screen.
+    function getStainOptions(catalog) {
+      const base = STAINS.map(s => s.label);
+      return [...base, ...(catalog?.customStains || []).filter(c => !base.includes(c))];
+    }
+    function getPaintOptions(catalog) {
+      return [...PAINTS, ...(catalog?.customPaints || []).filter(c => !PAINTS.includes(c))];
     }
 
 
@@ -623,7 +681,7 @@
       return { jobInfo, units };
     }
 
-    function calcMaterials(unit) {
+    function calcMaterials(unit, catalog) {
       const h = combineMeasurement(unit.heightWhole, unit.heightFrac);
       const w = combineMeasurement(unit.widthWhole, unit.widthFrac);
       const jd = combineMeasurement(unit.jambDepthWhole, unit.jambDepthFrac);
@@ -636,14 +694,14 @@
       const jambSp = unit.jambSpecies || unit.species;
       // Manual jamb material override — use selected stock instead of auto-calculating
       const manualJambStock = unit.jambMaterial && unit.jambMaterial !== "Customer Supplying"
-        ? JAMB_STOCK_WIDTHS.find(j => j.label === unit.jambMaterial) : null;
-      const resolveJambStock = (calcWidth) => manualJambStock || getJambStockWidth(calcWidth);
+        ? findJambStock(unit.jambMaterial, catalog) : null;
+      const resolveJambStock = (calcWidth) => manualJambStock || getJambStockWidth(calcWidth, catalog);
       const resolveJambWidth = (calcWidth) => manualJambStock ? manualJambStock.width : calcWidth;
 
       if (unit.unitType === "Window") {
         if (unit.trimStyle === "Stops") {
           if (unit.stopProfile !== "None" && unit.stopCoverage !== "None") {
-            const stopW = getStopProfileWidth(unit.stopProfile);
+            const stopW = getStopProfileWidth(unit.stopProfile, catalog);
             const isAllSides = unit.stopCoverage !== "Sides and Top";
             materials.push(
               { name: "Side Stop", qty: 2, length: h, width: stopW, thickness: null, species: unit.species, category: "Stop", profile: unit.stopProfile },
@@ -661,8 +719,8 @@
           }
           if (!skipCasing) {
             materials.push(
-              { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-              { name: "Top/Bottom Casing", qty: 2, length: w + o.topBottomCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
+              { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+              { name: "Top/Bottom Casing", qty: 2, length: w + o.topBottomCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
             );
           }
         } else {
@@ -681,9 +739,9 @@
           }
           if (!skipCasing) {
             materials.push(
-              { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-              { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-              { name: "Apron", qty: 1, length: w + o.apron_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
+              { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+              { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+              { name: "Apron", qty: 1, length: w + o.apron_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
             );
           }
         }
@@ -698,8 +756,8 @@
         }
         if (!skipCasing) {
           materials.push(
-            { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-            { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
           );
         }
         if (unit.thresholdSpecies && unit.thresholdSpecies !== "None") {
@@ -716,8 +774,8 @@
         }
         if (!skipCasing) {
           materials.push(
-            { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
-            { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Side Casing", qty: 2, length: h + o.sideCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Head Casing", qty: 1, length: w + o.headCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
           );
         }
         if (unit.thresholdSpecies && unit.thresholdSpecies !== "None") {
@@ -749,7 +807,7 @@
           // Find and replace matching piece, or add as new
           const aliases = HEAD_CASING_ALIASES.includes(ctp.piece) ? HEAD_CASING_ALIASES : [ctp.piece];
           const matchIdx = materials.findIndex(m => aliases.includes(m.name));
-          const profileWidth = getProfileWidth(ctp.profile) || getStopProfileWidth(ctp.profile) || 3.5;
+          const profileWidth = getProfileWidth(ctp.profile, catalog) || getStopProfileWidth(ctp.profile, catalog) || 3.5;
           const isJamb = ctp.piece.includes("Jamb") || ctp.piece.includes("Stool") || ctp.piece.includes("Sill");
           const explicitThickness = ctp.thickness ? parseFloat(ctp.thickness) : null;
           const override = {
@@ -761,7 +819,7 @@
             species: ctp.species || unit.species,
             category: isJamb ? "Jamb" : (ctp.piece.includes("Stop") ? "Stop" : "Casing"),
             profile: isJamb ? null : ctp.profile,
-            jambStock: isJamb ? (materials[matchIdx]?.jambStock || getJambStockWidth(profileWidth)) : undefined,
+            jambStock: isJamb ? (materials[matchIdx]?.jambStock || getJambStockWidth(profileWidth, catalog)) : undefined,
           };
           if (matchIdx >= 0) {
             materials[matchIdx] = override;
@@ -916,6 +974,37 @@
     }
 
     // Catalog API
+    // Bring a catalog's jamb stock up to date: rename legacy "1xN" labels to canonical
+    // stock labels so toggles match the calc, ensure Basswood-only widths (5/8x8/10/12)
+    // exist (basswood relabels wide stock to 5/8xN), and dedupe by label — a length
+    // stays OFF if OFF in any duplicate, custom lengths are unioned. Idempotent.
+    function migrateJambStock(data) {
+      if (!data) return data;
+      data.jambStock = data.jambStock || [];
+      data.jambStock.forEach(item => {
+        if (JAMB_STOCK_RENAMES[item.label]) item.label = JAMB_STOCK_RENAMES[item.label];
+      });
+      const merged = [];
+      data.jambStock.forEach(item => {
+        const existing = merged.find(j => j.label === item.label);
+        if (!existing) { merged.push(item); return; }
+        existing.extraLengths = [...new Set([...(existing.extraLengths || []), ...(item.extraLengths || [])])];
+        existing.availability = existing.availability || {};
+        ALL_SPECIES.forEach(sp => {
+          const b = item.availability?.[sp] || {};
+          existing.availability[sp] = { ...b, ...(existing.availability[sp] || {}) };
+          Object.keys(b).forEach(k => { if (b[k] === false) existing.availability[sp][k] = false; });
+        });
+      });
+      BASSWOOD_STOCK_5_8.forEach(b => {
+        if (!merged.some(j => j.label === b.label)) {
+          merged.push({ label: b.label, width: b.width, availability: makeAvailability(), extraLengths: [] });
+        }
+      });
+      data.jambStock = merged;
+      return data;
+    }
+
     function migrateCatalog(data) {
       if (data && !data.stopProfiles) {
         data.stopProfiles = STOP_PROFILES.map(p => ({
@@ -930,6 +1019,7 @@
             if (!Array.isArray(item.extraLengths)) item.extraLengths = [];
           });
         });
+        migrateJambStock(data);
       }
       return data;
     }
@@ -1014,10 +1104,14 @@
           label: p.label, code: p.code, width: p.width, pineOnly: p.pineOnly || false,
           availability: makeAvailability()
         })),
-        jambStock: JAMB_STOCK_WIDTHS.map(j => ({
-          label: j.label, width: j.width,
-          availability: makeAvailability()
-        })),
+        jambStock: [
+          ...JAMB_STOCK_WIDTHS.map(j => ({ label: j.label, width: j.width, availability: makeAvailability() })),
+          // Basswood-only 5/8" wide widths (8/10/12) — basswood relabels wide jamb
+          // stock to 5/8xN, so these must exist for availability/length toggles to match.
+          ...BASSWOOD_STOCK_5_8
+            .filter(b => !JAMB_STOCK_WIDTHS.some(j => j.label === b.label))
+            .map(b => ({ label: b.label, width: b.width, availability: makeAvailability() })),
+        ],
         stopProfiles: STOP_PROFILES.map(p => ({
           label: p.label, code: p.code, width: p.width, pineOnly: p.pineOnly || false,
           availability: makeAvailability()
@@ -1052,6 +1146,9 @@
           const canonical = CASING_PROFILES.find(p => p.code === item.code);
           if (canonical && item.label !== canonical.label) item.label = canonical.label;
         });
+        // Migrate jamb stock: rename legacy "1xN" labels, ensure Basswood-only widths,
+        // and dedupe — see migrateJambStock.
+        migrateJambStock(parsed);
         return parsed;
       } catch { return defaultCatalog(); }
     }
@@ -1096,7 +1193,7 @@
       units.forEach(unit => {
         if (isStormDoor(unit)) return; // storm doors need no trim
         if (!isUnitComplete(unit)) return;
-        const mats = calcMaterials(unit);
+        const mats = calcMaterials(unit, catalog);
         mats.forEach(m => {
           if (m.category === "Threshold") return; // thresholds are pre-made products, not cut from stock
           for (let i = 0; i < m.qty; i++) {
@@ -1142,7 +1239,7 @@
         const allSorted = [...group.cuts].sort((a, b) => b.length - a.length);
 
         // Determine available stock lengths for this group's species from catalog
-        const section = group.materialType === "Casing" || group.materialType === "Stop" ? "casingProfiles" : "jambStock";
+        const section = group.materialType === "Casing" ? "casingProfiles" : group.materialType === "Stop" ? "stopProfiles" : "jambStock";
         const itemLabel = section === "jambStock" ? (group.jambStock ? group.jambStock.label : null) : group.profile;
         let STOCK_LENGTHS = catalog ? getAvailableLengthsForItem(catalog, group.species, section, itemLabel) : ALL_STOCK_LENGTHS;
         STOCK_LENGTHS = STOCK_LENGTHS.filter(l => ALL_STOCK_LENGTHS.includes(l)).sort((a, b) => a - b);
@@ -1288,7 +1385,7 @@
             species: eb.species || units[0]?.species || "Oak",
             finish: eb.finish || defaultFinish,
             profile: isJamb ? null : (eb.profile || null),
-            jambStock: isJamb ? (JAMB_STOCK_WIDTHS.find(j => j.label === eb.profile) || { label: eb.profile || "1x6", width: 5.5 }) : null,
+            jambStock: isJamb ? (findJambStock(eb.profile, catalog) || { label: eb.profile || "1x6", width: 5.5 }) : null,
             cuts: [],
             isExtra: true,
             extraNote: eb.note || ""
@@ -1664,7 +1761,7 @@
                 species: eb.species || units[0]?.species || "Oak",
                 finish: eb.finish || defaultFinish,
                 profile: isJamb ? null : (eb.profile || null),
-                jambStock: isJamb ? (JAMB_STOCK_WIDTHS.find(j => j.label === eb.profile) || { label: eb.profile || "1x6", width: 5.5 }) : null,
+                jambStock: isJamb ? (findJambStock(eb.profile, catalog) || { label: eb.profile || "1x6", width: 5.5 }) : null,
                 cuts: [],
                 remaining: 0,
                 isExtra: true,
@@ -1980,7 +2077,7 @@
               species: eb.species || units[0]?.species || "Oak",
               finish: eb.finish || defaultFinish,
               profile: isJamb ? null : (eb.profile || null),
-              jambStock: isJamb ? (JAMB_STOCK_WIDTHS.find(j => j.label === eb.profile) || { label: eb.profile || "1x6", width: 5.5 }) : null,
+              jambStock: isJamb ? (findJambStock(eb.profile, catalog) || { label: eb.profile || "1x6", width: 5.5 }) : null,
               isExtra: true
             });
           });
@@ -2226,7 +2323,7 @@
           <ReportHeader subtitle="Detailed Cut List" />
 
           {units.map((unit, i) => {
-            const mats = calcMaterials(unit);
+            const mats = calcMaterials(unit, catalog);
             const hasJD = unit.trimStyle !== "Stops" && unit.jambDepthWhole;
             return (
               <div key={unit.id} data-pdf-section={"unit-" + i} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
@@ -3783,7 +3880,7 @@
                         ? <input style={inp} value={globalTrim.stopProfile || ""} onChange={e => updateGlobalTrim("stopProfile", e.target.value)} placeholder="Type custom stop profile..." />
                         : <select style={sel} value={globalTrim.stopProfile || "1x4 Stop"} onChange={e => updateGlobalTrim("stopProfile", e.target.value)}>
                             <option value="None">None (no stops)</option>
-                            {getAvailableStopProfiles(globalTrim.species).map(p => (
+                            {getAvailableStopProfiles(globalTrim.species, catalog).map(p => (
                               <option key={p.label} value={p.label}>{p.label}</option>
                             ))}
                           </select>
@@ -3802,7 +3899,7 @@
                         : <select style={sel} value={globalTrim.casingProfile} onChange={e => updateGlobalTrim("casingProfile", e.target.value)}>
                             <option value="None">None (no casing)</option>
                             <option value="Customer Supplying">Customer Supplying</option>
-                            {getAvailableProfiles(globalTrim.species).map(p => {
+                            {getAvailableProfiles(globalTrim.species, catalog).map(p => {
                               const avail = isProfileAvailableInCatalog(catalog, p.label, globalTrim.species);
                               return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
                             })}
@@ -3830,10 +3927,10 @@
                           if (!globalTrim.jambDepthWhole) return "set jamb depth";
                           const jd = combineMeasurement(globalTrim.jambDepthWhole, globalTrim.jambDepthFrac);
                           const jw = jd + (offsets?.window_pf?.jamb_width || -2.75);
-                          return getJambStockWidth(jw).label;
+                          return getJambStockWidth(jw, catalog).label;
                         })()})</option>
                         <option value="Customer Supplying">Customer Supplying</option>
-                        {JAMB_STOCK_WIDTHS.filter(j => !j.traditionalOnly || (globalTrim.trimStyle || "Picture Frame") === "Traditional").map(j => (
+                        {jambStockList(catalog).filter(j => !j.traditionalOnly || (globalTrim.trimStyle || "Picture Frame") === "Traditional").map(j => (
                           <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
                         ))}
                       </select>
@@ -3886,8 +3983,8 @@
                         : <select style={sel} value={globalTrim.finish} onChange={e => updateGlobalTrim("finish", e.target.value)}>
                             <option value="">Not yet selected</option>
                             {globalTrim.finishType === "Stain"
-                              ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
-                              : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
+                              ? getStainOptions(catalog).map(s => <option key={s} value={s}>{s}</option>)
+                              : getPaintOptions(catalog).map(p => <option key={p} value={p}>{p}</option>)
                             }
                           </select>
                       }
@@ -3930,7 +4027,7 @@
               {units.map((unit, idx) => {
                 const expanded = expandedUnit === idx;
                 const complete = isUnitComplete(unit);
-                const mats = complete ? calcMaterials(unit) : [];
+                const mats = complete ? calcMaterials(unit, catalog) : [];
                 const needsJD = unit.trimStyle !== "Stops" && (unit.unitType !== "Entry Door" || unit.entryDoorJambs);
                 const needsJambDepth = unit.trimStyle !== "Stops";
                 const needsTrim = unit.unitType === "Window";
@@ -4034,7 +4131,7 @@
                               ? <input style={inp} value={unit.stopProfile || ""} onChange={e => updateUnit(idx, "stopProfile", e.target.value)} placeholder="Type custom stop profile..." />
                               : <select style={sel} value={unit.stopProfile || "1x4 Stop"} onChange={e => updateUnit(idx, "stopProfile", e.target.value)}>
                                   <option value="None">None (no stops)</option>
-                                  {getAvailableStopProfiles(unit.species).map(p => (
+                                  {getAvailableStopProfiles(unit.species, catalog).map(p => (
                                     <option key={p.label} value={p.label}>{p.label}</option>
                                   ))}
                                 </select>
@@ -4053,7 +4150,7 @@
                               : <select style={sel} value={unit.casingProfile} onChange={e => updateUnit(idx, "casingProfile", e.target.value)}>
                                   <option value="None">None (no casing)</option>
                                   <option value="Customer Supplying">Customer Supplying</option>
-                                  {getAvailableProfiles(unit.species).map(p => {
+                                  {getAvailableProfiles(unit.species, catalog).map(p => {
                                     const avail = isProfileAvailableInCatalog(catalog, p.label, unit.species);
                                     return <option key={p.label} value={p.label} disabled={!avail}>{p.label}{!avail ? " (unavailable)" : ""}</option>;
                                   })}
@@ -4090,10 +4187,10 @@
                                 if (!unit.jambDepthWhole) return "set depth";
                                 const jd = combineMeasurement(unit.jambDepthWhole, unit.jambDepthFrac);
                                 const jw = jd + (offsets?.window_pf?.jamb_width || -2.75);
-                                return getJambStockWidth(jw).label;
+                                return getJambStockWidth(jw, catalog).label;
                               })()})</option>
                               <option value="Customer Supplying">Customer Supplying</option>
-                              {JAMB_STOCK_WIDTHS.filter(j => !j.traditionalOnly || unit.trimStyle === "Traditional").map(j => (
+                              {jambStockList(catalog).filter(j => !j.traditionalOnly || unit.trimStyle === "Traditional").map(j => (
                                 <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
                               ))}
                             </select>
@@ -4132,8 +4229,8 @@
                               : <select style={sel} value={unit.finish} onChange={e => updateUnit(idx, "finish", e.target.value)}>
                                   <option value="">Not yet selected</option>
                                   {unit.finishType === "Stain"
-                                    ? STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)
-                                    : PAINTS.map(p => <option key={p} value={p}>{p}</option>)
+                                    ? getStainOptions(catalog).map(s => <option key={s} value={s}>{s}</option>)
+                                    : getPaintOptions(catalog).map(p => <option key={p} value={p}>{p}</option>)
                                   }
                                 </select>
                             }
@@ -4337,13 +4434,13 @@
                                           updateUnit(idx, "customTrimPieces", updated);
                                         }}>
                                           <optgroup label="Casing Profiles">
-                                            {CASING_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                                            {(catalog?.casingProfiles?.length ? catalog.casingProfiles : CASING_PROFILES).map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
                                           </optgroup>
                                           <optgroup label="Stop Profiles">
-                                            {STOP_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                                            {(catalog?.stopProfiles?.length ? catalog.stopProfiles : STOP_PROFILES).map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
                                           </optgroup>
                                           <optgroup label="Jamb Stock">
-                                            {JAMB_STOCK_WIDTHS.map(j => <option key={j.label} value={j.label}>{j.label}</option>)}
+                                            {jambStockList(catalog).map(j => <option key={j.label} value={j.label}>{j.label}</option>)}
                                           </optgroup>
                                         </select>
                                     }
@@ -4519,7 +4616,7 @@
                           updated[idx] = { ...eb, profile: e.target.value };
                           updateJob("extraBoards", updated);
                         }}>
-                          {JAMB_STOCK_WIDTHS.map(j => <option key={j.label} value={j.label}>{j.label}</option>)}
+                          {jambStockList(catalog).map(j => <option key={j.label} value={j.label}>{j.label}</option>)}
                         </select>
                       ) : eb.materialType === "Stop" ? (
                         <select style={sel} value={eb.profile || "1x4 Stop"} onChange={e => {
@@ -4527,7 +4624,7 @@
                           updated[idx] = { ...eb, profile: e.target.value };
                           updateJob("extraBoards", updated);
                         }}>
-                          {STOP_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                          {(catalog?.stopProfiles?.length ? catalog.stopProfiles : STOP_PROFILES).map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
                         </select>
                       ) : (
                         <select style={sel} value={eb.profile || globalTrim.casingProfile} onChange={e => {
@@ -4535,7 +4632,7 @@
                           updated[idx] = { ...eb, profile: e.target.value };
                           updateJob("extraBoards", updated);
                         }}>
-                          {CASING_PROFILES.map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
+                          {(catalog?.casingProfiles?.length ? catalog.casingProfiles : CASING_PROFILES).map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
                         </select>
                       )}
                     </div>
@@ -4569,8 +4666,8 @@
                             updated[idx] = { ...eb, finish: e.target.value };
                             updateJob("extraBoards", updated);
                           }}>
-                            {STAINS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)}
-                            {PAINTS.map(p => <option key={p} value={p}>{p}</option>)}
+                            {getStainOptions(catalog).map(s => <option key={s} value={s}>{s}</option>)}
+                            {getPaintOptions(catalog).map(p => <option key={p} value={p}>{p}</option>)}
                           </select>}
                     </div>
                   </div>
