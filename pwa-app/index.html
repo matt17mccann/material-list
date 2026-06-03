@@ -4487,6 +4487,18 @@
                               width: "100%", padding: "8px 0", border: "1px dashed #e67e22", borderRadius: 6,
                               background: "transparent", fontSize: 12, fontWeight: 700, color: "#e67e22", cursor: "pointer", marginTop: 4
                             }}>+ Add Trim Override</button>
+                            {idx === 0 && units.length > 1 && (unit.customTrimPieces || []).length > 0 && (
+                              <button onClick={() => {
+                                const pieces = unit.customTrimPieces || [];
+                                const othersHavePieces = units.some((u, i) => i !== 0 && (u.customTrimPieces || []).length > 0);
+                                if (othersHavePieces && !window.confirm("Replace the custom trim overrides on all other units with these?")) return;
+                                setUnits(prev => prev.map((u, i) => i === 0 ? u : { ...u, customTrimPieces: pieces.map(p => ({ ...p })) }));
+                                setSubmitted(false);
+                              }} style={{
+                                width: "100%", padding: "8px 0", border: "none", borderRadius: 6,
+                                background: "#e67e22", fontSize: 12, fontWeight: 700, color: "#fff", cursor: "pointer", marginTop: 6
+                              }}>Apply these overrides to all units</button>
+                            )}
                           </div>
                         )}
                         {/* Manual Materials */}
