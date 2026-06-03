@@ -3706,7 +3706,7 @@
               {savedFilter === "submitted" && (
               <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: "#888", alignSelf: "center", marginRight: 2 }}>Tech:</span>
-                {["", "Matt McCann", "Darren Williams", "Steve Cvek"].map(tech => (
+                {["", "Matt McCann", "Darren Williams", "Steve Cvek", "Tim Berg"].map(tech => (
                   <button key={tech} onClick={() => setSavedTechFilter(tech)} style={{
                     padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
                     border: savedTechFilter === tech ? "1.5px solid #2980b9" : "1px solid #ddd",
@@ -3828,6 +3828,7 @@
                       <option>Matt McCann</option>
                       <option>Darren Williams</option>
                       <option>Steve Cvek</option>
+                      <option>Tim Berg</option>
                     </select>
                   </div>
                 </div>
