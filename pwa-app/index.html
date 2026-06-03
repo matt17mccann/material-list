@@ -205,7 +205,8 @@
       return String(label).replace(/^\s*(1|3\/4|5\/4|1-1\/4)x/i, "5/8x");
     }
 
-    const FINISH_TYPES = ["Stain", "Paint"];
+    const FINISH_TYPES = ["Stain", "Paint", "No Prefinish"];
+    const TECH_MEASURERS = ["Matt McCann", "Darren Williams", "Steve Cvek", "Tim Berg"];
     const STAINS = [
       { label: "Dark Walnut (Minwax)", brand: "Minwax" },
       { label: "Golden Oak (Minwax)", brand: "Minwax" },
@@ -433,7 +434,7 @@
     }
 
     function parseRSuiteJSON(data) {
-      const jobInfo = { customerName: "", address: "", poNumber: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
+      const jobInfo = { customerName: "", address: "", poNumber: "", techMeasurer: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
 
       // Customer name
       const contact = (data.contactList || [])[0];
@@ -444,13 +445,21 @@
       const parts = [acct.ShippingStreet, acct.ShippingCity, acct.ShippingStateCode, acct.ShippingPostalCode].filter(Boolean).map(s => String(s).trim());
       jobInfo.address = parts.join(", ");
 
-      // PO number — check phone fields for values starting with R, RP, or RD
+      // PO number — lives in a phone field, formatted like R / RD / RP + digits
+      const poRe = /\bR[DP]?[-\s.]?\d[\d-]{2,}\b/i;
       const phoneFields = [
-        contact?.Phone, contact?.MobilePhone, contact?.HomePhone, contact?.Fax,
+        contact?.Phone, contact?.MobilePhone, contact?.HomePhone, contact?.OtherPhone, contact?.Fax,
         acct?.Phone, acct?.Fax
       ].filter(Boolean).map(s => String(s).trim());
-      const poMatch = phoneFields.find(p => /^R[PD]?\d/i.test(p));
-      if (poMatch) jobInfo.poNumber = poMatch;
+      let poMatch = phoneFields.map(p => (p.match(poRe) || [])[0]).find(Boolean);
+      // Fallback — scan the whole export in case it sits in a field we didn't list
+      if (!poMatch) { const m = JSON.stringify(data).match(poRe); if (m) poMatch = m[0]; }
+      if (poMatch) jobInfo.poNumber = poMatch.replace(/\s/g, "").toUpperCase();
+
+      // Tech measurer — find a known tech name anywhere in the export
+      const techBlob = JSON.stringify(data);
+      const techFound = TECH_MEASURERS.find(t => techBlob.includes(t));
+      if (techFound) jobInfo.techMeasurer = techFound;
 
       // Order items
       const oiList = data?.opptyContainer?.anOrderContainer?.oiContainerList || [];
@@ -560,7 +569,10 @@
     }
 
     function parseInstallerPackageText(text) {
-      const jobInfo = { customerName: "", address: "", poNumber: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
+      const jobInfo = { customerName: "", address: "", poNumber: "", techMeasurer: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
+
+      // --- Tech measurer: find a known tech name anywhere in the text ---
+      jobInfo.techMeasurer = TECH_MEASURERS.find(t => text.includes(t)) || "";
 
       // --- Customer name: appears after "dba:" or "RENEWAL BY ANDERSEN" header line ---
       const nameM = text.match(/(?:dba:|RENEWAL BY ANDERSEN)[^\n]*\n\s*([A-Z][a-z]+(?: [A-Z][a-z]+)+)/);
@@ -2949,6 +2961,7 @@
           if (jobInfo.customerName) updateJob("customerName", jobInfo.customerName);
           if (jobInfo.address) updateJob("address", jobInfo.address);
           if (jobInfo.poNumber) updateJob("poNumber", jobInfo.poNumber);
+          if (jobInfo.techMeasurer) updateJob("techMeasurer", jobInfo.techMeasurer);
         }
 
         // Extract job-wide trim details from the 900 line item info
@@ -3706,7 +3719,7 @@
               {savedFilter === "submitted" && (
               <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: "#888", alignSelf: "center", marginRight: 2 }}>Tech:</span>
-                {["", "Matt McCann", "Darren Williams", "Steve Cvek", "Tim Berg"].map(tech => (
+                {["", ...TECH_MEASURERS].map(tech => (
                   <button key={tech} onClick={() => setSavedTechFilter(tech)} style={{
                     padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
                     border: savedTechFilter === tech ? "1.5px solid #2980b9" : "1px solid #ddd",
@@ -3819,16 +3832,13 @@
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <div>
                     <label style={lbl}>PO Number</label>
-                    <input style={inp} value={job.poNumber} onChange={e => updateJob("poNumber", e.target.value)} placeholder="e.g. PO-12345" />
+                    <input style={inp} value={job.poNumber} onChange={e => updateJob("poNumber", e.target.value)} placeholder="e.g. PO-12345" autoCapitalize="characters" autoCorrect="off" autoComplete="off" spellCheck={false} />
                   </div>
                   <div>
                     <label style={lbl}>Tech Measurer</label>
                     <select style={sel} value={job.techMeasurer} onChange={e => updateJob("techMeasurer", e.target.value)}>
                       <option value="">Select...</option>
-                      <option>Matt McCann</option>
-                      <option>Darren Williams</option>
-                      <option>Steve Cvek</option>
-                      <option>Tim Berg</option>
+                      {TECH_MEASURERS.map(t => <option key={t}>{t}</option>)}
                     </select>
                   </div>
                 </div>
@@ -3969,7 +3979,7 @@
                           // Don't override per-unit finishes — leave them as-is
                           return;
                         }
-                        const newFinish = "";
+                        const newFinish = newType === "No Prefinish" ? "No Prefinish" : "";
                         const updated = { ...globalTrim, finishType: newType, finish: newFinish };
                         if (globalTrim.species !== "Pine") {
                           const profile = CASING_PROFILES.find(p => p.label === updated.casingProfile);
@@ -3982,7 +3992,7 @@
                         <option value="Multiple">Multiple (per unit)</option>
                       </select>
                     </div>
-                    {globalTrim.finishType !== "Multiple" && (
+                    {globalTrim.finishType !== "Multiple" && globalTrim.finishType !== "No Prefinish" && (
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <label style={lbl}>{globalTrim.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
@@ -4009,7 +4019,7 @@
                     )}
                   </div>
                   <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(109,179,68,0.12)", borderRadius: 6, border: "1px solid rgba(109,179,68,0.25)", display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#2d5016" }}>{globalTrim.finishType}: {globalTrim.finish || "Not yet selected"}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#2d5016" }}>{globalTrim.finishType === "No Prefinish" ? "No Prefinish" : `${globalTrim.finishType}: ${globalTrim.finish || "Not yet selected"}`}</span>
                   </div>
                   {/* Global Jamb Depth (not used for Stops trim) */}
                   {globalTrim.trimStyle !== "Stops" && (
@@ -4222,13 +4232,14 @@
                             <label style={lbl}>Finish Type</label>
                             <select style={sel} value={unit.finishType} onChange={e => {
                               const newType = e.target.value;
-                              const newFinish = "";
+                              const newFinish = newType === "No Prefinish" ? "No Prefinish" : "";
                               setUnits(p => p.map((u, i) => i === idx ? { ...u, finishType: newType, finish: newFinish } : u));
                             }}>
                               {FINISH_TYPES.map(t => <option key={t}>{t}</option>)}
                             </select>
                           </div>
                           {/* Finish Color */}
+                          {unit.finishType !== "No Prefinish" && (
                           <div>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                               <label style={lbl}>{unit.finishType === "Stain" ? "Stain Color" : "Paint Color"}</label>
@@ -4247,6 +4258,7 @@
                                 </select>
                             }
                           </div>
+                          )}
                           {needsThreshold && (
                             <div>
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
