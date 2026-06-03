@@ -826,7 +826,8 @@
             name: ctp.piece,
             qty: ctp.qty || 1,
             length: matchIdx >= 0 ? materials[matchIdx].length : (ctp.piece.includes("Side") ? h : w),
-            width: isJamb ? (materials[matchIdx]?.width || profileWidth) : profileWidth,
+            // Custom (typed) profile — width is unknown, so leave it blank rather than guess
+            width: ctp.customProfile ? null : (isJamb ? (materials[matchIdx]?.width || profileWidth) : profileWidth),
             thickness: explicitThickness != null ? explicitThickness : (isJamb ? t : null),
             species: ctp.species || unit.species,
             category: isJamb ? "Jamb" : (ctp.piece.includes("Stop") ? "Stop" : "Casing"),
