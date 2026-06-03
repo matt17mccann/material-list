@@ -833,6 +833,7 @@
             category: isJamb ? "Jamb" : (ctp.piece.includes("Stop") ? "Stop" : "Casing"),
             profile: isJamb ? null : ctp.profile,
             jambStock: isJamb ? (materials[matchIdx]?.jambStock || getJambStockWidth(profileWidth, catalog)) : undefined,
+            stockLengths: (ctp.stockLengths && ctp.stockLengths.length) ? ctp.stockLengths : undefined,
           };
           if (matchIdx >= 0) {
             materials[matchIdx] = override;
@@ -1231,6 +1232,7 @@
               width: m.width,
               thickness: m.thickness,
               jambStock: m.jambStock || null,
+              stockLengths: m.stockLengths || null,
               source: unit.label + (unit.location ? " (" + unit.location + ")" : ""),
               cutName: m.name,
             });
@@ -1241,7 +1243,7 @@
       // Group cuts by material type + species + finish + profile + jambStock
       const groups = {};
       allCuts.forEach(cut => {
-        const key = [cut.materialType, cut.species, cut.finish, cut.profile || "none", cut.jambStock ? cut.jambStock.label : "none"].join("|");
+        const key = [cut.materialType, cut.species, cut.finish, cut.profile || "none", cut.jambStock ? cut.jambStock.label : "none", cut.stockLengths ? cut.stockLengths.join(",") : "auto"].join("|");
         if (!groups[key]) {
           groups[key] = {
             materialType: cut.materialType,
@@ -1251,6 +1253,7 @@
             jambStock: cut.jambStock,
             width: cut.width,
             thickness: cut.thickness,
+            stockLengths: cut.stockLengths,
             cuts: []
           };
         }
@@ -1265,7 +1268,9 @@
         // Determine available stock lengths for this group's species from catalog
         const section = group.materialType === "Casing" ? "casingProfiles" : group.materialType === "Stop" ? "stopProfiles" : "jambStock";
         const itemLabel = section === "jambStock" ? (group.jambStock ? group.jambStock.label : null) : group.profile;
-        let STOCK_LENGTHS = catalog ? getAvailableLengthsForItem(catalog, group.species, section, itemLabel) : ALL_STOCK_LENGTHS;
+        let STOCK_LENGTHS = (group.stockLengths && group.stockLengths.length)
+          ? group.stockLengths
+          : (catalog ? getAvailableLengthsForItem(catalog, group.species, section, itemLabel) : ALL_STOCK_LENGTHS);
         STOCK_LENGTHS = STOCK_LENGTHS.filter(l => ALL_STOCK_LENGTHS.includes(l)).sort((a, b) => a - b);
         if (!STOCK_LENGTHS.length) STOCK_LENGTHS = ALL_STOCK_LENGTHS;
         const maxStock = STOCK_LENGTHS[STOCK_LENGTHS.length - 1];
@@ -4478,6 +4483,35 @@
                                     }} />
                                   </div>
                                 </div>
+                                {(() => {
+                                  const stockOpts = [...new Set([96, 120, 144, ...getCatalogExtraLengths(catalog)])].sort((a, b) => a - b);
+                                  const sel = ctp.stockLengths || [];
+                                  return (
+                                    <div style={{ marginTop: 6 }}>
+                                      <label style={{ ...lbl, fontSize: 10 }}>Available Lengths</label>
+                                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                        {stockOpts.map(len => {
+                                          const on = sel.includes(len);
+                                          return (
+                                            <button key={len} onClick={() => {
+                                              const cur = ctp.stockLengths || [];
+                                              const next = cur.includes(len) ? cur.filter(l => l !== len) : [...cur, len].sort((a, b) => a - b);
+                                              const updated = [...(unit.customTrimPieces || [])];
+                                              updated[ci] = { ...ctp, stockLengths: next };
+                                              updateUnit(idx, "customTrimPieces", updated);
+                                            }} style={{
+                                              padding: "3px 9px", borderRadius: 5, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                                              border: on ? "1.5px solid #e67e22" : "1px solid #ddd",
+                                              background: on ? "rgba(230,126,34,0.1)" : "#fff",
+                                              color: on ? "#e67e22" : "#999"
+                                            }}>{formatStockLabel(len)}</button>
+                                          );
+                                        })}
+                                      </div>
+                                      <div style={{ fontSize: 9, color: "#aaa", marginTop: 2 }}>{sel.length ? "Optimizer uses only these lengths" : "Auto — all available lengths"}</div>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             ))}
                             <button onClick={() => {
@@ -4492,7 +4526,7 @@
                                 const pieces = unit.customTrimPieces || [];
                                 const othersHavePieces = units.some((u, i) => i !== 0 && (u.customTrimPieces || []).length > 0);
                                 if (othersHavePieces && !window.confirm("Replace the custom trim overrides on all other units with these?")) return;
-                                setUnits(prev => prev.map((u, i) => i === 0 ? u : { ...u, customTrimPieces: pieces.map(p => ({ ...p })) }));
+                                setUnits(prev => prev.map((u, i) => i === 0 ? u : { ...u, customTrimPieces: pieces.map(p => ({ ...p, stockLengths: p.stockLengths ? [...p.stockLengths] : p.stockLengths })) }));
                                 setSubmitted(false);
                               }} style={{
                                 width: "100%", padding: "8px 0", border: "none", borderRadius: 6,
