@@ -909,6 +909,29 @@
       } catch {}
     }
 
+    // ─── PENDING SYNC QUEUE (jobs saved while offline) ───
+    // Full job payloads that failed to reach the server. Kept in their own key so
+    // they survive the localStorage cache being overwritten by a server fetch.
+    function loadPendingJobs() {
+      try {
+        const data = localStorage.getItem("cutlist_pending");
+        return data ? JSON.parse(data) : [];
+      } catch { return []; }
+    }
+    function queuePendingJob(jobData) {
+      try {
+        const pending = loadPendingJobs().filter(j => j.id !== jobData.id);
+        pending.push(jobData);
+        localStorage.setItem("cutlist_pending", JSON.stringify(pending));
+      } catch {}
+    }
+    function unqueuePendingJob(jobId) {
+      try {
+        const pending = loadPendingJobs().filter(j => j.id !== jobId);
+        localStorage.setItem("cutlist_pending", JSON.stringify(pending));
+      } catch {}
+    }
+
     // ─── SHARED STORAGE API (Netlify Blobs) ───
     // All API calls try the server first, fall back to localStorage when offline.
 
@@ -941,10 +964,29 @@
       saveJobToStorage(jobData);
       try {
         await apiRequest("/api/jobs", "POST", jobData);
+        unqueuePendingJob(jobData.id); // clear any earlier offline copy of this job
         return true;
       } catch {
+        queuePendingJob(jobData); // retry on reconnect
         return false; // saved locally only
       }
+    }
+    // Push any offline-saved jobs to the server. Returns the number synced.
+    // Stops on the first failure (still offline) and leaves the rest queued.
+    async function syncPendingJobs() {
+      const pending = loadPendingJobs();
+      if (!pending.length) return 0;
+      let synced = 0;
+      for (const job of pending) {
+        try {
+          await apiRequest("/api/jobs", "POST", job);
+          unqueuePendingJob(job.id);
+          synced++;
+        } catch {
+          break; // still offline — keep the remaining jobs queued
+        }
+      }
+      return synced;
     }
     async function deleteJobFromAPI(jobId) {
       deleteJobFromStorage(jobId);
@@ -2744,9 +2786,18 @@
       const [reportType, setReportType] = useState("checklist"); // "checklist" or "detailed"
       const pdfInputRef = useRef(null);
 
-      // Online/offline tracking
+      // Online/offline tracking — flush queued offline jobs on reconnect
       useEffect(() => {
-        const goOnline = () => setIsOnline(true);
+        const goOnline = async () => {
+          setIsOnline(true);
+          setSyncing(true);
+          const synced = await syncPendingJobs();
+          if (synced > 0) {
+            const jobs = await fetchJobsFromAPI();
+            setSavedJobs(jobs);
+          }
+          setSyncing(false);
+        };
         const goOffline = () => setIsOnline(false);
         window.addEventListener("online", goOnline);
         window.addEventListener("offline", goOffline);
@@ -2777,6 +2828,9 @@
         (async () => {
           setSyncing(true);
           try {
+            // Flush any jobs queued offline in a previous session
+            await syncPendingJobs();
+
             // Fetch catalog from API, seed defaults if not yet on server
             const apiCatalog = await fetchCatalogFromAPI();
             if (apiCatalog) {
