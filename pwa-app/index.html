@@ -3054,6 +3054,8 @@
           // Allow the (re)submitted PDF to be pushed to the joblist app again.
           joblistPushed.delete(jobId);
           setSubmitted(true);
+          // Back button from the report should return to the Submitted Jobs list, not drafts.
+          setSavedFilter("submitted");
         } else {
           alert(synced ? "Job saved!" : "Job saved locally (offline)");
         }
