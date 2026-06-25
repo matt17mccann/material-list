@@ -1438,6 +1438,70 @@
       return { boards: allBoards, summary, STOCK_LABELS };
     }
 
+    // Normalize the job's extra boards into the same shape optimizeBoards emits, so
+    // they can be aggregated alongside unit boards (shared by checklist + Board Summary).
+    function normalizeExtraBoards(extraBoards, units, catalog) {
+      if (!extraBoards || !extraBoards.length) return [];
+      const defaultFinish = units[0]?.finish || "";
+      return extraBoards.map(eb => {
+        const stockLen = parseInt(eb.stockLength) || 120;
+        const isJamb = eb.materialType === "Jamb Extension";
+        return {
+          stockLength: stockLen,
+          materialType: eb.materialType || "Casing",
+          species: eb.species || units[0]?.species || "Oak",
+          finish: eb.finish || defaultFinish,
+          profile: isJamb ? null : (eb.profile || null),
+          jambStock: isJamb ? (findJambStock(eb.profile, catalog) || { label: eb.profile || "1x6", width: 5.5 }) : null,
+          isExtra: true,
+        };
+      });
+    }
+
+    // Aggregate boards into checklist line items: { category, description, quantity, length },
+    // grouped by material type + species + profile/stock + length (+ finish when showFinish).
+    function aggregateBoardGroups(boards, STOCK_LABELS, showFinish) {
+      const boardGroups = {};
+      boards.forEach(board => {
+        const isStool = board.cuts && board.cuts.some(c => c.cutName && (c.cutName.includes("Stool") || c.cutName.includes("Sill")));
+        const isJamb = board.materialType === "Jamb Extension" && !isStool;
+        const isApron = board.materialType === "Apron";
+        const finishTag = showFinish && board.finish ? ` — ${board.finish}` : "";
+        let label, cat;
+        if (isStool) {
+          const stockLabel = fixBasswoodThickness(board.species, board.jambStock ? board.jambStock.label : "5/8x6");
+          label = `Stool - ${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}${finishTag}`;
+          cat = "STOOL";
+        } else if (isJamb) {
+          const stockLabel = fixBasswoodThickness(board.species, board.jambStock ? board.jambStock.label : "5/8x6");
+          label = `${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}${finishTag}`;
+          cat = "JAMB MATERIAL";
+        } else if (isApron) {
+          const profile = fixBasswoodThickness(board.species, board.profile || "Casing");
+          label = `Apron - ${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
+          cat = `${board.species.toUpperCase()} APRON`;
+        } else if (board.materialType === "Stop") {
+          const profile = fixBasswoodThickness(board.species, board.profile || "Stop");
+          label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
+          cat = `${board.species.toUpperCase()} STOP`;
+        } else {
+          const profile = fixBasswoodThickness(board.species, board.profile || "Casing");
+          label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
+          cat = `${board.species.toUpperCase()} CASING`;
+        }
+        const key = cat + "|" + label;
+        if (!boardGroups[key]) boardGroups[key] = { category: cat, description: label, quantity: 0, length: STOCK_LABELS[board.stockLength] };
+        boardGroups[key].quantity++;
+      });
+      const catOrder = { "JAMB MATERIAL": 0, "STOOL": 1 }; // apron/casing/stop sort after by name
+      const getCatOrder = (c) => catOrder[c] ?? (c.endsWith("APRON") ? 3 : 2);
+      return Object.values(boardGroups).sort((a, b) => {
+        const oa = getCatOrder(a.category), ob = getCatOrder(b.category);
+        if (oa !== ob) return oa - ob;
+        return a.description.localeCompare(b.description);
+      });
+    }
+
     function BoardSummary({ units, catalog, optimizePerUnit, extraBoards, boardWaste }) {
       const result = optimizeBoards(units, catalog, optimizePerUnit, boardWaste);
       const boards = [...result.boards];
@@ -2137,22 +2201,7 @@
         const STOCK_LABELS = result.STOCK_LABELS;
 
         // Append extra boards to the board list for aggregation
-        if (job.extraBoards && job.extraBoards.length > 0) {
-          const defaultFinish = units[0]?.finish || "";
-          job.extraBoards.forEach(eb => {
-            const stockLen = parseInt(eb.stockLength) || 120;
-            const isJamb = eb.materialType === "Jamb Extension";
-            boards.push({
-              stockLength: stockLen,
-              materialType: eb.materialType || "Casing",
-              species: eb.species || units[0]?.species || "Oak",
-              finish: eb.finish || defaultFinish,
-              profile: isJamb ? null : (eb.profile || null),
-              jambStock: isJamb ? (findJambStock(eb.profile, catalog) || { label: eb.profile || "1x6", width: 5.5 }) : null,
-              isExtra: true
-            });
-          });
-        }
+        boards.push(...normalizeExtraBoards(job.extraBoards, units, catalog));
 
         const rows = [];
 
@@ -2190,50 +2239,8 @@
           rows.push({ category: "THRESHOLD", description: desc, quantity: qty });
         });
 
-        // Aggregate boards by material type + species + finish (if toggle on) + stock length
-        const showFinish = job.showFinishOnChecklist;
-        const boardGroups = {};
-        boards.forEach(board => {
-          const isStool = board.cuts && board.cuts.some(c => c.cutName && (c.cutName.includes("Stool") || c.cutName.includes("Sill")));
-          const isJamb = board.materialType === "Jamb Extension" && !isStool;
-          const isApron = board.materialType === "Apron";
-          const finishTag = showFinish && board.finish ? ` — ${board.finish}` : "";
-          let label, cat;
-          if (isStool) {
-            const stockLabel = fixBasswoodThickness(board.species, board.jambStock ? board.jambStock.label : "5/8x6");
-            label = `Stool - ${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}${finishTag}`;
-            cat = "STOOL";
-          } else if (isJamb) {
-            const stockLabel = fixBasswoodThickness(board.species, board.jambStock ? board.jambStock.label : "5/8x6");
-            label = `${board.species} ${stockLabel}x${STOCK_LABELS[board.stockLength]}${finishTag}`;
-            cat = "JAMB MATERIAL";
-          } else if (isApron) {
-            const profile = fixBasswoodThickness(board.species, board.profile || "Casing");
-            label = `Apron - ${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
-            cat = `${board.species.toUpperCase()} APRON`;
-          } else if (board.materialType === "Stop") {
-            const profile = fixBasswoodThickness(board.species, board.profile || "Stop");
-            label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
-            cat = `${board.species.toUpperCase()} STOP`;
-          } else {
-            // Casing — e.g. "Oak (C115) Colonial Casing 2-1/2" - 10'"
-            const profile = fixBasswoodThickness(board.species, board.profile || "Casing");
-            label = `${board.species} ${profile} - ${STOCK_LABELS[board.stockLength]}${finishTag}`;
-            cat = `${board.species.toUpperCase()} CASING`;
-          }
-          const key = cat + "|" + label;
-          if (!boardGroups[key]) boardGroups[key] = { category: cat, description: label, quantity: 0, length: STOCK_LABELS[board.stockLength] };
-          boardGroups[key].quantity++;
-        });
-
-        // Sort: jamb material first, stool, then casing/apron/stop
-        const catOrder = { "JAMB MATERIAL": 0, "STOOL": 1 }; // apron/casing/stop sort after by name
-        const getCatOrder = (c) => catOrder[c] ?? (c.endsWith("APRON") ? 3 : 2);
-        const sortedGroups = Object.values(boardGroups).sort((a, b) => {
-          const oa = getCatOrder(a.category), ob = getCatOrder(b.category);
-          if (oa !== ob) return oa - ob;
-          return a.description.localeCompare(b.description);
-        });
+        // Aggregate boards into checklist line items (shared with the Board Summary preview)
+        const sortedGroups = aggregateBoardGroups(boards, STOCK_LABELS, job.showFinishOnChecklist);
 
         // Insert a blank separator between coils and boards if both exist
         const hasExtras = rows.length > 0;
@@ -2418,7 +2425,6 @@
                       <th style={{ textAlign: "left", padding: "7px 12px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Material</th>
                       <th style={{ textAlign: "center", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Qty</th>
                       <th style={{ textAlign: "center", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Length</th>
-                      <th style={{ textAlign: "center", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Width</th>
                       <th style={{ textAlign: "center", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Thickness</th>
                     </tr>
                   </thead>
@@ -2435,7 +2441,6 @@
                           <td style={{ padding: "6px 12px" }}>{m.species ? `${m.species} ${m.name}` : m.name}</td>
                           <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 600 }}>{m.qty}</td>
                           <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{toFraction(m.length)}"</td>
-                          <td style={{ textAlign: "center", padding: "6px 8px" }}>{m.width != null ? toFraction(m.width) + '"' : "—"}</td>
                           <td style={{ textAlign: "center", padding: "6px 8px" }}>{thicknessDisplay}</td>
                         </tr>
                       );
@@ -2445,7 +2450,6 @@
                         <td style={{ padding: "6px 12px" }}>{mm.description} <span style={{ fontSize: 10, color: "#b87333", fontWeight: 700 }}>MANUAL</span></td>
                         <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 600 }}>{mm.qty}</td>
                         <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#b87333" }}>{mm.length ? toFraction(mm.length) + '"' : "—"}</td>
-                        <td style={{ textAlign: "center", padding: "6px 8px" }}>—</td>
                         <td style={{ textAlign: "center", padding: "6px 8px" }}>—</td>
                       </tr>
                     ))}
@@ -3342,6 +3346,14 @@
           updateCatalog({ ...catalog, [section]: arr });
         };
 
+        // Profile face width (inches) — drives board packing and future preboxing/miter math
+        const setItemWidth = (section, index, value) => {
+          const v = parseFloat(value);
+          const arr = [...catalog[section]];
+          arr[index] = { ...arr[index], width: Number.isFinite(v) && v > 0 ? v : null };
+          updateCatalog({ ...catalog, [section]: arr });
+        };
+
         const AvailGrid = ({ item, index, section }) => {
           const gridKey = `${section}-${index}`;
           const open = expandedCatalogItem === gridKey;
@@ -3387,6 +3399,19 @@
               </div>
               {open && (
                 <div style={{ padding: "0 16px 14px" }}>
+                  {section === "casingProfiles" && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0 4px" }}>
+                      <label style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>Width (in)</label>
+                      <input
+                        type="number" step="0.125" min="0"
+                        defaultValue={item.width != null ? item.width : ""}
+                        onBlur={e => setItemWidth(section, index, e.target.value)}
+                        placeholder="e.g. 2.5"
+                        style={{ width: 90, padding: "6px 8px", border: "1px solid #ddd", borderRadius: 5, fontSize: 13 }}
+                      />
+                      <span style={{ fontSize: 11, color: "#888" }}>Used for preboxing / miter math</span>
+                    </div>
+                  )}
                   <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
@@ -3943,13 +3968,21 @@
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     {/* Casing Species */}
                     <div>
-                      <label style={lbl}>Casing Species</label>
-                      <select style={sel} value={globalTrim.species} onChange={e => updateGlobalTrim("species", e.target.value)}>
-                        {SPECIES.map(s => {
-                          const avail = isSpeciesAvailableInCatalog(catalog, s);
-                          return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
-                        })}
-                      </select>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <label style={lbl}>Casing Species</label>
+                        <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                          <input type="checkbox" checked={!!customMode.globalSpecies} onChange={() => setCustomMode(p => ({ ...p, globalSpecies: !p.globalSpecies }))} style={{ width: 13, height: 13 }} /> Custom
+                        </label>
+                      </div>
+                      {customMode.globalSpecies
+                        ? <input style={inp} value={globalTrim.species} onChange={e => updateGlobalTrim("species", e.target.value)} placeholder="Type custom species..." />
+                        : <select style={sel} value={globalTrim.species} onChange={e => updateGlobalTrim("species", e.target.value)}>
+                            {SPECIES.map(s => {
+                              const avail = isSpeciesAvailableInCatalog(catalog, s);
+                              return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
+                            })}
+                          </select>
+                      }
                     </div>
                     {/* Casing / Stop Profile */}
                     {globalTrim.trimStyle === "Stops" ? (
@@ -3994,13 +4027,21 @@
                     {/* Jamb Species + Material (not used for Stops trim) */}
                     {globalTrim.trimStyle !== "Stops" && (
                     <div>
-                      <label style={lbl}>Jamb Species</label>
-                      <select style={sel} value={globalTrim.jambSpecies || globalTrim.species} onChange={e => { setJambSpeciesManuallySet(true); updateGlobalTrim("jambSpecies", e.target.value); }}>
-                        {SPECIES.map(s => {
-                          const avail = isSpeciesAvailableInCatalog(catalog, s);
-                          return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
-                        })}
-                      </select>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <label style={lbl}>Jamb Species</label>
+                        <label style={{ fontSize: 10, color: "#999", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                          <input type="checkbox" checked={!!customMode.globalJambSp} onChange={() => setCustomMode(p => ({ ...p, globalJambSp: !p.globalJambSp }))} style={{ width: 13, height: 13 }} /> Custom
+                        </label>
+                      </div>
+                      {customMode.globalJambSp
+                        ? <input style={inp} value={globalTrim.jambSpecies || globalTrim.species} onChange={e => { setJambSpeciesManuallySet(true); updateGlobalTrim("jambSpecies", e.target.value); }} placeholder="Type custom species..." />
+                        : <select style={sel} value={globalTrim.jambSpecies || globalTrim.species} onChange={e => { setJambSpeciesManuallySet(true); updateGlobalTrim("jambSpecies", e.target.value); }}>
+                            {SPECIES.map(s => {
+                              const avail = isSpeciesAvailableInCatalog(catalog, s);
+                              return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
+                            })}
+                          </select>
+                      }
                     </div>
                     )}
                     {globalTrim.trimStyle !== "Stops" && (
@@ -4406,7 +4447,6 @@
                                   <th style={{ textAlign: "left", padding: "6px 10px", fontWeight: 700, color: "#6DB344", fontSize: 11 }}>Material</th>
                                   <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Qty</th>
                                   <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Length</th>
-                                  <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Width</th>
                                   <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Stock</th>
                                   <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Thick</th>
                                   <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Profile</th>
@@ -4418,7 +4458,6 @@
                                     <td style={{ padding: "7px 10px", fontWeight: 500 }}>{m.species ? `${m.species} ${m.name}` : m.name}</td>
                                     <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 600 }}>{m.qty}</td>
                                     <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 700, color: "#6DB344" }}>{toFraction(m.length)}"</td>
-                                    <td style={{ textAlign: "center", padding: "7px 6px", color: "#666" }}>{m.width != null ? toFraction(m.width) + '"' : "—"}</td>
                                     <td style={{ textAlign: "center", padding: "7px 6px", color: "#666", fontWeight: m.jambStock ? 600 : 400 }}>{m.jambStock ? m.jambStock.label : "—"}</td>
                                     <td style={{ textAlign: "center", padding: "7px 6px", color: "#666" }}>{m.thickness != null ? toFraction(m.thickness) + '"' : "—"}</td>
                                     <td style={{ textAlign: "center", padding: "7px 6px", color: "#666", fontSize: 11 }}>{m.profile || "—"}</td>
@@ -5043,6 +5082,8 @@
                 const allBoards = [...unitBoards, ...extraBoardEntries];
                 const summary = {};
                 allBoards.forEach(b => { summary[b.stockLength] = (summary[b.stockLength] || 0) + 1; });
+                // Same aggregation the submitted checklist uses, so this preview matches it
+                const groups = aggregateBoardGroups([...unitBoards, ...normalizeExtraBoards(job.extraBoards || [], units, catalog)], STOCK_LABELS, job.showFinishOnChecklist);
                 return (
                   <div style={{ padding: "12px 16px" }}>
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
@@ -5060,6 +5101,20 @@
                         </div>
                       ))}
                     </div>
+                    {groups.length > 0 && (
+                      <div style={{ marginTop: 4, background: "#fff", border: "1px solid #E8E8E8", borderRadius: 6, padding: "8px 12px" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Material List</div>
+                        {groups.map((g, i) => {
+                          const newCat = i > 0 && groups[i - 1].category !== g.category;
+                          return (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, color: "#333", padding: "3px 0", borderTop: i === 0 ? "none" : (newCat ? "1px solid #e8e8e8" : "1px solid #f6f6f6") }}>
+                              <span>{g.description}</span>
+                              <span style={{ fontWeight: 700, color: "#6DB344", whiteSpace: "nowrap" }}>×{g.quantity}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     {extraBoardEntries.length > 0 && (
                       <div style={{ marginTop: 10, background: "#fff", border: "1px solid #E8E8E8", borderRadius: 6, padding: "8px 12px" }}>
                         <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>Extras included</div>
