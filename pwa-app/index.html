@@ -160,7 +160,8 @@
       }).slice().sort((a, b) => a.width - b.width);
     }
     function findJambStock(label, catalog) {
-      return jambStockList(catalog).find(j => j.label === label) || null;
+      const resolvedLabel = JAMB_STOCK_RENAMES[label] || label;
+      return jambStockList(catalog).find(j => j.label === resolvedLabel) || null;
     }
     function getJambStockWidth(neededWidth, catalog) {
       const list = jambStockList(catalog);
@@ -562,58 +563,26 @@
 
     // ─── PDF TEXT PARSER (RBA Installer Package) ───
     function parseFraction(str) {
-      // "95-7/8" -> { whole: 95, frac: 0.875 }  |  "95" -> { whole: 95, frac: 0 }
-      const m = String(str).match(/^(\d+)-(\d+)\/(\d+)$/);
+      // "95-7/8" or "95 7/8" -> { whole: 95, frac: 0.875 }  |  "95" -> { whole: 95, frac: 0 }
+      const s = String(str).trim();
+      let m = s.match(/^(\d+)[-\s]+(\d+)\/(\d+)/);
       if (m) return { whole: parseInt(m[1]), frac: parseInt(m[2]) / parseInt(m[3]) };
-      return { whole: parseInt(str) || 0, frac: 0 };
+      m = s.match(/^(\d+)\/(\d+)/);
+      if (m) return { whole: 0, frac: parseInt(m[1]) / parseInt(m[2]) };
+      return { whole: parseInt(s) || 0, frac: 0 };
     }
 
-    function parseInstallerPackageText(text) {
-      const jobInfo = { customerName: "", address: "", poNumber: "", techMeasurer: "", trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
+    // Decimal fraction -> display label ("0.5625" -> "-9/16"), for showing parsed sizes
+    function fracSuffix(frac) {
+      if (!frac) return "";
+      const f = FRACTIONS.find(f => f.value && Math.abs(f.value - frac) < 1 / 64);
+      return f ? `-${f.label}` : `-${frac}`;
+    }
 
-      // --- Tech measurer: find a known tech name anywhere in the text ---
-      jobInfo.techMeasurer = TECH_MEASURERS.find(t => text.includes(t)) || "";
-
-      // --- Customer name: appears after "dba:" or "RENEWAL BY ANDERSEN" header line ---
-      const nameM = text.match(/(?:dba:|RENEWAL BY ANDERSEN)[^\n]*\n\s*([A-Z][a-z]+(?: [A-Z][a-z]+)+)/);
-      if (nameM) jobInfo.customerName = nameM[1].trim();
-
-      // --- Address: street number + street name + city/state/zip ---
-      const addrM = text.match(/(\d+\s+[^\n,]{5,60}(?:Road|Rd|Avenue|Ave|Street|St|Drive|Dr|Lane|Ln|Way|Court|Ct|Blvd|County Road|Cty Rd)[^\n]*)\s*\n\s*([A-Za-z][\w\s]+,\s*[A-Z]{2}\s+\d{5})/i);
-      if (addrM) jobInfo.address = `${addrM[1].trim()}, ${addrM[2].trim()}`;
-
-      // --- PO number: starts with R, RD, or RP followed by digits, often near phone numbers ---
-      const poM = text.match(/\b(R[PD]?\d[\d-]{3,15})\b/i);
-      if (poM) jobInfo.poNumber = poM[1].toUpperCase();
-
-      // --- Species (from 900 line) ---
-      const specPatterns = [
-        [/\bwhite\s+oak\b/i, "Oak"], [/\bred\s+oak\b/i, "Oak"],
-        [/\boak\b/i, "Oak"], [/\bpine\b/i, "Pine"], [/\bmaple\b/i, "Maple"],
-        [/\bbasswood\b/i, "Basswood"], [/\bpoplar\b/i, "Poplar"],
-      ];
-      for (const [pat, sp] of specPatterns) { if (pat.test(text)) { jobInfo.species = sp; break; } }
-
-      // --- Casing profile (from 900 line) ---
-      const casingMap = [
-        [/\bC-?115\b/i, '2-1/2" Colonial (C115)'], [/\bC-?118\b/i, '2-1/2" Colonial (C118)'],
-        [/\bH-?115\b/i, '2-1/4" Colonial (H115)'], [/lakeside/i, '2-1/2" Lakeside Colonial (RBA-Lside-2.5)'],
-        [/3[\s.-]?1\/4.{0,8}colonial/i, '3-1/4" Colonial (RBA-Col-3.25)'],
-        [/2[\s.-]?1\/2.{0,8}colonial/i, '2-1/2" Colonial (C115)'],
-        [/2[\s.-]?1\/4.{0,8}colonial/i, '2-1/4" Colonial (H115)'],
-        [/2[\s.-]?1\/2.{0,8}flat/i, '2-1/2" Flat (RBA-Flat-2.5)'], [/3[\s.-]?1\/4.{0,8}flat/i, '3-1/4" Flat (RBA-Flat-3.25)'],
-        [/2[\s.-]?1\/2.{0,8}ranch/i, '2-1/2" Ranch'], [/2[\s.-]?1\/4.{0,8}ranch/i, '2-1/4" Ranch'],
-        [/knotty[\s-]?pine/i, '1x4 Knotty Pine'],
-        [/\bS4S[\s-]?3[\s.]?5\b/i, '5/8x4 (RBA-S4S-3.5)'], [/\b1x4[\s-]?S4S\b/i, '5/8x4 (RBA-S4S-3.5)'],
-        [/\bS4S[\s-]?2[\s.]?5\b/i, '5/8x3 (RBA-S4S-2.5)'], [/\b1x3[\s-]?S4S\b/i, '5/8x3 (RBA-S4S-2.5)'],
-        [/\bRBA[\s-]?S4S\b/i, '5/8x4 (RBA-S4S-3.5)'],
-        [/\b1x4\b.*\b(flat|s4s)\b/i, '5/8x4 (RBA-S4S-3.5)'], [/\b1x3\b.*\b(flat|s4s)\b/i, '5/8x3 (RBA-S4S-2.5)'],
-      ];
-      for (const [pat, label] of casingMap) { if (pat.test(text)) { jobInfo.casingProfile = label; break; } }
-
-      // --- Trim style ---
-      if (/picture[\s-]?frame/i.test(text)) jobInfo.trimStyle = "Picture Frame";
-      else if (/traditional/i.test(text)) jobInfo.trimStyle = "Traditional";
+    // Shared trim-detail detection (species / casing / trim style / finish) used by
+    // both the Installer Package PDF and Measured Project CSV importers.
+    function detectTrimDetails(text) {
+      const out = { trimStyle: "Picture Frame", species: "Oak", casingProfile: '2-1/2" Colonial (C115)', finishNote: "" };
 
       // --- Finish note (stains first with fuzzy matching, then paints) ---
       const stainPats = [
@@ -634,62 +603,261 @@
         [/\bdark\s*bronze\b/i, "RBA Dark Bronze"],
       ];
       let finishFound = false;
-      for (const [pat, label] of stainPats) { if (pat.test(text)) { jobInfo.finishNote = label; finishFound = true; break; } }
-      if (!finishFound) { for (const [pat, label] of paintPats) { if (pat.test(text)) { jobInfo.finishNote = label; finishFound = true; break; } } }
+      for (const [pat, label] of stainPats) { if (pat.test(text)) { out.finishNote = label; finishFound = true; break; } }
+      if (!finishFound) { for (const [pat, label] of paintPats) { if (pat.test(text)) { out.finishNote = label; break; } } }
+
+      // --- Species — strip stain color names first so e.g. "Honey Maple" or
+      // "Golden Oak" (stain colors) don't read as wood species ---
+      let speciesText = text;
+      for (const [pat] of stainPats) speciesText = speciesText.replace(new RegExp(pat.source, "gi"), " ");
+      const specPatterns = [
+        [/\bwhite\s+oak\b/i, "Oak"], [/\bred\s+oak\b/i, "Oak"],
+        [/\boak\b/i, "Oak"], [/\bpine\b/i, "Pine"], [/\bmaple\b/i, "Maple"],
+        [/\bbasswood\b/i, "Basswood"], [/\bpoplar\b/i, "Poplar"],
+      ];
+      for (const [pat, sp] of specPatterns) { if (pat.test(speciesText)) { out.species = sp; break; } }
+
+      // --- Casing profile ---
+      const casingMap = [
+        [/\bC-?115\b/i, '2-1/2" Colonial (C115)'], [/\bC-?118\b/i, '2-1/2" Colonial (C118)'],
+        [/\bH-?115\b/i, '2-1/4" Colonial (H115)'], [/lakeside/i, '2-1/2" Lakeside Colonial (RBA-Lside-2.5)'],
+        [/3[\s.-]?1\/4.{0,8}colonial/i, '3-1/4" Colonial (RBA-Col-3.25)'],
+        [/2[\s.-]?1\/2.{0,8}colonial/i, '2-1/2" Colonial (C115)'],
+        [/2[\s.-]?1\/4.{0,8}colonial/i, '2-1/4" Colonial (H115)'],
+        [/2[\s.-]?1\/2.{0,8}flat/i, '2-1/2" Flat (RBA-Flat-2.5)'], [/3[\s.-]?1\/4.{0,8}flat/i, '3-1/4" Flat (RBA-Flat-3.25)'],
+        [/2[\s.-]?1\/2.{0,8}ranch/i, '2-1/2" Ranch'], [/2[\s.-]?1\/4.{0,8}ranch/i, '2-1/4" Ranch'],
+        [/knotty[\s-]?pine/i, '1x4 Knotty Pine'],
+        [/\bS4S[\s-]?3[\s.]?5\b/i, '5/8x4 (RBA-S4S-3.5)'], [/\b1x4[\s-]?S4S\b/i, '5/8x4 (RBA-S4S-3.5)'],
+        [/\bS4S[\s-]?2[\s.]?5\b/i, '5/8x3 (RBA-S4S-2.5)'], [/\b1x3[\s-]?S4S\b/i, '5/8x3 (RBA-S4S-2.5)'],
+        [/\bRBA[\s-]?S4S\b/i, '5/8x4 (RBA-S4S-3.5)'],
+        [/\b1x4\b.*\b(flat|s4s)\b/i, '5/8x4 (RBA-S4S-3.5)'], [/\b1x3\b.*\b(flat|s4s)\b/i, '5/8x3 (RBA-S4S-2.5)'],
+      ];
+      for (const [pat, label] of casingMap) { if (pat.test(text)) { out.casingProfile = label; break; } }
+
+      // --- Trim style (mitered corners = picture frame) ---
+      if (/picture[\s-]?frame|\bmiter/i.test(text)) out.trimStyle = "Picture Frame";
+      else if (/traditional|stool\s*(?:and|&|\/)\s*apron/i.test(text)) out.trimStyle = "Traditional";
+
+      return out;
+    }
+
+    // ─── CSV PARSER (rSuite Measured Project export) ───
+    // rSuite CSV exports are UTF-16 (usually without a BOM) — sniff the encoding.
+    function decodeTextBuffer(u8) {
+      let enc = "utf-8";
+      if (u8[0] === 0xFF && u8[1] === 0xFE) enc = "utf-16le";
+      else if (u8[0] === 0xFE && u8[1] === 0xFF) enc = "utf-16be";
+      else {
+        let nulEven = 0, nulOdd = 0;
+        const n = Math.min(u8.length, 4000);
+        for (let i = 0; i < n; i++) { if (u8[i] === 0) (i % 2 ? nulOdd++ : nulEven++); }
+        if (nulOdd > n / 8) enc = "utf-16le";
+        else if (nulEven > n / 8) enc = "utf-16be";
+      }
+      return new TextDecoder(enc).decode(u8);
+    }
+
+    function splitCSVLine(line) {
+      const out = [];
+      let cur = "", inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inQ) {
+          if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+          else cur += ch;
+        } else if (ch === '"' && cur.trim() === "") { inQ = true; }
+        else if (ch === ",") { out.push(cur.trim()); cur = ""; }
+        else cur += ch;
+      }
+      out.push(cur.trim());
+      return out;
+    }
+
+    function parseMeasuredProjectCSV(text) {
+      const jobInfo = { customerName: "", address: "", poNumber: "", techMeasurer: "", ...detectTrimDetails(text) };
+      const rows = text.split(/\r\n|\r|\n/).map(splitCSVLine);
+
+      // Job header: a "Project ID, Address, ..." row followed by the values row.
+      const headIdx = rows.findIndex(r => /^project\s*id/i.test(r[0] || ""));
+      if (headIdx >= 0 && rows[headIdx + 1]) {
+        const keys = rows[headIdx].map(k => k.toLowerCase().replace(/\s+/g, " ").trim());
+        const vals = rows[headIdx + 1];
+        const get = (name) => { const i = keys.indexOf(name); return i >= 0 ? (vals[i] || "").trim() : ""; };
+        jobInfo.customerName = get("primary contact");
+        jobInfo.address = [get("address"), get("city"), (get("state") + " " + get("zip")).trim()].filter(Boolean).join(", ");
+        jobInfo.techMeasurer = get("tech measure");
+      }
+      if (!jobInfo.techMeasurer) jobInfo.techMeasurer = TECH_MEASURERS.find(t => text.includes(t)) || "";
+
+      // Unit sections: each starts with a "Unit ID #, ..." header row naming its columns.
+      const found = new Map();
+      let cols = null;
+      for (const r of rows.slice(headIdx >= 0 ? headIdx + 2 : 0)) {
+        const first = r[0] || "";
+        // Secondary/other-quote sections repeat units with shuffled columns — the
+        // sold (measured) section above them is the authoritative one.
+        if (/^(secondary|other)\b.*quote/i.test(first)) break;
+        if (/^unit\s*id/i.test(first)) {
+          cols = {};
+          r.forEach((name, i) => { const k = name.toLowerCase().replace(/\s+/g, " ").trim(); if (k && !(k in cols)) cols[k] = i; });
+          continue;
+        }
+        if (!cols || !/^\d{1,4}[Ss]?$/.test(first)) continue;
+        const uid = first;
+        if (/[Ss]$/.test(uid)) continue; // storm door — no trim
+        const idNum = parseInt(uid, 10);
+        if (!idNum || idNum >= 900) continue; // misc / job-level line items
+        const val = (...names) => { for (const n of names) { const i = cols[n]; if (i != null && r[i]) return r[i]; } return ""; };
+        const w = parseFraction(val("final width", "measured width", "interior width", "width"));
+        const h = parseFraction(val("final height", "measured height", "interior height", "height"));
+        if (w.whole + w.frac < 10 || h.whole + h.frac < 10) continue;
+        const typeStr = val("type") + " " + val("style") + " " + val("configuration");
+        let unitType = "Window";
+        if (/entry/i.test(typeStr)) unitType = "Entry Door";
+        else if (/patio|gliding|sliding|french/i.test(typeStr)) unitType = "Patio Door";
+        const jd = parseFraction(val("jamb depth"));
+        const hasJd = jd.whole + jd.frac >= 2 && jd.whole + jd.frac <= 12;
+        if (!found.has(uid)) {
+          found.set(uid, {
+            unitType, label: uid, location: val("room name", "room"),
+            widthWhole: w.whole, widthFrac: w.frac, heightWhole: h.whole, heightFrac: h.frac,
+            jambDepthWhole: hasJd ? jd.whole : null, jambDepthFrac: hasJd ? jd.frac : null,
+          });
+        }
+      }
+
+      const units = Array.from(found.values()).sort((a, b) => parseInt(a.label) - parseInt(b.label));
+      if (/extension jamb/i.test(text)) units.forEach(u => { if (u.unitType === "Entry Door") u.entryDoorJambs = true; });
+      return { jobInfo, units };
+    }
+
+    function parseInstallerPackageText(text) {
+      const jobInfo = { customerName: "", address: "", poNumber: "", techMeasurer: "", ...detectTrimDetails(text) };
+
+      // --- Tech measurer: find a known tech name anywhere in the text ---
+      jobInfo.techMeasurer = TECH_MEASURERS.find(t => text.includes(t)) || "";
+
+      // --- Address: street number + street name + city/state/zip ---
+      const addrM = text.match(/(\d+\s+[^\n,]{5,60}(?:Road|Rd|Avenue|Ave|Street|St|Drive|Dr|Lane|Ln|Way|Court|Ct|Blvd|County Road|Cty Rd)[^\n]*)\s*\n\s*([A-Za-z][\w\s]+,\s*[A-Z]{2}\s+\d{5})/i);
+      if (addrM) jobInfo.address = `${addrM[1].trim()}, ${addrM[2].trim()}`;
+
+      // --- Customer name: the line directly above the street address ---
+      if (addrM) {
+        const lines = text.slice(0, addrM.index).split("\n").map(l => l.trim()).filter(Boolean);
+        const cand = lines[lines.length - 1] || "";
+        if (/^[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){1,3}$/.test(cand) && !/renewal|andersen|legal|solutions|inc\b|llc\b/i.test(cand)) {
+          jobInfo.customerName = cand;
+        }
+      }
+      // Fallback: name printed after the "dba:" header line (never the "Legal Name:" line)
+      if (!jobInfo.customerName) {
+        const nameM = text.match(/(?:dba:|RENEWAL BY ANDERSEN)[^\n]*\n\s*(?!Legal\b)([A-Z][a-z]+(?: [A-Z][a-z]+)+)/);
+        if (nameM) jobInfo.customerName = nameM[1].trim();
+      }
+
+      // --- PO number: starts with R, RD, or RP followed by digits, often near phone numbers ---
+      const poM = text.match(/\b(R[PD]?\d[\d-]{3,15})\b/i);
+      if (poM) jobInfo.poNumber = poM[1].toUpperCase();
 
       // --- Units ---
-      // Match size pairs: "95-7/8" 59-1/4"" or "96" 59"" (two adjacent quoted dimensions)
-      // Also try W/H format as fallback: "95-7/8" W 59-1/4" H"
-      const sizeRe = /(\d+(?:-\d+\/\d+)?)"\s+(\d+(?:-\d+\/\d+)?)"/g;
-      const sizeReAlt = /(\d+(?:-\d+\/\d+)?)"?\s+W\s+(\d+(?:-\d+\/\d+)?)"?\s+H/g;
+      // Unit IDs are 3-digit numbers at the start of a line (001–899, "S" suffix = storm door)
+      const idPat = /(?:^|\n)[ \t]*(\d{3}[Ss]?)\b/g;
+      const FRAC = '(\\d+(?:[-\\s]\\d+\\/\\d+)?)';
+      // Labeled sizes ('37-9/16" W  81-1/2" H' or '37 9/16" W x 81 1/2" H') are unambiguous
+      // and carry the measured size — always prefer them.
+      const sizeLabeled = new RegExp(FRAC + '"?\\s*W\\s*(?:x\\s*)?' + FRAC + '"?\\s*H\\b', "g");
+      // Two adjacent quoted dimensions — fallback for older package layouts. In newer
+      // order summaries this can pair stacked exact/measured widths, so it never
+      // overwrites a labeled match.
+      const sizePlain = new RegExp(FRAC + '"\\s+' + FRAC + '"', "g");
       const found = new Map();
+      const allIds = [...text.matchAll(idPat)];
+      // Nearest unit ID to a size match: last ID within 600 chars before it, else first within 400 after
+      function nearestId(pos) {
+        let b = -1, a = -1;
+        for (let i = 0; i < allIds.length; i++) {
+          if (allIds[i].index < pos) b = i;
+          else { a = i; break; }
+        }
+        if (b >= 0 && pos - allIds[b].index <= 600) return { i: b, side: "before" };
+        if (a >= 0 && allIds[a].index - pos <= 400) return { i: a, side: "after" };
+        return null;
+      }
 
-      function extractUnitsFromRegex(re) {
+      function extractUnitsFromRegex(re, labeled) {
         let sm;
-        // Use a stricter ID pattern: 3-digit number NOT inside a phone number
-        const idPat = /(?:^|\n)\s*([1-8]\d\d[Ss]?)\b/g;
         while ((sm = re.exec(text)) !== null) {
           const w = parseFraction(sm[1]), h = parseFraction(sm[2]);
           // Skip tiny/zero dimensions (headers, misc lines)
           if (w.whole + w.frac < 10 || h.whole + h.frac < 10) continue;
-          // Look back 600 chars AND forward 400 chars for the nearest unit ID (100–899)
-          const before = text.substring(Math.max(0, sm.index - 600), sm.index);
-          const after = text.substring(sm.index, Math.min(text.length, sm.index + 400));
-          const idsBefore = [...before.matchAll(idPat)];
-          const idsAfter = [...after.matchAll(idPat)];
-          // Pick closest ID: last one before, or first one after
-          const idM = idsBefore.length > 0 ? idsBefore[idsBefore.length - 1] : idsAfter.length > 0 ? idsAfter[0] : null;
-          if (!idM) continue;
+          const near = nearestId(sm.index);
+          if (!near) continue;
+          const idM = allIds[near.i];
           const uid = idM[1];
           if (/[Ss]$/.test(uid)) continue; // storm door — no trim details needed
-          if (parseInt(uid) >= 900) continue;
+          const idNum = parseInt(uid, 10);
+          if (!idNum || idNum >= 900) continue;
 
-          // Unit type: scan nearby text
-          const ctx = before.slice(-300) + text.substring(sm.index, sm.index + 200);
+          // Unit type + jamb depth: scan this unit's own block only — clip at the
+          // neighboring unit IDs so packed order summaries don't bleed into each other
+          const blockStart = near.side === "before"
+            ? idM.index + idM[0].length
+            : Math.max(near.i > 0 ? allIds[near.i - 1].index + allIds[near.i - 1][0].length : 0, sm.index - 600);
+          const nextId = allIds[near.i + 1];
+          const blockEnd = Math.min(nextId ? nextId.index : text.length, sm.index + 1200);
+          const ctx = text.slice(blockStart, blockEnd);
           let unitType = "Window";
           if (/entry[\s-]?door/i.test(ctx)) unitType = "Entry Door";
           else if (/patio[\s-]?door/i.test(ctx)) unitType = "Patio Door";
 
-          // Room: look for common room names nearby
-          let location = "";
-          const rooms = ["Living","Dining","Kitchen","Master Bedroom","Bedroom","Bathroom","Bath","Office","Family","Garage","Basement","Sunroom","Laundry","Hallway","Entry","Foyer","Den","Loft"];
-          for (const r of rooms) {
-            if (new RegExp("\\b" + r + "\\b", "i").test(ctx)) { location = r; break; }
+          const jdM = ctx.match(/Jamb\s*Depth:?\s*(\d+(?:[-\s]\d+\/\d+)?)/i);
+          const jd = jdM ? parseFraction(jdM[1]) : null;
+          const hasJd = jd && jd.whole + jd.frac >= 2 && jd.whole + jd.frac <= 12;
+
+          // Room: the text between the unit ID and its size is the room name
+          // ("001  Downstairs  37-9/16"..." or "001 \nDownstairs \n37-9/16" W").
+          // That rule only applies when the ID sits *before* the size.
+          let location = "", roomConfident = false;
+          if (near.side === "before") {
+            const between = text.slice(idM.index + idM[0].length, sm.index).replace(/\s+/g, " ").trim();
+            if (/^[A-Za-z][A-Za-z0-9 /'&-]{1,29}$/.test(between) && !/misc|window|door|unit|job|page|notes/i.test(between)) {
+              location = between;
+              roomConfident = true;
+            }
+          }
+          if (!location) {
+            const rooms = ["Living","Dining","Kitchen","Master Bedroom","Bedroom","Bathroom","Bath","Office","Family Room","Garage","Basement","Downstairs","Upstairs","Sunroom","Laundry","Mudroom","Hallway","Entry(?!\\s*Door)","Foyer","Den","Loft","Porch","Nook","Stairway"];
+            for (const r of rooms) {
+              const m = ctx.match(new RegExp("\\b" + r + "\\b", "i"));
+              if (m) { location = m[0]; break; }
+            }
           }
 
-          // Prefer fractional sizes over whole-inch sizes
+          const prev = found.get(uid);
+          // Labeled sizes always win; within the same tier prefer fractional sizes
           const hasFrac = w.frac > 0 || h.frac > 0;
-          if (!found.has(uid) || hasFrac) {
-            found.set(uid, { unitType, label: uid, location, widthWhole: w.whole, widthFrac: w.frac, heightWhole: h.whole, heightFrac: h.frac, jambDepthWhole: null, jambDepthFrac: null });
+          if (prev && prev.labeled && !labeled) continue;
+          if (!prev || (labeled && !prev.labeled) || hasFrac) {
+            // A room read straight off the unit's own line beats a nearby-text guess
+            if (prev && prev.roomConfident && !roomConfident) { location = prev.location; roomConfident = true; }
+            found.set(uid, {
+              unitType, label: uid, location, roomConfident, labeled,
+              widthWhole: w.whole, widthFrac: w.frac, heightWhole: h.whole, heightFrac: h.frac,
+              jambDepthWhole: hasJd ? jd.whole : (prev?.jambDepthWhole ?? null),
+              jambDepthFrac: hasJd ? jd.frac : (prev?.jambDepthFrac ?? null),
+            });
+          } else if (prev && hasJd && prev.jambDepthWhole == null) {
+            prev.jambDepthWhole = jd.whole; prev.jambDepthFrac = jd.frac;
           }
         }
       }
 
-      // Try primary format first (adjacent quoted dimensions), then W/H format as fallback
-      extractUnitsFromRegex(sizeRe);
-      if (found.size === 0) extractUnitsFromRegex(sizeReAlt);
+      extractUnitsFromRegex(sizeLabeled, true);
+      extractUnitsFromRegex(sizePlain, false);
 
       const units = Array.from(found.values()).sort((a, b) => parseInt(a.label) - parseInt(b.label));
+      units.forEach(u => { delete u.labeled; delete u.roomConfident; });
+      if (/extension jamb/i.test(text)) units.forEach(u => { if (u.unitType === "Entry Door") u.entryDoorJambs = true; });
       return { jobInfo, units };
     }
 
@@ -2969,6 +3137,10 @@
             }
             const text = await zip.files[jsonFile].async("string");
             data = processJSONText(text);
+          } else if (ext === "csv") {
+            // ── CSV (rSuite Measured Project export — usually UTF-16) ──
+            const buf = new Uint8Array(await file.arrayBuffer());
+            data = parseMeasuredProjectCSV(decodeTextBuffer(buf));
           } else if (ext === "json") {
             // ── JSON (rSuite DL Export) — use FileReader for max Safari compatibility ──
             const text = await new Promise((resolve, reject) => {
@@ -3004,7 +3176,7 @@
           }
 
           if (!data.units || !data.units.length) {
-            alert("No units found in this file.\n\nSupported formats:\n• rSuite DL Export (.json or .zip)\n• RBA Installer Package (.pdf)");
+            alert("No units found in this file.\n\nSupported formats:\n• rSuite DL Export (.json or .zip)\n• rSuite Measured Project (.csv)\n• RBA Installer Package (.pdf)");
             setPdfParsing(false);
             return;
           }
@@ -3069,6 +3241,7 @@
           if (u.heightFrac != null) nu.heightFrac = u.heightFrac;
           if (u.jambDepthWhole != null) nu.jambDepthWhole = u.jambDepthWhole;
           if (u.jambDepthFrac != null) nu.jambDepthFrac = u.jambDepthFrac;
+          if (u.entryDoorJambs != null) nu.entryDoorJambs = u.entryDoorJambs;
           return nu;
         });
         // If only the default empty unit exists, replace it; otherwise append
@@ -3895,7 +4068,7 @@
                   color: "#fff", cursor: pdfParsing ? "wait" : "pointer", flexShrink: 0
                 }}>{pdfParsing ? "Extracting..." : "Upload File"}</button>
               </div>
-              <input ref={pdfInputRef} type="file" accept=".pdf,.json,.zip" onChange={handleFileUpload} style={{ display: "none" }} />
+              <input ref={pdfInputRef} type="file" accept=".pdf,.json,.zip,.csv" onChange={handleFileUpload} style={{ display: "none" }} />
             </div>
 
             {/* Job Info */}
@@ -4854,7 +5027,7 @@
                   flex: 1, minWidth: 100, padding: "12px 0", border: "none", borderRadius: 8,
                   background: "#6DB344", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
                 }}>+ Casing</button>
-                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Jamb Extension", species: globalTrim.jambSpecies || globalTrim.species, profile: "1x6", stockLength: "120", finish: globalTrim.finish, note: "" }])} style={{
+                <button onClick={() => updateJob("extraBoards", [...(job.extraBoards || []), { materialType: "Jamb Extension", species: globalTrim.jambSpecies || globalTrim.species, profile: "5/8x6", stockLength: "120", finish: globalTrim.finish, note: "" }])} style={{
                   flex: 1, minWidth: 100, padding: "12px 0", border: "none", borderRadius: 8,
                   background: "#6DB344", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
                 }}>+ Jamb</button>
@@ -5241,8 +5414,9 @@
                         }}>{u.unitType || "Window"}</span>
                       </div>
                       <div style={{ fontSize: 13, color: "#555", display: "flex", gap: 12, flexWrap: "wrap" }}>
-                        <span>W: <b>{u.widthWhole || 0}{u.widthFrac ? `-${u.widthFrac}"` : `"`}</b></span>
-                        <span>H: <b>{u.heightWhole || 0}{u.heightFrac ? `-${u.heightFrac}"` : `"`}</b></span>
+                        <span>W: <b>{u.widthWhole || 0}{fracSuffix(u.widthFrac)}"</b></span>
+                        <span>H: <b>{u.heightWhole || 0}{fracSuffix(u.heightFrac)}"</b></span>
+                        {u.jambDepthWhole != null ? <span>Jamb: <b>{u.jambDepthWhole}{fracSuffix(u.jambDepthFrac)}"</b></span> : null}
                       </div>
                     </div>
                   ))}
