@@ -870,10 +870,10 @@
       const materials = [];
 
       const skipCasing = unit.casingProfile === "None" || unit.casingProfile === "Customer Supplying";
-      const skipJambs = unit.jambMaterial === "Customer Supplying";
+      const skipJambs = unit.jambMaterial === "None" || unit.jambMaterial === "Customer Supplying";
       const jambSp = unit.jambSpecies || unit.species;
       // Manual jamb material override — use selected stock instead of auto-calculating
-      const manualJambStock = unit.jambMaterial && unit.jambMaterial !== "Customer Supplying"
+      const manualJambStock = unit.jambMaterial && !skipJambs
         ? findJambStock(unit.jambMaterial, catalog) : null;
       const resolveJambStock = (calcWidth) => manualJambStock || getJambStockWidth(calcWidth, catalog);
       const resolveJambWidth = (calcWidth) => manualJambStock ? manualJambStock.width : calcWidth;
@@ -1056,10 +1056,11 @@
 
     function isUnitComplete(u) {
       if (!u.heightWhole || !u.widthWhole) return false;
-      // Jamb depth isn't needed for Stops trim, nor for entry doors without
-      // extension jambs — mirror the editor's needsJD logic, otherwise these
-      // units can never be complete and get silently dropped from the calc.
-      const needsJD = u.trimStyle !== "Stops" && (u.unitType !== "Entry Door" || u.entryDoorJambs);
+      // Jamb depth isn't needed for Stops trim, for entry doors without
+      // extension jambs, or when jambs are "None" — mirror the editor's needsJD
+      // logic, otherwise these units can never be complete and get silently
+      // dropped from the calc.
+      const needsJD = u.trimStyle !== "Stops" && (u.unitType !== "Entry Door" || u.entryDoorJambs) && u.jambMaterial !== "None";
       if (needsJD && !u.jambDepthWhole) return false;
       return true;
     }
@@ -3442,8 +3443,26 @@
         setShowBayMaterial((mergedJob.bayMaterials || []).length > 0);
         // Restore sameTrim by detecting whether all units share the same trim
         setSameTrim(detectSameTrim(savedUnits));
-        // Restore "Custom" toggles for any unit field whose value isn't in the standard list
-        setCustomMode(detectCustomModeFromUnits(savedUnits));
+        // Restore "Custom" toggles for any unit field whose value isn't in the
+        // standard list — including the GLOBAL trim toggles and extra boards,
+        // otherwise a custom species renders as a blank/wrong select after load
+        const cm = detectCustomModeFromUnits(savedUnits);
+        const g = saved.globalTrim || savedUnits[0] || {};
+        const speciesSet = new Set(SPECIES);
+        const casingLabels = new Set(CASING_PROFILES.map(p => p.label));
+        const stopLabels = new Set(STOP_PROFILES.map(p => p.label));
+        const stainLabels = new Set(STAINS.map(s => s.label));
+        const paintLabels = new Set(PAINTS);
+        if (g.species && !speciesSet.has(g.species)) cm.globalSpecies = true;
+        if (g.jambSpecies && !speciesSet.has(g.jambSpecies)) cm.globalJambSp = true;
+        const gCasing = g.casingProfile ? normalizeCasingProfile(g.casingProfile) : "";
+        if (gCasing && gCasing !== "None" && gCasing !== "Customer Supplying" && !casingLabels.has(gCasing)) cm.globalCasing = true;
+        if (g.stopProfile && g.stopProfile !== "None" && !stopLabels.has(g.stopProfile)) cm.globalStop = true;
+        if (g.finish && g.finish !== "Multiple" && g.finish !== "No Prefinish" && !stainLabels.has(g.finish) && !paintLabels.has(g.finish)) cm.globalFinish = true;
+        (mergedJob.extraBoards || []).forEach((eb, i) => {
+          if (eb.species && !speciesSet.has(eb.species)) cm["eb_species_" + i] = true;
+        });
+        setCustomMode(cm);
         if (goToReport) {
           setSubmitted(saved.submitted === true);
           setReportType("checklist");
@@ -4238,6 +4257,7 @@
                       {customMode.globalSpecies
                         ? <input style={inp} value={globalTrim.species} onChange={e => updateGlobalTrim("species", e.target.value)} placeholder="Type custom species..." />
                         : <select style={sel} value={globalTrim.species} onChange={e => updateGlobalTrim("species", e.target.value)}>
+                            {globalTrim.species && !SPECIES.includes(globalTrim.species) && <option value={globalTrim.species}>{globalTrim.species} (custom)</option>}
                             {SPECIES.map(s => {
                               const avail = isSpeciesAvailableInCatalog(catalog, s);
                               return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
@@ -4297,6 +4317,7 @@
                       {customMode.globalJambSp
                         ? <input style={inp} value={globalTrim.jambSpecies || globalTrim.species} onChange={e => { setJambSpeciesManuallySet(true); updateGlobalTrim("jambSpecies", e.target.value); }} placeholder="Type custom species..." />
                         : <select style={sel} value={globalTrim.jambSpecies || globalTrim.species} onChange={e => { setJambSpeciesManuallySet(true); updateGlobalTrim("jambSpecies", e.target.value); }}>
+                            {(() => { const v = globalTrim.jambSpecies || globalTrim.species; return v && !SPECIES.includes(v) ? <option value={v}>{v} (custom)</option> : null; })()}
                             {SPECIES.map(s => {
                               const avail = isSpeciesAvailableInCatalog(catalog, s);
                               return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
@@ -4315,6 +4336,7 @@
                           const jw = jd + (offsets?.window_pf?.jamb_width || -2.75);
                           return getJambStockWidth(jw, catalog).label;
                         })()})</option>
+                        <option value="None">None (no jambs)</option>
                         <option value="Customer Supplying">Customer Supplying</option>
                         {jambStockList(catalog).filter(j => !j.traditionalOnly || (globalTrim.trimStyle || "Picture Frame") === "Traditional").map(j => (
                           <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
@@ -4497,6 +4519,7 @@
                                   setUnits(p => p.map((u, i) => i === idx ? { ...u, ...updates } : u));
                                   setSubmitted(false);
                                 }}>
+                                  {unit.species && !SPECIES.includes(unit.species) && <option value={unit.species}>{unit.species} (custom)</option>}
                                   {SPECIES.map(s => {
                                     const avail = isSpeciesAvailableInCatalog(catalog, s);
                                     return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
@@ -4556,6 +4579,7 @@
                             {customMode["jambSp_"+idx]
                               ? <input style={inp} value={unit.jambSpecies || unit.species} onChange={e => updateUnit(idx, "jambSpecies", e.target.value)} placeholder="Type custom species..." />
                               : <select style={sel} value={unit.jambSpecies || unit.species} onChange={e => updateUnit(idx, "jambSpecies", e.target.value)}>
+                                  {(() => { const v = unit.jambSpecies || unit.species; return v && !SPECIES.includes(v) ? <option value={v}>{v} (custom)</option> : null; })()}
                                   {SPECIES.map(s => {
                                     const avail = isSpeciesAvailableInCatalog(catalog, s);
                                     return <option key={s} value={s} disabled={!avail}>{s}{!avail ? " (unavailable)" : ""}</option>;
@@ -4575,6 +4599,7 @@
                                 const jw = jd + (offsets?.window_pf?.jamb_width || -2.75);
                                 return getJambStockWidth(jw, catalog).label;
                               })()})</option>
+                              <option value="None">None (no jambs)</option>
                               <option value="Customer Supplying">Customer Supplying</option>
                               {jambStockList(catalog).filter(j => !j.traditionalOnly || unit.trimStyle === "Traditional").map(j => (
                                 <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
@@ -5010,6 +5035,7 @@
                             updated[idx] = { ...eb, species: e.target.value };
                             updateJob("extraBoards", updated);
                           }}>
+                            {(() => { const v = eb.species || globalTrim.species; return v && !SPECIES.includes(v) ? <option value={v}>{v} (custom)</option> : null; })()}
                             {SPECIES.map(s => <option key={s}>{s}</option>)}
                           </select>}
                     </div>
