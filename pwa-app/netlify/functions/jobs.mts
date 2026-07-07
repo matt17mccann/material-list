@@ -14,11 +14,12 @@ export default async (req: Request, context: Context) => {
       return new Response(JSON.stringify(job));
     }
 
-    // List all jobs — return summaries
+    // List all jobs — fetch blobs in parallel (sequential reads made this
+    // endpoint scale linearly with job count and lag several seconds)
     const { blobs } = await store.list();
+    const results = await Promise.all(blobs.map((blob) => store.get(blob.key, { type: "json" }).catch(() => null)));
     const jobs: any[] = [];
-    for (const blob of blobs) {
-      const data = await store.get(blob.key, { type: "json" });
+    for (const data of results) {
       if (data) {
         jobs.push({
           id: data.id,

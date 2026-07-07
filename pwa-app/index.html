@@ -987,20 +987,27 @@
           // Find and replace matching piece, or add as new
           const aliases = HEAD_CASING_ALIASES.includes(ctp.piece) ? HEAD_CASING_ALIASES : [ctp.piece];
           const matchIdx = materials.findIndex(m => aliases.includes(m.name));
-          const profileWidth = getProfileWidth(ctp.profile, catalog) || getStopProfileWidth(ctp.profile, catalog) || 3.5;
           const isJamb = ctp.piece.includes("Jamb") || ctp.piece.includes("Stool") || ctp.piece.includes("Sill");
+          // Resolve the selected profile explicitly: jamb-stock labels for jamb/stool
+          // pieces, then casing, then stop profiles. (getProfileWidth alone always
+          // falls back to a number, which made the stop lookup unreachable and
+          // silently ignored a picked jamb stock like "3/4x10".)
+          const jambStockOverride = isJamb ? findJambStock(ctp.profile, catalog) : null;
+          const casingMatch = catalog?.casingProfiles?.find(p => p.label === ctp.profile) || CASING_PROFILES.find(p => p.label === ctp.profile);
+          const stopMatch = catalog?.stopProfiles?.find(p => p.label === ctp.profile) || STOP_PROFILES.find(p => p.label === ctp.profile);
+          const profileWidth = jambStockOverride?.width ?? casingMatch?.width ?? stopMatch?.width ?? 3.5;
           const explicitThickness = ctp.thickness ? parseFloat(ctp.thickness) : null;
           const override = {
             name: ctp.piece,
             qty: ctp.qty || 1,
             length: matchIdx >= 0 ? materials[matchIdx].length : (ctp.piece.includes("Side") ? h : w),
             // Custom (typed) profile — width is unknown, so leave it blank rather than guess
-            width: ctp.customProfile ? null : (isJamb ? (materials[matchIdx]?.width || profileWidth) : profileWidth),
+            width: ctp.customProfile ? null : (isJamb ? (jambStockOverride?.width ?? materials[matchIdx]?.width ?? profileWidth) : profileWidth),
             thickness: explicitThickness != null ? explicitThickness : (isJamb ? t : null),
             species: ctp.species || unit.species,
             category: isJamb ? "Jamb" : (ctp.piece.includes("Stop") ? "Stop" : "Casing"),
             profile: isJamb ? null : ctp.profile,
-            jambStock: isJamb ? (materials[matchIdx]?.jambStock || getJambStockWidth(profileWidth, catalog)) : undefined,
+            jambStock: isJamb ? (jambStockOverride || materials[matchIdx]?.jambStock || getJambStockWidth(profileWidth, catalog)) : undefined,
             stockLengths: (ctp.stockLengths && ctp.stockLengths.length) ? ctp.stockLengths : undefined,
           };
           if (matchIdx >= 0) {
@@ -1049,8 +1056,11 @@
 
     function isUnitComplete(u) {
       if (!u.heightWhole || !u.widthWhole) return false;
-      // Stops trim style doesn't need jamb depth
-      if (u.trimStyle !== "Stops" && !u.jambDepthWhole) return false;
+      // Jamb depth isn't needed for Stops trim, nor for entry doors without
+      // extension jambs — mirror the editor's needsJD logic, otherwise these
+      // units can never be complete and get silently dropped from the calc.
+      const needsJD = u.trimStyle !== "Stops" && (u.unitType !== "Entry Door" || u.entryDoorJambs);
+      if (needsJD && !u.jambDepthWhole) return false;
       return true;
     }
 
@@ -1117,26 +1127,36 @@
     // Jobs API
     async function fetchJobsFromAPI() {
       try {
-        const jobs = await apiRequest("/api/jobs");
-        // Cache to localStorage for offline fallback
-        if (Array.isArray(jobs)) {
-          localStorage.setItem("cutlist_jobs", JSON.stringify(jobs.slice(0, 50)));
+        let jobs = await apiRequest("/api/jobs");
+        if (!Array.isArray(jobs)) jobs = [];
+        // Pending local edits (offline saves or in-flight posts) are newer than
+        // the server copy — overlay them so a fetch can't clobber unsynced work
+        const pending = loadPendingJobs();
+        if (pending.length) {
+          const byId = new Map(jobs.map(j => [j.id, j]));
+          pending.forEach(p => byId.set(p.id, p));
+          jobs = [...byId.values()].sort((a, b) => (b.savedAt || "").localeCompare(a.savedAt || ""));
+          // The server is clearly reachable — flush the queue in the background
+          syncPendingJobs();
         }
-        return jobs || [];
+        // Cache to localStorage for offline fallback
+        localStorage.setItem("cutlist_jobs", JSON.stringify(jobs.slice(0, 50)));
+        return jobs;
       } catch {
         return loadSavedJobs(); // offline fallback
       }
     }
     async function saveJobToAPI(jobData) {
-      // Always save to localStorage as backup
+      // Always save to localStorage as backup. Queue BEFORE the POST so a
+      // concurrent fetch overlays this copy instead of resurrecting the old one.
       saveJobToStorage(jobData);
+      queuePendingJob(jobData);
       try {
         await apiRequest("/api/jobs", "POST", jobData);
-        unqueuePendingJob(jobData.id); // clear any earlier offline copy of this job
+        unqueuePendingJob(jobData.id); // server confirmed — no longer pending
         return true;
       } catch {
-        queuePendingJob(jobData); // retry on reconnect
-        return false; // saved locally only
+        return false; // stays queued — retried on reconnect / next fetch
       }
     }
     // Push any offline-saved jobs to the server. Returns the number synced.
@@ -1158,6 +1178,7 @@
     }
     async function deleteJobFromAPI(jobId) {
       deleteJobFromStorage(jobId);
+      unqueuePendingJob(jobId); // never let a queued offline save resurrect a deleted job
       try {
         await apiRequest("/api/jobs?id=" + encodeURIComponent(jobId), "DELETE");
         return true;
@@ -1433,7 +1454,7 @@
           if (m.category === "Threshold") return; // thresholds are pre-made products, not cut from stock
           for (let i = 0; i < m.qty; i++) {
             allCuts.push({
-              length: m.length + MIN_CUTOFF, // add 5" for bad ends
+              length: m.length, // bad-end waste is reserved once per board, not per cut
               rawLength: m.length,
               materialType: m.name.includes("Jamb") || m.name.includes("Sill") || m.name.includes("Stool") ? "Jamb Extension" : m.name.includes("Apron") ? "Apron" : m.category === "Stop" ? "Stop" : "Casing",
               species: m.species,
@@ -1490,17 +1511,18 @@
         // (ceil of needed length over the max board) so quantities are never short.
         const splicedBoards = [];
         const sorted = [];
+        const usableMax = Math.max(1, maxStock - MIN_CUTOFF); // per-board waste reserve
         allSorted.forEach(cut => {
-          if (cut.length > maxStock) {
-            const n = Math.ceil(cut.length / maxStock);
+          if (cut.length > usableMax) {
+            const n = Math.ceil(cut.length / usableMax);
             let remainingLen = cut.length;
             for (let i = 0; i < n; i++) {
-              const seg = Math.min(remainingLen, maxStock);
+              const seg = Math.min(remainingLen, usableMax);
               remainingLen -= seg;
               splicedBoards.push({
                 stockLength: maxStock,
                 cuts: [{ ...cut, rawLength: seg, length: seg, source: `${cut.source} (spliced ${i + 1}/${n} of ${toFraction(cut.rawLength)}")` }],
-                remaining: maxStock - seg,
+                remaining: usableMax - seg,
                 materialType: group.materialType,
                 species: group.species,
                 finish: group.finish,
@@ -1542,19 +1564,19 @@
               bestBoard.cuts.push(cut);
               bestBoard.remaining -= (cut.length + KERF);
             } else {
-              // New board needed - pick best stock length
+              // New board needed - pick best stock length (reserving per-board waste)
               let stockLength;
-              if (preferredStock && preferredStock >= cut.length) {
+              if (preferredStock && preferredStock - MIN_CUTOFF >= cut.length) {
                 stockLength = preferredStock;
               } else {
                 // Pick smallest that fits
-                stockLength = STOCK_LENGTHS.find(s => s >= cut.length);
+                stockLength = STOCK_LENGTHS.find(s => s - MIN_CUTOFF >= cut.length);
                 if (!stockLength) stockLength = STOCK_LENGTHS[STOCK_LENGTHS.length - 1];
               }
               boards.push({
                 stockLength,
                 cuts: [cut],
-                remaining: stockLength - cut.length,
+                remaining: stockLength - MIN_CUTOFF - cut.length,
                 materialType: group.materialType,
                 species: group.species,
                 finish: group.finish,
@@ -1566,10 +1588,10 @@
             }
           });
 
-          // Downsize boards where possible
+          // Downsize boards where possible (cuts + kerf + the per-board waste reserve)
           boards.forEach(board => {
             const kerfTotal = Math.max(0, board.cuts.length - 1) * KERF;
-            const totalUsed = board.cuts.reduce((sum, c) => sum + c.length, 0) + kerfTotal;
+            const totalUsed = board.cuts.reduce((sum, c) => sum + c.length, 0) + kerfTotal + MIN_CUTOFF;
             for (const sl of STOCK_LENGTHS) {
               if (sl >= totalUsed) {
                 board.stockLength = sl;
@@ -1635,18 +1657,38 @@
         if (!mm.description) return;
         unitTotals[mm.description] = (unitTotals[mm.description] || 0) + (mm.qty || 1);
       }));
-      const rows = [];
-      const seen = new Set();
+      // Sum duplicate job-level rows by description (each dupe would otherwise
+      // re-emit the full unit total), keeping the first row's category and order
+      const jobTotals = {};
+      const jobCats = {};
       (extraMaterials || []).forEach(item => {
         if (!item.description) return;
-        seen.add(item.description);
-        const qty = unitTotals[item.description] != null ? unitTotals[item.description] : (item.quantity || 1);
-        rows.push({ category: item.category || "Other", description: item.description, quantity: qty });
+        jobTotals[item.description] = (jobTotals[item.description] || 0) + (item.quantity || 1);
+        if (!jobCats[item.description]) jobCats[item.description] = item.category || "Other";
+      });
+      const rows = [];
+      Object.keys(jobTotals).forEach(desc => {
+        rows.push({ category: jobCats[desc], description: desc, quantity: unitTotals[desc] != null ? unitTotals[desc] : jobTotals[desc] });
       });
       Object.keys(unitTotals).forEach(desc => {
-        if (!seen.has(desc)) rows.push({ category: "Other", description: desc, quantity: unitTotals[desc] });
+        if (jobTotals[desc] == null) rows.push({ category: "Other", description: desc, quantity: unitTotals[desc] });
       });
       return rows;
+    }
+
+    // Jobs saved before the unit-extras fix printed unit-attached materials as a
+    // single job-level line whose quantity never updated (stuck at 1). Flag any
+    // saved job where the unit totals disagree with the job-level entry the old
+    // report would have printed, so the team can double-check what went out.
+    function jobHasSuspectExtras(saved) {
+      const totals = {};
+      (saved.units || []).forEach(u => (u.manualMaterials || []).forEach(mm => {
+        if (!mm.description) return;
+        totals[mm.description] = (totals[mm.description] || 0) + (mm.qty || 1);
+      }));
+      const jobLevel = {};
+      (((saved.job || {}).extraMaterials) || []).forEach(m => { if (m.description) jobLevel[m.description] = m.quantity || 1; });
+      return Object.keys(totals).some(d => jobLevel[d] != null && jobLevel[d] !== totals[d]);
     }
 
     // Aggregate boards into checklist line items: { category, description, quantity, length },
@@ -2593,7 +2635,10 @@
           <ReportHeader subtitle="Detailed Cut List" />
 
           {units.map((unit, i) => {
-            const mats = calcMaterials(unit, catalog);
+            // Match the board optimizer's gates: storm doors get no trim, and
+            // incomplete units would render garbage lengths from missing dims
+            const excluded = isStormDoor(unit) || !isUnitComplete(unit);
+            const mats = excluded ? [] : calcMaterials(unit, catalog);
             const hasJD = unit.trimStyle !== "Stops" && unit.jambDepthWhole;
             return (
               <div key={unit.id} data-pdf-section={"unit-" + i} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
@@ -2621,6 +2666,13 @@
                     </tr>
                   </thead>
                   <tbody>
+                    {excluded && (
+                      <tr>
+                        <td colSpan={4} style={{ padding: "8px 12px", fontStyle: "italic", color: "#999" }}>
+                          {isStormDoor(unit) ? "Storm door — no trim materials" : "Incomplete unit — not included in material list"}
+                        </td>
+                      </tr>
+                    )}
                     {mats.map((m, j) => {
                       let thicknessDisplay = "—";
                       if (m.thickness != null) {
@@ -3090,7 +3142,9 @@
       };
       const removeUnit = (idx) => { if (units.length <= 1) return; setUnits(p => p.filter((_, i) => i !== idx)); };
       const duplicateUnit = (idx) => {
-        const c = { ...units[idx], id: Date.now() + Math.random(), label: `${units[idx].label} (copy)` };
+        // Deep copy — a shallow spread would share nested arrays (manualMaterials,
+        // customTrimPieces) by reference between the original and the copy
+        const c = { ...structuredClone(units[idx]), id: Date.now() + Math.random(), label: `${units[idx].label} (copy)` };
         setUnits(p => [...p.slice(0, idx + 1), c, ...p.slice(idx + 1)]);
         setExpandedUnit(idx + 1);
       };
@@ -3280,7 +3334,8 @@
         setView("editor");
       };
 
-      const allComplete = units.every(isUnitComplete);
+      // Storm doors need no trim (every calc path skips them) — don't let one block submission
+      const allComplete = units.every(u => isStormDoor(u) || isUnitComplete(u));
 
       const startNewJob = () => {
         setSameTrim(true);
@@ -3303,16 +3358,19 @@
         const status = isSubmit ? "submitted" : (existing?.status === "complete" ? "in_progress" : (existing?.status || "in_progress"));
         const submitted = isSubmit ? true : (existing?.submitted || false);
         const data = { id: jobId, job, units, globalTrim, savedAt: new Date().toISOString(), status, submitted, starred: existing?.starred || false };
-        const synced = await saveJobToAPI(data);
-        const jobs = await fetchJobsFromAPI();
-        setSavedJobs(jobs);
+        // Optimistic: update the local list immediately instead of refetching
+        // everything from the server. Failed server writes land in the offline
+        // pending queue and sync on reconnect, so the UI never has to wait.
+        setSavedJobs(prev => [data, ...prev.filter(j => j.id !== data.id)]);
         if (isSubmit) {
           // Allow the (re)submitted PDF to be pushed to the joblist app again.
           joblistPushed.delete(jobId);
           setSubmitted(true);
           // Back button from the report should return to the Submitted Jobs list, not drafts.
           setSavedFilter("submitted");
+          saveJobToAPI(data); // background sync — no need to block the UI
         } else {
+          const synced = await saveJobToAPI(data);
           alert(synced ? "Job saved!" : "Job saved locally (offline)");
         }
       };
@@ -3400,9 +3458,9 @@
       const loadJob = (saved) => applySavedJob(saved, { goToReport: false });
 
       const deleteJob = async (id) => {
-        await deleteJobFromAPI(id);
-        const jobs = await fetchJobsFromAPI();
-        setSavedJobs(jobs);
+        // Optimistic: drop it from the list immediately, delete on the server in background
+        setSavedJobs(prev => prev.filter(j => j.id !== id));
+        deleteJobFromAPI(id);
       };
 
       const updateJobMeta = (savedJob, updates) => {
@@ -3938,6 +3996,11 @@
                     {s.job.techMeasurer ? ` • ${s.job.techMeasurer}` : ""}
                   </div>
                   {s.job.address && <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>{s.job.address}</div>}
+                  {jobHasSuspectExtras(s) && (
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#c0392b", marginTop: 4 }}>
+                      ⚠ Extra material qty may be wrong on the original report — reopen to verify
+                    </div>
+                  )}
                 </div>
 
                 {/* Complete + Delete */}
@@ -5108,20 +5171,31 @@
                 <span style={{ width: 22, height: 22, background: "#6DB344", color: "#fff", borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>6</span>
                 Extra Materials
               </div>
-              {(job.extraMaterials || []).map((item, idx) => (
+              {(job.extraMaterials || []).map((item, idx) => {
+                // When units carry the same material, their summed qty drives the
+                // report — show that instead of a stepper whose edits would be ignored
+                const unitQty = units.reduce((sum, u) => sum + (u.manualMaterials || [])
+                  .filter(mm => mm.description === item.description)
+                  .reduce((s, mm) => s + (mm.qty || 1), 0), 0);
+                return (
                 <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, background: "#fafbfa", borderRadius: 6, padding: "8px 10px", border: "1px solid #E8E8E8" }}>
                   <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#333" }}>{item.description || "—"}</span>
+                  {unitQty > 0 ? (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#b87333" }}>{unitQty} from units</span>
+                  ) : (
                   <QtyStepper value={item.quantity || 1} onChange={v => {
                       const updated = [...job.extraMaterials];
                       updated[idx] = { ...item, quantity: v };
                       updateJob("extraMaterials", updated);
                     }} />
+                  )}
                   <button onClick={() => {
                     const updated = (job.extraMaterials || []).filter((_, i) => i !== idx);
                     updateJob("extraMaterials", updated);
                   }} style={{ background: "none", border: "none", fontSize: 18, color: "#c0392b", cursor: "pointer", padding: "0 4px", flexShrink: 0 }}>✕</button>
                 </div>
-              ))}
+                );
+              })}
               {/* Coil quick-add buttons */}
               <div style={{ fontSize: 11, fontWeight: 700, color: "#999", marginTop: 8, marginBottom: 4 }}>Add Coil</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
@@ -5249,6 +5323,8 @@
               </div>
               {(() => {
                 const completeUnits = units.filter(isUnitComplete);
+                // Storm doors are intentionally excluded from boards — don't warn about them
+                const incompleteCount = units.filter(u => !isStormDoor(u) && !isUnitComplete(u)).length;
                 const hasExtras = (job.extraBoards || []).length > 0;
                 if (completeUnits.length === 0 && !hasExtras) {
                   return (
@@ -5313,9 +5389,9 @@
                         ))}
                       </div>
                     )}
-                    {completeUnits.length < units.length && (
+                    {incompleteCount > 0 && (
                       <div style={{ fontSize: 12, color: "#c08428", marginTop: 8 }}>
-                        ⚠ {units.length - completeUnits.length} unit{units.length - completeUnits.length !== 1 ? "s" : ""} not yet complete — not included in board count
+                        ⚠ {incompleteCount} unit{incompleteCount !== 1 ? "s" : ""} not yet complete — not included in board count
                       </div>
                     )}
                     <div style={{ fontSize: 12, color: "#888", marginTop: 6 }}>Pulls latest lumber availability — full breakdown in report</div>
