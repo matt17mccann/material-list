@@ -1626,6 +1626,29 @@
       });
     }
 
+    // Merge job-level extra materials with manual materials attached to units.
+    // Unit-attached quantities are summed across the job and are the source of
+    // truth when the same description also exists at the job level.
+    function mergedExtraMaterials(extraMaterials, units) {
+      const unitTotals = {};
+      (units || []).forEach(u => (u.manualMaterials || []).forEach(mm => {
+        if (!mm.description) return;
+        unitTotals[mm.description] = (unitTotals[mm.description] || 0) + (mm.qty || 1);
+      }));
+      const rows = [];
+      const seen = new Set();
+      (extraMaterials || []).forEach(item => {
+        if (!item.description) return;
+        seen.add(item.description);
+        const qty = unitTotals[item.description] != null ? unitTotals[item.description] : (item.quantity || 1);
+        rows.push({ category: item.category || "Other", description: item.description, quantity: qty });
+      });
+      Object.keys(unitTotals).forEach(desc => {
+        if (!seen.has(desc)) rows.push({ category: "Other", description: desc, quantity: unitTotals[desc] });
+      });
+      return rows;
+    }
+
     // Aggregate boards into checklist line items: { category, description, quantity, length },
     // grouped by material type + species + profile/stock + length (+ finish when showFinish).
     function aggregateBoardGroups(boards, STOCK_LABELS, showFinish) {
@@ -2385,12 +2408,11 @@
           rows.push({ category: "NOTE", description: `CUSTOMER SUPPLYING JAMBS — ${unitList}`, quantity: "", isNote: true });
         }
 
-        // Coil / extra materials first
-        (job.extraMaterials || []).forEach(item => {
-          if (item.description) {
-            const cat = (item.category || "OTHER").toUpperCase();
-            rows.push({ category: cat, description: item.description, quantity: item.quantity || 1 });
-          }
+        // Coil / extra materials first — unit-attached manual materials are
+        // summed across all units so the job total reflects real quantities
+        mergedExtraMaterials(job.extraMaterials, units).forEach(item => {
+          const cat = (item.category || "OTHER").toUpperCase();
+          rows.push({ category: cat, description: item.description, quantity: item.quantity });
         });
 
         // Thresholds — pre-made products, listed as line items
@@ -2564,7 +2586,9 @@
       };
 
       // ─── DETAILED REPORT (per-unit cut list — existing style) ───
-      const DetailedReport = () => (
+      const DetailedReport = () => {
+        const extraMats = mergedExtraMaterials(job.extraMaterials, units);
+        return (
         <div style={{ padding: "32px 28px", maxWidth: 900, margin: "0 auto", fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif" }}>
           <ReportHeader subtitle="Detailed Cut List" />
 
@@ -2648,7 +2672,7 @@
           </div>
 
           {/* Extra Materials */}
-          {(job.extraMaterials || []).length > 0 && (
+          {extraMats.length > 0 && (
             <div data-pdf-section="extra-materials" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
               <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
                 Extra Materials
@@ -2661,7 +2685,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  {job.extraMaterials.map((item, j) => (
+                  {extraMats.map((item, j) => (
                     <tr key={j} style={{ borderBottom: "1px solid #ddd", background: j % 2 === 0 ? "#fff" : "#fafbfa" }}>
                       <td style={{ padding: "6px 12px" }}>{item.description || "—"}</td>
                       <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 600 }}>{item.quantity}</td>
@@ -2704,7 +2728,8 @@
             Renewal by Andersen — Detailed Cut List • {new Date().toLocaleDateString()}
           </div>
         </div>
-      );
+        );
+      };
 
       // ─── COMBINED REPORT — always used for PDF output ───
       // Rendered hidden off-screen. Contains: Checklist (page 1) → hard page
@@ -4827,11 +4852,6 @@
                               if (e.key === "Enter" && e.target.value.trim()) {
                                 const desc = e.target.value.trim();
                                 updateUnit(idx, "manualMaterials", [...(unit.manualMaterials || []), { description: desc, qty: 1 }]);
-                                setJob(prev => {
-                                  const existing = prev.extraMaterials || [];
-                                  if (existing.some(m => m.description === desc)) return prev;
-                                  return { ...prev, extraMaterials: [...existing, { category: "Other", description: desc, quantity: 1 }] };
-                                });
                                 e.target.value = "";
                               }
                             }} />
@@ -4840,11 +4860,6 @@
                               if (el && el.value.trim()) {
                                 const desc = el.value.trim();
                                 updateUnit(idx, "manualMaterials", [...(unit.manualMaterials || []), { description: desc, qty: 1 }]);
-                                setJob(prev => {
-                                  const existing = prev.extraMaterials || [];
-                                  if (existing.some(m => m.description === desc)) return prev;
-                                  return { ...prev, extraMaterials: [...existing, { category: "Other", description: desc, quantity: 1 }] };
-                                });
                                 el.value = "";
                               }
                             }} style={{
