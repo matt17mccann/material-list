@@ -3036,6 +3036,8 @@
       const [submitted, setSubmitted] = useState(false); // tracks if current job has been submitted
       const [reportType, setReportType] = useState("checklist"); // "checklist" or "detailed"
       const [metalJobId, setMetalJobId] = useState(""); // selected job for Bending Metal
+      const [metalSearch, setMetalSearch] = useState(""); // type-to-search job finder
+      const [metalExporting, setMetalExporting] = useState(false); // export PDF in progress
       const [metalW, setMetalW] = useState(""); // manual window width
       const [metalH, setMetalH] = useState(""); // manual window height
       const pdfInputRef = useRef(null);
@@ -4005,6 +4007,110 @@
         }));
         const feet = inches => (inches / 12).toFixed(1);
 
+        // Type-to-search job finder
+        const mq = metalSearch.toLowerCase().trim();
+        const metalMatches = savedJobs
+          .filter(s => !mq
+            || (s.job.customerName || "").toLowerCase().includes(mq)
+            || (s.job.address || "").toLowerCase().includes(mq)
+            || (s.job.poNumber || "").toLowerCase().includes(mq))
+          .sort((a, b) => (b.savedAt || "").localeCompare(a.savedAt || ""))
+          .slice(0, 12);
+
+        // Warehouse cut list PDF — grouped by metal type, one checkbox per cut
+        const generateMetalPDF = async () => {
+          if (!selectedJob || sizedWindows.length === 0) return;
+          setMetalExporting(true);
+          try {
+            const pdf = new jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+            const ttfB64 = async (path) => {
+              const buf = await fetch(path).then(r => r.arrayBuffer());
+              const bytes = new Uint8Array(buf);
+              let binary = "", chunk = 0x8000;
+              for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+              return btoa(binary);
+            };
+            const [regB64, boldB64] = await Promise.all([ttfB64("./Roboto-Regular.ttf"), ttfB64("./Roboto-Bold.ttf")]);
+            pdf.addFileToVFS("Roboto-Regular.ttf", regB64);
+            pdf.addFileToVFS("Roboto-Bold.ttf", boldB64);
+            pdf.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+            pdf.addFont("Roboto-Bold.ttf", "Roboto", "bold");
+
+            const pageW = pdf.internal.pageSize.getWidth();
+            const pageH = pdf.internal.pageSize.getHeight();
+            const margin = 12, contentW = pageW - margin * 2, bottomLimit = pageH - margin - 4;
+            let y = margin;
+            const GREEN = [109, 179, 68], COPPER = [184, 115, 51], DARK = [26, 26, 26];
+            const TEXT_MUTE = [130, 130, 130], BORDER = [221, 221, 221], CB = [150, 150, 150], ZEBRA = [248, 250, 246];
+            const ensure = (need, onBreak) => { if (y + need > bottomLimit) { pdf.addPage(); y = margin; if (onBreak) onBreak(); } };
+
+            // Header
+            try { pdf.addImage(LOGO_FULL, "PNG", margin, y, 55, 14); } catch (_) {}
+            pdf.setFont("Roboto", "bold"); pdf.setFontSize(13); pdf.setTextColor(...DARK);
+            pdf.text(selectedJob.job.customerName || "—", pageW - margin, y + 5, { align: "right" });
+            pdf.setFont("Roboto", "normal"); pdf.setFontSize(9.5); pdf.setTextColor(...TEXT_MUTE);
+            const sub = [selectedJob.job.poNumber ? "PO " + selectedJob.job.poNumber : "", selectedJob.job.date || ""].filter(Boolean).join("   ·   ");
+            if (sub) pdf.text(sub, pageW - margin, y + 10.5, { align: "right" });
+            y += 18;
+            pdf.setFont("Roboto", "bold"); pdf.setFontSize(15); pdf.setTextColor(...DARK);
+            pdf.text("L-Flange Wrap Cut List", margin, y + 2);
+            y += 8;
+            pdf.setDrawColor(...BORDER); pdf.setLineWidth(0.3); pdf.line(margin, y, pageW - margin, y);
+            y += 6;
+
+            // Build rows grouped by metal type
+            const sections = [
+              { key: "topside", title: "TOP / SIDE L-FLANGE", color: GREEN, rows: [] },
+              { key: "bottom", title: "BOTTOM L-FLANGE", color: COPPER, rows: [] },
+            ];
+            sizedWindows.forEach(({ u, w, h }) => computeWraps(w, h).forEach(p => {
+              sections.find(s => s.key === p.type).rows.push({
+                where: (u.label || "Window") + (u.location ? " · " + u.location : ""),
+                part: p.part, cut: p.qty + " × " + toFraction(p.length) + '"',
+              });
+            }));
+
+            const CB_X = margin + 2, TXT_X = margin + 11;
+            const renderSectionHeader = (sec) => {
+              pdf.setFillColor(...sec.color); pdf.rect(margin, y, contentW, 8, "F");
+              pdf.setFont("Roboto", "bold"); pdf.setFontSize(10); pdf.setTextColor(255, 255, 255);
+              pdf.text(sec.title, margin + 3, y + 5.4);
+              const t = totals[sec.key];
+              pdf.text(t.pieces + " pcs  ·  " + feet(t.inches) + " ft", pageW - margin - 3, y + 5.4, { align: "right" });
+              y += 8;
+            };
+            sections.forEach(sec => {
+              if (!sec.rows.length) return;
+              ensure(20);
+              renderSectionHeader(sec);
+              sec.rows.forEach((r, i) => {
+                const rowH = 9;
+                ensure(rowH, () => renderSectionHeader(sec));
+                if (i % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
+                pdf.setDrawColor(...CB); pdf.setLineWidth(0.4);
+                pdf.rect(CB_X, y + rowH / 2 - 2.5, 5, 5, "S");
+                pdf.setFont("Roboto", "bold"); pdf.setFontSize(10.5); pdf.setTextColor(...DARK);
+                pdf.text(r.where, TXT_X, y + 5.8);
+                pdf.setFont("Roboto", "normal"); pdf.setFontSize(9.5); pdf.setTextColor(...TEXT_MUTE);
+                pdf.text(r.part, margin + contentW * 0.6, y + 5.8);
+                pdf.setFont("Roboto", "bold"); pdf.setFontSize(11); pdf.setTextColor(...DARK);
+                pdf.text(r.cut, pageW - margin - 3, y + 5.8, { align: "right" });
+                pdf.setDrawColor(...BORDER); pdf.setLineWidth(0.2); pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+                y += rowH;
+              });
+              y += 6;
+            });
+
+            const lastName = (selectedJob.job.customerName || "Job").split(" ").pop();
+            const po = selectedJob.job.poNumber ? " (" + selectedJob.job.poNumber + ")" : "";
+            pdf.save(lastName + " L-Flange Wraps" + po + ".pdf");
+          } catch (e) {
+            alert("Could not generate PDF: " + (e && e.message ? e.message : e));
+          } finally {
+            setMetalExporting(false);
+          }
+        };
+
         const mW = parseFloat(metalW) || 0, mH = parseFloat(metalH) || 0;
         const manualValid = mW > 0 && mH > 0;
 
@@ -4078,23 +4184,48 @@
                 {manualValid && computeWraps(mW, mH).map((p, i) => <PieceRow key={i} p={p} />)}
               </div>
 
-              {/* Job selector */}
+              {/* Job finder */}
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>From a Job</div>
-                <select value={metalJobId} onChange={e => setMetalJobId(e.target.value)}
-                  style={{ width: "100%", padding: "10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, fontWeight: 600, background: "#fff", boxSizing: "border-box" }}>
-                  <option value="">Select a saved job…</option>
-                  {savedJobs.slice().sort((a, b) => (b.savedAt || "").localeCompare(a.savedAt || "")).map(s => (
-                    <option key={s.id} value={s.id}>{(s.job.customerName || "Untitled Job")}{s.job.date ? " — " + s.job.date : ""}</option>
-                  ))}
-                </select>
+                <input type="text" value={metalSearch} onChange={e => setMetalSearch(e.target.value)} placeholder="Search by name, address, or PO #"
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, boxSizing: "border-box" }} />
+
+                {!selectedJob && (
+                  <div style={{ marginTop: 10 }}>
+                    {metalMatches.length === 0 && (
+                      <div style={{ fontSize: 13, color: "#999", padding: "8px 2px" }}>{savedJobs.length === 0 ? "No saved jobs yet." : "No jobs match."}</div>
+                    )}
+                    {metalMatches.map(s => (
+                      <div key={s.id} onClick={() => { setMetalJobId(s.id); setMetalSearch(""); }} style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: "10px 4px", borderBottom: "1px solid #F0F0F0", cursor: "pointer"
+                      }}>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>{s.job.customerName || "Untitled Job"}</div>
+                          <div style={{ fontSize: 11, color: "#999" }}>{[s.job.date, s.job.poNumber, s.job.address].filter(Boolean).join(" · ")}</div>
+                        </div>
+                        <span style={{ fontSize: 18, color: "#ccc" }}>›</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {selectedJob && (
+                  <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", background: "#F5F5F4", borderRadius: 6 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>{selectedJob.job.customerName || "Untitled Job"}</div>
+                      <div style={{ fontSize: 11, color: "#999" }}>{[selectedJob.job.date, selectedJob.job.poNumber].filter(Boolean).join(" · ")}</div>
+                    </div>
+                    <button onClick={() => { setMetalJobId(""); setMetalSearch(""); }} style={{ background: "none", border: "none", fontSize: 13, color: "#6DB344", fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>Change</button>
+                  </div>
+                )}
 
                 {selectedJob && jobWindows.length === 0 && (
                   <div style={{ fontSize: 13, color: "#999", marginTop: 12 }}>No windows in this job.</div>
                 )}
 
                 {selectedJob && sizedWindows.length > 0 && (
-                  <div style={{ marginTop: 14, padding: "12px 14px", background: "#F7FAF4", borderRadius: 8, border: "1px solid rgba(109,179,68,0.25)" }}>
+                  <div style={{ marginTop: 12, padding: "12px 14px", background: "#F7FAF4", borderRadius: 8, border: "1px solid rgba(109,179,68,0.25)" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Job Totals</div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
                       <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#6DB344", marginRight: 6 }} />Top/Side L-Flange</span>
@@ -4106,6 +4237,14 @@
                     </div>
                     {missingCount > 0 && <div style={{ fontSize: 11, color: "#c0392b", marginTop: 6 }}>{missingCount} window{missingCount !== 1 ? "s" : ""} skipped (size not set).</div>}
                   </div>
+                )}
+
+                {selectedJob && sizedWindows.length > 0 && (
+                  <button onClick={generateMetalPDF} disabled={metalExporting} style={{
+                    width: "100%", marginTop: 12, padding: "13px 0", border: "none", borderRadius: 6,
+                    background: metalExporting ? "#9ecb7f" : "#6DB344", fontSize: 14, fontWeight: 700,
+                    color: "#fff", cursor: metalExporting ? "default" : "pointer", letterSpacing: 0.3
+                  }}>{metalExporting ? "Generating…" : "⬇ Export Warehouse Cut List (PDF)"}</button>
                 )}
               </div>
 
