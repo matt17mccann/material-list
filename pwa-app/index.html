@@ -1337,6 +1337,7 @@
       window_trad: { sideJamb_length: -1.25, headJamb_length: 0, jamb_width: -2.75, stool_length: 10, stool_width_extra: 2, sideCasing_length: -1, headCasing_length: 0, apron_length: 10 },
       entry_door: { sideCasing_length: 6, headCasing_length: 8, threshold_length: 8, sideJamb_length: 2, headJamb_length: 2, jamb_width: -4.5625 },
       patio_door: { sideJamb_length: 2, headJamb_length: 2, sillJamb_length: 2, jamb_width: -4.5625, sideCasing_length: 6, headCasing_length: 8, threshold_length: 8 },
+      bending_metal: { side_addon: 1, top_addon: 3, bottom_addon: 3 },
       thickness: 0.625,
       boardWaste: 5,
     };
@@ -3034,6 +3035,9 @@
       const [reportFrom, setReportFrom] = useState("editor"); // where to go back from report view
       const [submitted, setSubmitted] = useState(false); // tracks if current job has been submitted
       const [reportType, setReportType] = useState("checklist"); // "checklist" or "detailed"
+      const [metalJobId, setMetalJobId] = useState(""); // selected job for Bending Metal
+      const [metalW, setMetalW] = useState(""); // manual window width
+      const [metalH, setMetalH] = useState(""); // manual window height
       const pdfInputRef = useRef(null);
 
       // Online/offline tracking — flush queued offline jobs on reconnect
@@ -3567,6 +3571,12 @@
                   color: "rgba(255,255,255,0.5)", cursor: "pointer", letterSpacing: 0.3
                 }}>Offsets</button>
               </div>
+
+              <button onClick={() => setView("metal")} style={{
+                width: "100%", padding: "12px 0", marginTop: 8, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6,
+                background: "rgba(255,255,255,0.04)", fontSize: 12, fontWeight: 600,
+                color: "rgba(255,255,255,0.5)", cursor: "pointer", letterSpacing: 0.3
+              }}>Bending Metal</button>
             </div>
 
             <div style={{ textAlign: "center", paddingBottom: 8 }}>
@@ -3954,6 +3964,161 @@
                 <OffsetRow label="Board Waste (inches)" desc="Extra length added per board for split ends / bad ends" value={offsets.boardWaste ?? 5}
                   onChange={v => { const u = { ...offsets, boardWaste: parseFloat(v) || 0 }; setOffsetsState(u); saveOffsetsToAPI(u); }} />
               </div>
+            </div>
+          </div>
+        );
+      }
+
+      // ─── BENDING METAL ───
+      if (view === "metal") {
+        const bm = { ...DEFAULT_OFFSETS.bending_metal, ...(offsets.bending_metal || {}) };
+        const updateBM = (key, val) => {
+          const updated = { ...offsets, bending_metal: { ...bm, [key]: parseFloat(val) || 0 } };
+          setOffsetsState(updated);
+          saveOffsetsToAPI(updated);
+        };
+        const resetBM = () => {
+          const updated = { ...offsets, bending_metal: { ...DEFAULT_OFFSETS.bending_metal } };
+          setOffsetsState(updated);
+          saveOffsetsToAPI(updated);
+        };
+
+        // Per-window wrap pieces from decimal width/height
+        const computeWraps = (w, h) => [
+          { type: "topside", part: "Side", qty: 2, length: h + (bm.side_addon || 0) },
+          { type: "topside", part: "Top",  qty: 1, length: w + (bm.top_addon || 0) },
+          { type: "bottom",  part: "Bottom", qty: 1, length: w + (bm.bottom_addon || 0) },
+        ];
+
+        const selectedJob = savedJobs.find(s => s.id === metalJobId);
+        const jobWindows = selectedJob ? (selectedJob.units || []).filter(u => u.unitType === "Window") : [];
+        const sizedWindows = jobWindows
+          .map(u => ({ u, w: combineMeasurement(u.widthWhole, u.widthFrac), h: combineMeasurement(u.heightWhole, u.heightFrac) }))
+          .filter(x => x.w > 0 && x.h > 0);
+        const missingCount = jobWindows.length - sizedWindows.length;
+
+        // Job-wide totals per metal type
+        const totals = { topside: { pieces: 0, inches: 0 }, bottom: { pieces: 0, inches: 0 } };
+        sizedWindows.forEach(({ w, h }) => computeWraps(w, h).forEach(p => {
+          totals[p.type].pieces += p.qty;
+          totals[p.type].inches += p.qty * p.length;
+        }));
+        const feet = inches => (inches / 12).toFixed(1);
+
+        const mW = parseFloat(metalW) || 0, mH = parseFloat(metalH) || 0;
+        const manualValid = mW > 0 && mH > 0;
+
+        const typeColor = t => t === "bottom" ? "#b87333" : "#6DB344";
+        const PieceRow = ({ p }) => (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid #F0F0F0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: typeColor(p.type) }} />
+              <span style={{ fontSize: 14, fontWeight: 600, color: "#333" }}>{p.part}</span>
+              <span style={{ fontSize: 11, color: "#999" }}>{p.type === "bottom" ? "Bottom L-Flange" : "Top/Side L-Flange"}</span>
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>
+              {p.qty} × <span style={{ color: typeColor(p.type) }}>{toFraction(p.length)}"</span>
+            </div>
+          </div>
+        );
+        const BMRow = ({ label, desc, value, onChange }) => (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #E8E8E8", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#333" }}>{label}</div>
+              <div style={{ fontSize: 11, color: "#888" }}>{desc}</div>
+            </div>
+            <input type="number" step="0.25" value={value} onChange={e => onChange(e.target.value)}
+              style={{ width: 80, padding: "6px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 15, fontWeight: 700, textAlign: "center" }} />
+          </div>
+        );
+
+        return (
+          <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "0 0 40px 0" }}>
+            <div style={{
+              position: "sticky", top: 0, zIndex: 100, background: "#1C1C1C",
+              padding: "max(env(safe-area-inset-top, 0px), 50px) 16px 12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center",
+              boxShadow: "0 2px 12px rgba(0,0,0,0.25)"
+            }}>
+              <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600}}>← Home</button>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Bending Metal</div>
+              <div style={{ width: 70 }} />
+            </div>
+
+            <div style={{ maxWidth: 900, margin: "0 auto", padding: "16px 16px 0" }}>
+              <div style={{ fontSize: 13, color: "#888", marginBottom: 16, padding: "0 4px" }}>
+                L-flange wrap lengths per window. Sides = Height + side add-on, Top = Width + top add-on (both Top/Side L-Flange). Bottom = Width + bottom add-on (Bottom L-Flange — different bend).
+              </div>
+
+              {/* Add-on settings */}
+              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase" }}>Wrap Add-ons</div>
+                  <button onClick={resetBM} style={{ background: "none", border: "none", fontSize: 11, color: "#999", cursor: "pointer", textDecoration: "underline" }}>Reset defaults</button>
+                </div>
+                <BMRow label="Side Add-on" desc="Added to Height for each side piece" value={bm.side_addon} onChange={v => updateBM("side_addon", v)} />
+                <BMRow label="Top Add-on" desc="Added to Width for the top piece" value={bm.top_addon} onChange={v => updateBM("top_addon", v)} />
+                <BMRow label="Bottom Add-on" desc="Added to Width for the bottom piece" value={bm.bottom_addon} onChange={v => updateBM("bottom_addon", v)} />
+              </div>
+
+              {/* Manual calculator */}
+              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>Quick Size</div>
+                <div style={{ display: "flex", gap: 12, marginBottom: manualValid ? 12 : 0 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>Width (in)</div>
+                    <input type="number" step="0.0625" value={metalW} onChange={e => setMetalW(e.target.value)} placeholder="W"
+                      style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 15, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>Height (in)</div>
+                    <input type="number" step="0.0625" value={metalH} onChange={e => setMetalH(e.target.value)} placeholder="H"
+                      style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 15, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+                  </div>
+                </div>
+                {manualValid && computeWraps(mW, mH).map((p, i) => <PieceRow key={i} p={p} />)}
+              </div>
+
+              {/* Job selector */}
+              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>From a Job</div>
+                <select value={metalJobId} onChange={e => setMetalJobId(e.target.value)}
+                  style={{ width: "100%", padding: "10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, fontWeight: 600, background: "#fff", boxSizing: "border-box" }}>
+                  <option value="">Select a saved job…</option>
+                  {savedJobs.slice().sort((a, b) => (b.savedAt || "").localeCompare(a.savedAt || "")).map(s => (
+                    <option key={s.id} value={s.id}>{(s.job.customerName || "Untitled Job")}{s.job.date ? " — " + s.job.date : ""}</option>
+                  ))}
+                </select>
+
+                {selectedJob && jobWindows.length === 0 && (
+                  <div style={{ fontSize: 13, color: "#999", marginTop: 12 }}>No windows in this job.</div>
+                )}
+
+                {selectedJob && sizedWindows.length > 0 && (
+                  <div style={{ marginTop: 14, padding: "12px 14px", background: "#F7FAF4", borderRadius: 8, border: "1px solid rgba(109,179,68,0.25)" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Job Totals</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
+                      <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#6DB344", marginRight: 6 }} />Top/Side L-Flange</span>
+                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{totals.topside.pieces} pcs · {feet(totals.topside.inches)}'</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
+                      <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#b87333", marginRight: 6 }} />Bottom L-Flange</span>
+                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{totals.bottom.pieces} pcs · {feet(totals.bottom.inches)}'</span>
+                    </div>
+                    {missingCount > 0 && <div style={{ fontSize: 11, color: "#c0392b", marginTop: 6 }}>{missingCount} window{missingCount !== 1 ? "s" : ""} skipped (size not set).</div>}
+                  </div>
+                )}
+              </div>
+
+              {/* Per-window breakdown */}
+              {sizedWindows.map(({ u, w, h }, idx) => (
+                <div key={idx} style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 10, border: "1px solid #E8E8E8" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>{u.label || "Window"}{u.location ? <span style={{ fontSize: 12, fontWeight: 500, color: "#999" }}> · {u.location}</span> : null}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#888" }}>{toFraction(w)}" × {toFraction(h)}"</div>
+                  </div>
+                  {computeWraps(w, h).map((p, i) => <PieceRow key={i} p={p} />)}
+                </div>
+              ))}
             </div>
           </div>
         );
