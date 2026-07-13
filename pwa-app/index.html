@@ -3038,6 +3038,8 @@
       const [metalJobId, setMetalJobId] = useState(""); // selected job for Bending Metal
       const [metalSearch, setMetalSearch] = useState(""); // type-to-search job finder
       const [metalExporting, setMetalExporting] = useState(false); // export PDF in progress
+      const [metalManualName, setMetalManualName] = useState(""); // manual-list title for export
+      const [metalManualUnits, setMetalManualUnits] = useState([]); // manual windows: [{label, w, h}]
       const [metalW, setMetalW] = useState(""); // manual window width
       const [metalH, setMetalH] = useState(""); // manual window height
       const pdfInputRef = useRef(null);
@@ -4017,9 +4019,10 @@
           .sort((a, b) => (b.savedAt || "").localeCompare(a.savedAt || ""))
           .slice(0, 12);
 
-        // Warehouse cut list PDF — grouped by metal type, one checkbox per cut
-        const generateMetalPDF = async () => {
-          if (!selectedJob || sizedWindows.length === 0) return;
+        // Warehouse cut list PDF — grouped by metal type, one checkbox per cut.
+        // Works for a saved job or a manual list; windows = [{ u:{label,location}, w, h }].
+        const runMetalPDF = async ({ name, po, date, windows }) => {
+          if (!windows || windows.length === 0) return;
           setMetalExporting(true);
           try {
             const pdf = new jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
@@ -4047,9 +4050,9 @@
             // Header
             try { pdf.addImage(LOGO_FULL, "PNG", margin, y, 55, 14); } catch (_) {}
             pdf.setFont("Roboto", "bold"); pdf.setFontSize(13); pdf.setTextColor(...DARK);
-            pdf.text(selectedJob.job.customerName || "—", pageW - margin, y + 5, { align: "right" });
+            pdf.text(name || "—", pageW - margin, y + 5, { align: "right" });
             pdf.setFont("Roboto", "normal"); pdf.setFontSize(9.5); pdf.setTextColor(...TEXT_MUTE);
-            const sub = [selectedJob.job.poNumber ? "PO " + selectedJob.job.poNumber : "", selectedJob.job.date || ""].filter(Boolean).join("   ·   ");
+            const sub = [po ? "PO " + po : "", date || ""].filter(Boolean).join("   ·   ");
             if (sub) pdf.text(sub, pageW - margin, y + 10.5, { align: "right" });
             y += 18;
             pdf.setFont("Roboto", "bold"); pdf.setFontSize(15); pdf.setTextColor(...DARK);
@@ -4063,7 +4066,10 @@
               { key: "topside", title: "TOP / SIDE L-FLANGE", color: GREEN, rows: [] },
               { key: "bottom", title: "BOTTOM L-FLANGE", color: COPPER, rows: [] },
             ];
-            sizedWindows.forEach(({ u, w, h }) => computeWraps(w, h).forEach(p => {
+            const secTotals = { topside: { pieces: 0, inches: 0 }, bottom: { pieces: 0, inches: 0 } };
+            windows.forEach(({ u, w, h }) => computeWraps(w, h).forEach(p => {
+              secTotals[p.type].pieces += p.qty;
+              secTotals[p.type].inches += p.qty * p.length;
               sections.find(s => s.key === p.type).rows.push({
                 where: (u.label || "Window") + (u.location ? " · " + u.location : ""),
                 part: p.part, cut: p.qty + " × " + toFraction(p.length) + '"',
@@ -4075,7 +4081,7 @@
               pdf.setFillColor(...sec.color); pdf.rect(margin, y, contentW, 8, "F");
               pdf.setFont("Roboto", "bold"); pdf.setFontSize(10); pdf.setTextColor(255, 255, 255);
               pdf.text(sec.title, margin + 3, y + 5.4);
-              const t = totals[sec.key];
+              const t = secTotals[sec.key];
               pdf.text(t.pieces + " pcs  ·  " + feet(t.inches) + " ft", pageW - margin - 3, y + 5.4, { align: "right" });
               y += 8;
             };
@@ -4101,9 +4107,9 @@
               y += 6;
             });
 
-            const lastName = (selectedJob.job.customerName || "Job").split(" ").pop();
-            const po = selectedJob.job.poNumber ? " (" + selectedJob.job.poNumber + ")" : "";
-            pdf.save(lastName + " L-Flange Wraps" + po + ".pdf");
+            const lastName = (name || "Manual").split(" ").pop() || "Manual";
+            const poTag = po ? " (" + po + ")" : "";
+            pdf.save(lastName + " L-Flange Wraps" + poTag + ".pdf");
           } catch (e) {
             alert("Could not generate PDF: " + (e && e.message ? e.message : e));
           } finally {
@@ -4113,6 +4119,16 @@
 
         const mW = parseFloat(metalW) || 0, mH = parseFloat(metalH) || 0;
         const manualValid = mW > 0 && mH > 0;
+
+        // Manual list (no saved job) — build windows by hand
+        const addManualUnit = () => setMetalManualUnits(prev => [...prev, { label: "", w: "", h: "" }]);
+        const updateManualUnit = (i, key, val) => setMetalManualUnits(prev => prev.map((u, idx) => idx === i ? { ...u, [key]: val } : u));
+        const removeManualUnit = (i) => setMetalManualUnits(prev => prev.filter((_, idx) => idx !== i));
+        const manualSized = metalManualUnits
+          .map(u => ({ u: { label: u.label, location: "" }, w: parseFloat(u.w) || 0, h: parseFloat(u.h) || 0 }))
+          .filter(x => x.w > 0 && x.h > 0);
+        const manualTotals = { topside: { pieces: 0, inches: 0 }, bottom: { pieces: 0, inches: 0 } };
+        manualSized.forEach(({ w, h }) => computeWraps(w, h).forEach(p => { manualTotals[p.type].pieces += p.qty; manualTotals[p.type].inches += p.qty * p.length; }));
 
         const typeColor = t => t === "bottom" ? "#b87333" : "#6DB344";
         const PieceRow = ({ p }) => (
@@ -4240,7 +4256,62 @@
                 )}
 
                 {selectedJob && sizedWindows.length > 0 && (
-                  <button onClick={generateMetalPDF} disabled={metalExporting} style={{
+                  <button onClick={() => runMetalPDF({ name: selectedJob.job.customerName, po: selectedJob.job.poNumber, date: selectedJob.job.date, windows: sizedWindows })} disabled={metalExporting} style={{
+                    width: "100%", marginTop: 12, padding: "13px 0", border: "none", borderRadius: 6,
+                    background: metalExporting ? "#9ecb7f" : "#6DB344", fontSize: 14, fontWeight: 700,
+                    color: "#fff", cursor: metalExporting ? "default" : "pointer", letterSpacing: 0.3
+                  }}>{metalExporting ? "Generating…" : "⬇ Export Warehouse Cut List (PDF)"}</button>
+                )}
+              </div>
+
+              {/* Manual list — when the job isn't uploaded */}
+              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 4 }}>Manual List</div>
+                <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>When the job isn't uploaded — build the window list by hand.</div>
+
+                <input type="text" value={metalManualName} onChange={e => setMetalManualName(e.target.value)} placeholder="List name (for the export, optional)"
+                  style={{ width: "100%", padding: "9px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, boxSizing: "border-box", marginBottom: 10 }} />
+
+                {metalManualUnits.map((mu, i) => {
+                  const w = parseFloat(mu.w) || 0, h = parseFloat(mu.h) || 0, valid = w > 0 && h > 0;
+                  return (
+                    <div key={i} style={{ borderBottom: "1px solid #F0F0F0", paddingBottom: 8, marginBottom: 8 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <input type="text" value={mu.label} onChange={e => updateManualUnit(i, "label", e.target.value)} placeholder="Label"
+                          style={{ flex: "0 0 74px", width: 74, padding: "8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, boxSizing: "border-box" }} />
+                        <input type="number" step="0.0625" value={mu.w} onChange={e => updateManualUnit(i, "w", e.target.value)} placeholder="W"
+                          style={{ flex: 1, minWidth: 0, padding: "8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+                        <span style={{ color: "#bbb", fontSize: 13 }}>×</span>
+                        <input type="number" step="0.0625" value={mu.h} onChange={e => updateManualUnit(i, "h", e.target.value)} placeholder="H"
+                          style={{ flex: 1, minWidth: 0, padding: "8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+                        <button onClick={() => removeManualUnit(i)} style={{ flex: "0 0 auto", background: "none", border: "none", color: "#c0392b", fontSize: 20, lineHeight: 1, cursor: "pointer", padding: "0 4px" }}>×</button>
+                      </div>
+                      {valid && <div style={{ marginTop: 4 }}>{computeWraps(w, h).map((p, k) => <PieceRow key={k} p={p} />)}</div>}
+                    </div>
+                  );
+                })}
+
+                <button onClick={addManualUnit} style={{
+                  width: "100%", padding: "10px 0", marginTop: 2, border: "1px dashed #cbd5c0", borderRadius: 6,
+                  background: "#F7FAF4", fontSize: 13, fontWeight: 600, color: "#6DB344", cursor: "pointer"
+                }}>+ Add Window</button>
+
+                {manualSized.length > 0 && (
+                  <div style={{ marginTop: 12, padding: "12px 14px", background: "#F7FAF4", borderRadius: 8, border: "1px solid rgba(109,179,68,0.25)" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>List Totals</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
+                      <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#6DB344", marginRight: 6 }} />Top/Side L-Flange</span>
+                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{manualTotals.topside.pieces} pcs · {feet(manualTotals.topside.inches)}'</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
+                      <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#b87333", marginRight: 6 }} />Bottom L-Flange</span>
+                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{manualTotals.bottom.pieces} pcs · {feet(manualTotals.bottom.inches)}'</span>
+                    </div>
+                  </div>
+                )}
+
+                {manualSized.length > 0 && (
+                  <button onClick={() => runMetalPDF({ name: metalManualName || "Manual List", po: "", date: "", windows: manualSized })} disabled={metalExporting} style={{
                     width: "100%", marginTop: 12, padding: "13px 0", border: "none", borderRadius: 6,
                     background: metalExporting ? "#9ecb7f" : "#6DB344", fontSize: 14, fontWeight: 700,
                     color: "#fff", cursor: metalExporting ? "default" : "pointer", letterSpacing: 0.3
