@@ -3035,12 +3035,12 @@
       const [reportFrom, setReportFrom] = useState("editor"); // where to go back from report view
       const [submitted, setSubmitted] = useState(false); // tracks if current job has been submitted
       const [reportType, setReportType] = useState("checklist"); // "checklist" or "detailed"
-      const [metalJobId, setMetalJobId] = useState(""); // selected job for Bending Metal
       const [metalSearch, setMetalSearch] = useState(""); // type-to-search job finder
       const [metalExporting, setMetalExporting] = useState(false); // export PDF in progress
       const [metalAddonsOpen, setMetalAddonsOpen] = useState(false); // collapse wrap add-ons (hidden by default)
-      const [metalManualName, setMetalManualName] = useState(""); // manual-list title for export
-      const [metalManualUnits, setMetalManualUnits] = useState([]); // manual windows: [{label, w, h}]
+      const [metalWork, setMetalWork] = useState([]); // editable working wrap list: [{label, location, w, h, width}]
+      const [metalListName, setMetalListName] = useState(""); // list title for export (job customer or manual)
+      const [metalListPo, setMetalListPo] = useState(""); // list PO for export
       const pdfInputRef = useRef(null);
 
       // Online/offline tracking — flush queued offline jobs on reconnect
@@ -3993,43 +3993,62 @@
           { type: "bottom",  part: "Bottom", qty: 1, length: w + (bm.bottom_addon || 0) },
         ];
 
-        const selectedJob = savedJobs.find(s => s.id === metalJobId);
-        const jobWindows = selectedJob ? (selectedJob.units || []).filter(u => u.unitType === "Window") : [];
-        const sizedWindows = jobWindows
-          .map(u => ({ u, w: combineMeasurement(u.widthWhole, u.widthFrac), h: combineMeasurement(u.heightWhole, u.heightFrac) }))
+        // Working wrap list — an editable copy used only for this calc / PDF.
+        // It never writes back to the saved job. Rows: { label, location, w, h, width }.
+        const coilWidth = bm.coil_width || 24;
+        const defWidth = bm.strip_width || 5;
+        const workSized = metalWork
+          .map(r => ({ u: { label: r.label, location: r.location || "" }, w: parseFloat(r.w) || 0, h: parseFloat(r.h) || 0, width: parseFloat(r.width) || defWidth }))
           .filter(x => x.w > 0 && x.h > 0);
-        const missingCount = jobWindows.length - sizedWindows.length;
 
-        // Job-wide totals per metal type
         const totals = { topside: { pieces: 0, inches: 0 }, bottom: { pieces: 0, inches: 0 } };
-        sizedWindows.forEach(({ w, h }) => computeWraps(w, h).forEach(p => {
+        workSized.forEach(({ w, h }) => computeWraps(w, h).forEach(p => {
           totals[p.type].pieces += p.qty;
           totals[p.type].inches += p.qty * p.length;
         }));
         const feet = inches => (inches / 12).toFixed(1);
 
-        // Coil batching — coil stock is coil_width" wide; each wrap uses ~strip_width",
-        // so batchSize pieces come off one coil cut. Group similar lengths together and
-        // cut each coil segment to the longest piece in the batch to minimize waste.
-        const batchSize = Math.max(1, Math.floor((bm.coil_width || 24) / (bm.strip_width || 5)));
+        // Coil batching — coil is coilWidth" wide and each wrap takes its own width off it.
+        // Sort by length so similar lengths sit together, then fill each coil cut until the
+        // pieces' widths reach coilWidth. Cut each coil segment to the longest piece in it.
+        const defBatchCount = Math.max(1, Math.floor(coilWidth / defWidth));
         const expandPieces = (windows, typeKey) => {
           const arr = [];
-          windows.forEach(({ u, w, h }) => computeWraps(w, h).forEach(p => {
+          windows.forEach(({ u, w, h, width }) => computeWraps(w, h).forEach(p => {
             if (p.type !== typeKey) return;
-            for (let q = 0; q < p.qty; q++) arr.push({ where: (u.label || "Window") + (u.location ? " · " + u.location : ""), part: p.part, length: p.length });
+            for (let q = 0; q < p.qty; q++) arr.push({ where: (u.label || "Window") + (u.location ? " · " + u.location : ""), part: p.part, length: p.length, width });
           }));
           return arr;
         };
         const makeBatches = (pieces) => {
           const sorted = pieces.slice().sort((a, b) => b.length - a.length);
           const batches = [];
-          for (let i = 0; i < sorted.length; i += batchSize) {
-            const items = sorted.slice(i, i + batchSize);
-            batches.push({ items, coilLen: items[0].length });
-          }
+          let cur = null, curW = 0;
+          sorted.forEach(p => {
+            if (cur && curW + p.width > coilWidth) cur = null;
+            if (!cur) { cur = { items: [], coilLen: p.length, widthUsed: 0 }; batches.push(cur); curW = 0; }
+            cur.items.push(p); curW += p.width; cur.widthUsed = curW; cur.coilLen = Math.max(cur.coilLen, p.length);
+          });
           return batches;
         };
-        const jobBatches = { topside: makeBatches(expandPieces(sizedWindows, "topside")), bottom: makeBatches(expandPieces(sizedWindows, "bottom")) };
+        const workBatches = { topside: makeBatches(expandPieces(workSized, "topside")), bottom: makeBatches(expandPieces(workSized, "bottom")) };
+
+        // Load a saved job's windows into the working list (copy only — never persisted back).
+        const loadJobIntoWork = (s) => {
+          const rows = (s.units || []).filter(u => u.unitType === "Window").map(u => {
+            const wv = combineMeasurement(u.widthWhole, u.widthFrac);
+            const hv = combineMeasurement(u.heightWhole, u.heightFrac);
+            return { label: u.label || "", location: u.location || "", w: wv > 0 ? String(wv) : "", h: hv > 0 ? String(hv) : "", width: String(defWidth) };
+          });
+          setMetalWork(rows);
+          setMetalListName(s.job.customerName || "");
+          setMetalListPo(s.job.poNumber || "");
+          setMetalSearch("");
+        };
+        const addWorkRow = () => setMetalWork(prev => [...prev, { label: "", location: "", w: "", h: "", width: String(defWidth) }]);
+        const updateWorkRow = (i, key, val) => setMetalWork(prev => prev.map((r, idx) => idx === i ? { ...r, [key]: val } : r));
+        const removeWorkRow = (i) => setMetalWork(prev => prev.filter((_, idx) => idx !== i));
+        const clearWork = () => { setMetalWork([]); setMetalListName(""); setMetalListPo(""); };
 
         // Type-to-search job finder
         const mq = metalSearch.toLowerCase().trim();
@@ -4086,7 +4105,7 @@
 
             // Batching note
             pdf.setFont("Roboto", "normal"); pdf.setFontSize(8.5); pdf.setTextColor(...TEXT_MUTE);
-            pdf.text('Batched for ' + (bm.coil_width || 24) + '" coil — ' + batchSize + ' pieces per coil cut, grouped by length. Cut each coil segment to the batch length, then trim each piece.', margin, y, { maxWidth: contentW });
+            pdf.text('Batched for ' + coilWidth + '" coil — pieces packed across the coil width and grouped by length. Cut each coil segment to the batch length, slit to width, then trim each piece.', margin, y, { maxWidth: contentW });
             y += 7;
 
             // Expand + batch each metal type by similar length
@@ -4123,7 +4142,7 @@
                 pdf.setFont("Roboto", "bold"); pdf.setFontSize(9); pdf.setTextColor(...DARK);
                 pdf.text("BATCH " + (bi + 1) + "   —   cut coil @ " + toFraction(batch.coilLen) + '"', margin + 3, y + 4.8);
                 pdf.setFont("Roboto", "normal"); pdf.setTextColor(...TEXT_MUTE);
-                pdf.text(batch.items.length + " pc" + (batch.items.length === 1 ? "" : "s"), pageW - margin - 3, y + 4.8, { align: "right" });
+                pdf.text(batch.items.length + " pc" + (batch.items.length === 1 ? "" : "s") + "  ·  " + toFraction(batch.widthUsed) + '" of ' + coilWidth + '" wide', pageW - margin - 3, y + 4.8, { align: "right" });
                 y += bh;
                 batch.items.forEach(it => {
                   const rowH = 8.5;
@@ -4153,17 +4172,6 @@
             setMetalExporting(false);
           }
         };
-
-        // Manual list (no saved job) — build windows by hand
-        const addManualUnit = () => setMetalManualUnits(prev => [...prev, { label: "", w: "", h: "" }]);
-        const updateManualUnit = (i, key, val) => setMetalManualUnits(prev => prev.map((u, idx) => idx === i ? { ...u, [key]: val } : u));
-        const removeManualUnit = (i) => setMetalManualUnits(prev => prev.filter((_, idx) => idx !== i));
-        const manualSized = metalManualUnits
-          .map(u => ({ u: { label: u.label, location: "" }, w: parseFloat(u.w) || 0, h: parseFloat(u.h) || 0 }))
-          .filter(x => x.w > 0 && x.h > 0);
-        const manualTotals = { topside: { pieces: 0, inches: 0 }, bottom: { pieces: 0, inches: 0 } };
-        manualSized.forEach(({ w, h }) => computeWraps(w, h).forEach(p => { manualTotals[p.type].pieces += p.qty; manualTotals[p.type].inches += p.qty * p.length; }));
-        const manualBatches = { topside: makeBatches(expandPieces(manualSized, "topside")), bottom: makeBatches(expandPieces(manualSized, "bottom")) };
 
         const typeColor = t => t === "bottom" ? "#b87333" : "#6DB344";
         const PieceRow = ({ p }) => (
@@ -4221,25 +4229,25 @@
                     <BMRow label="Top Add-on" desc="Added to Width for the top piece" value={bm.top_addon} onChange={v => updateBM("top_addon", v)} />
                     <BMRow label="Bottom Add-on" desc="Added to Width for the bottom piece" value={bm.bottom_addon} onChange={v => updateBM("bottom_addon", v)} />
                     <BMRow label="Coil Width" desc="Coil stock width (in)" value={bm.coil_width} onChange={v => updateBM("coil_width", v)} />
-                    <BMRow label="Strip Width" desc="Width each wrap takes off the coil (in)" value={bm.strip_width} onChange={v => updateBM("strip_width", v)} />
-                    <div style={{ fontSize: 11, color: "#6DB344", fontWeight: 600, marginTop: 8 }}>→ {batchSize} pieces per coil cut</div>
+                    <BMRow label="Default Width" desc="Default coil width per wrap — editable per window below" value={bm.strip_width} onChange={v => updateBM("strip_width", v)} />
+                    <div style={{ fontSize: 11, color: "#6DB344", fontWeight: 600, marginTop: 8 }}>→ ~{defBatchCount} pieces per {coilWidth}" coil cut at the default width (packs by each window's actual width)</div>
                   </div>
                 )}
               </div>
 
-              {/* Job finder */}
+              {/* Load from a job (copies windows in — never changes the saved job) */}
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>From a Job</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 4 }}>Load from a Job</div>
+                <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>Copies the job's windows into the list below. Edits here never change the saved job.</div>
                 <input type="text" value={metalSearch} onChange={e => setMetalSearch(e.target.value)} placeholder="Search by name, address, or PO #"
                   style={{ width: "100%", padding: "10px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, boxSizing: "border-box" }} />
-
-                {!selectedJob && (
+                {metalSearch.trim() && (
                   <div style={{ marginTop: 10 }}>
                     {metalMatches.length === 0 && (
                       <div style={{ fontSize: 13, color: "#999", padding: "8px 2px" }}>{savedJobs.length === 0 ? "No saved jobs yet." : "No jobs match."}</div>
                     )}
                     {metalMatches.map(s => (
-                      <div key={s.id} onClick={() => { setMetalJobId(s.id); setMetalSearch(""); }} style={{
+                      <div key={s.id} onClick={() => loadJobIntoWork(s)} style={{
                         display: "flex", justifyContent: "space-between", alignItems: "center",
                         padding: "10px 4px", borderBottom: "1px solid #F0F0F0", cursor: "pointer"
                       }}>
@@ -4252,110 +4260,79 @@
                     ))}
                   </div>
                 )}
-
-                {selectedJob && (
-                  <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", background: "#F5F5F4", borderRadius: 6 }}>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>{selectedJob.job.customerName || "Untitled Job"}</div>
-                      <div style={{ fontSize: 11, color: "#999" }}>{[selectedJob.job.date, selectedJob.job.poNumber].filter(Boolean).join(" · ")}</div>
-                    </div>
-                    <button onClick={() => { setMetalJobId(""); setMetalSearch(""); }} style={{ background: "none", border: "none", fontSize: 13, color: "#6DB344", fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>Change</button>
-                  </div>
-                )}
-
-                {selectedJob && jobWindows.length === 0 && (
-                  <div style={{ fontSize: 13, color: "#999", marginTop: 12 }}>No windows in this job.</div>
-                )}
-
-                {selectedJob && sizedWindows.length > 0 && (
-                  <div style={{ marginTop: 12, padding: "12px 14px", background: "#F7FAF4", borderRadius: 8, border: "1px solid rgba(109,179,68,0.25)" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Job Totals</div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
-                      <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#6DB344", marginRight: 6 }} />Top/Side L-Flange</span>
-                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{totals.topside.pieces} pcs · {jobBatches.topside.length} coil cut{jobBatches.topside.length === 1 ? "" : "s"}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
-                      <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#b87333", marginRight: 6 }} />Bottom L-Flange</span>
-                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{totals.bottom.pieces} pcs · {jobBatches.bottom.length} coil cut{jobBatches.bottom.length === 1 ? "" : "s"}</span>
-                    </div>
-                    {missingCount > 0 && <div style={{ fontSize: 11, color: "#c0392b", marginTop: 6 }}>{missingCount} window{missingCount !== 1 ? "s" : ""} skipped (size not set).</div>}
-                  </div>
-                )}
-
-                {selectedJob && sizedWindows.length > 0 && (
-                  <button onClick={() => runMetalPDF({ name: selectedJob.job.customerName, po: selectedJob.job.poNumber, date: selectedJob.job.date, windows: sizedWindows })} disabled={metalExporting} style={{
-                    width: "100%", marginTop: 12, padding: "13px 0", border: "none", borderRadius: 6,
-                    background: metalExporting ? "#9ecb7f" : "#6DB344", fontSize: 14, fontWeight: 700,
-                    color: "#fff", cursor: metalExporting ? "default" : "pointer", letterSpacing: 0.3
-                  }}>{metalExporting ? "Generating…" : "⬇ Export Warehouse Cut List (PDF)"}</button>
-                )}
               </div>
 
-              {/* Manual list — when the job isn't uploaded */}
+              {/* Wrap list — editable working copy */}
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 4 }}>Manual List</div>
-                <div style={{ fontSize: 11, color: "#999", marginBottom: 10 }}>When the job isn't uploaded — build the window list by hand.</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase" }}>Wrap List</div>
+                  {metalWork.length > 0 && <button onClick={clearWork} style={{ background: "none", border: "none", fontSize: 11, color: "#999", cursor: "pointer", textDecoration: "underline" }}>Clear</button>}
+                </div>
 
-                <input type="text" value={metalManualName} onChange={e => setMetalManualName(e.target.value)} placeholder="List name (for the export, optional)"
-                  style={{ width: "100%", padding: "9px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, boxSizing: "border-box", marginBottom: 10 }} />
+                <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                  <input type="text" value={metalListName} onChange={e => setMetalListName(e.target.value)} placeholder="List name (for the export)"
+                    style={{ flex: 2, minWidth: 0, padding: "9px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, boxSizing: "border-box" }} />
+                  <input type="text" value={metalListPo} onChange={e => setMetalListPo(e.target.value)} placeholder="PO #"
+                    style={{ flex: 1, minWidth: 0, padding: "9px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, boxSizing: "border-box" }} />
+                </div>
 
-                {metalManualUnits.map((mu, i) => {
-                  const w = parseFloat(mu.w) || 0, h = parseFloat(mu.h) || 0, valid = w > 0 && h > 0;
+                <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 10, color: "#aaa", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, padding: "0 2px 4px" }}>
+                  <span style={{ flex: "0 0 66px" }}>Label</span>
+                  <span style={{ flex: 1, textAlign: "center" }}>W</span>
+                  <span style={{ flex: "0 0 10px" }} />
+                  <span style={{ flex: 1, textAlign: "center" }}>H</span>
+                  <span style={{ flex: "0 0 56px", textAlign: "center" }}>Width</span>
+                  <span style={{ flex: "0 0 24px" }} />
+                </div>
+
+                {metalWork.map((r, i) => {
+                  const w = parseFloat(r.w) || 0, h = parseFloat(r.h) || 0, valid = w > 0 && h > 0;
                   return (
                     <div key={i} style={{ borderBottom: "1px solid #F0F0F0", paddingBottom: 8, marginBottom: 8 }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <input type="text" value={mu.label} onChange={e => updateManualUnit(i, "label", e.target.value)} placeholder="Label"
-                          style={{ flex: "0 0 74px", width: 74, padding: "8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, boxSizing: "border-box" }} />
-                        <input type="number" step="0.0625" value={mu.w} onChange={e => updateManualUnit(i, "w", e.target.value)} placeholder="W"
-                          style={{ flex: 1, minWidth: 0, padding: "8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
-                        <span style={{ color: "#bbb", fontSize: 13 }}>×</span>
-                        <input type="number" step="0.0625" value={mu.h} onChange={e => updateManualUnit(i, "h", e.target.value)} placeholder="H"
-                          style={{ flex: 1, minWidth: 0, padding: "8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
-                        <button onClick={() => removeManualUnit(i)} style={{ flex: "0 0 auto", background: "none", border: "none", color: "#c0392b", fontSize: 20, lineHeight: 1, cursor: "pointer", padding: "0 4px" }}>×</button>
+                        <input type="text" value={r.label} onChange={e => updateWorkRow(i, "label", e.target.value)} placeholder="Label"
+                          style={{ flex: "0 0 66px", width: 66, padding: "8px 6px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, boxSizing: "border-box" }} />
+                        <input type="number" step="0.0625" value={r.w} onChange={e => updateWorkRow(i, "w", e.target.value)} placeholder="W"
+                          style={{ flex: 1, minWidth: 0, padding: "8px 4px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+                        <span style={{ color: "#bbb", fontSize: 13, flex: "0 0 10px", textAlign: "center" }}>×</span>
+                        <input type="number" step="0.0625" value={r.h} onChange={e => updateWorkRow(i, "h", e.target.value)} placeholder="H"
+                          style={{ flex: 1, minWidth: 0, padding: "8px 4px", border: "1px solid #ddd", borderRadius: 6, fontSize: 14, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+                        <input type="number" step="0.25" value={r.width} onChange={e => updateWorkRow(i, "width", e.target.value)} placeholder={String(defWidth)}
+                          style={{ flex: "0 0 56px", width: 56, padding: "8px 4px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, fontWeight: 700, textAlign: "center", color: "#b87333", boxSizing: "border-box" }} />
+                        <button onClick={() => removeWorkRow(i)} style={{ flex: "0 0 20px", background: "none", border: "none", color: "#c0392b", fontSize: 20, lineHeight: 1, cursor: "pointer", padding: 0 }}>×</button>
                       </div>
                       {valid && <div style={{ marginTop: 4 }}>{computeWraps(w, h).map((p, k) => <PieceRow key={k} p={p} />)}</div>}
                     </div>
                   );
                 })}
 
-                <button onClick={addManualUnit} style={{
+                <button onClick={addWorkRow} style={{
                   width: "100%", padding: "10px 0", marginTop: 2, border: "1px dashed #cbd5c0", borderRadius: 6,
                   background: "#F7FAF4", fontSize: 13, fontWeight: 600, color: "#6DB344", cursor: "pointer"
-                }}>+ Add Window</button>
+                }}>+ Add Window / Door</button>
 
-                {manualSized.length > 0 && (
+                {workSized.length > 0 && (
                   <div style={{ marginTop: 12, padding: "12px 14px", background: "#F7FAF4", borderRadius: 8, border: "1px solid rgba(109,179,68,0.25)" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>List Totals</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Totals · {coilWidth}" coil</div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
                       <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#6DB344", marginRight: 6 }} />Top/Side L-Flange</span>
-                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{manualTotals.topside.pieces} pcs · {manualBatches.topside.length} coil cut{manualBatches.topside.length === 1 ? "" : "s"}</span>
+                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{totals.topside.pieces} pcs · {workBatches.topside.length} coil cut{workBatches.topside.length === 1 ? "" : "s"}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
                       <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#b87333", marginRight: 6 }} />Bottom L-Flange</span>
-                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{manualTotals.bottom.pieces} pcs · {manualBatches.bottom.length} coil cut{manualBatches.bottom.length === 1 ? "" : "s"}</span>
+                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{totals.bottom.pieces} pcs · {workBatches.bottom.length} coil cut{workBatches.bottom.length === 1 ? "" : "s"}</span>
                     </div>
                   </div>
                 )}
 
-                {manualSized.length > 0 && (
-                  <button onClick={() => runMetalPDF({ name: metalManualName || "Manual List", po: "", date: "", windows: manualSized })} disabled={metalExporting} style={{
+                {workSized.length > 0 && (
+                  <button onClick={() => runMetalPDF({ name: metalListName || "Wrap List", po: metalListPo, date: "", windows: workSized })} disabled={metalExporting} style={{
                     width: "100%", marginTop: 12, padding: "13px 0", border: "none", borderRadius: 6,
                     background: metalExporting ? "#9ecb7f" : "#6DB344", fontSize: 14, fontWeight: 700,
                     color: "#fff", cursor: metalExporting ? "default" : "pointer", letterSpacing: 0.3
                   }}>{metalExporting ? "Generating…" : "⬇ Export Warehouse Cut List (PDF)"}</button>
                 )}
               </div>
-
-              {/* Per-window breakdown */}
-              {sizedWindows.map(({ u, w, h }, idx) => (
-                <div key={idx} style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 10, border: "1px solid #E8E8E8" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>{u.label || "Window"}{u.location ? <span style={{ fontSize: 12, fontWeight: 500, color: "#999" }}> · {u.location}</span> : null}</div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#888" }}>{toFraction(w)}" × {toFraction(h)}"</div>
-                  </div>
-                  {computeWraps(w, h).map((p, i) => <PieceRow key={i} p={p} />)}
-                </div>
-              ))}
             </div>
           </div>
         );
