@@ -1337,7 +1337,7 @@
       window_trad: { sideJamb_length: -1.25, headJamb_length: 0, jamb_width: -2.75, stool_length: 10, stool_width_extra: 2, sideCasing_length: -1, headCasing_length: 0, apron_length: 10 },
       entry_door: { sideCasing_length: 6, headCasing_length: 8, threshold_length: 8, sideJamb_length: 2, headJamb_length: 2, jamb_width: -4.5625 },
       patio_door: { sideJamb_length: 2, headJamb_length: 2, sillJamb_length: 2, jamb_width: -4.5625, sideCasing_length: 6, headCasing_length: 8, threshold_length: 8 },
-      bending_metal: { side_addon: 1, top_addon: 3, bottom_addon: 3 },
+      bending_metal: { side_addon: 1, top_addon: 3, bottom_addon: 3, coil_width: 24, strip_width: 5 },
       thickness: 0.625,
       boardWaste: 5,
     };
@@ -3038,10 +3038,9 @@
       const [metalJobId, setMetalJobId] = useState(""); // selected job for Bending Metal
       const [metalSearch, setMetalSearch] = useState(""); // type-to-search job finder
       const [metalExporting, setMetalExporting] = useState(false); // export PDF in progress
+      const [metalAddonsOpen, setMetalAddonsOpen] = useState(false); // collapse wrap add-ons (hidden by default)
       const [metalManualName, setMetalManualName] = useState(""); // manual-list title for export
       const [metalManualUnits, setMetalManualUnits] = useState([]); // manual windows: [{label, w, h}]
-      const [metalW, setMetalW] = useState(""); // manual window width
-      const [metalH, setMetalH] = useState(""); // manual window height
       const pdfInputRef = useRef(null);
 
       // Online/offline tracking — flush queued offline jobs on reconnect
@@ -4009,6 +4008,29 @@
         }));
         const feet = inches => (inches / 12).toFixed(1);
 
+        // Coil batching — coil stock is coil_width" wide; each wrap uses ~strip_width",
+        // so batchSize pieces come off one coil cut. Group similar lengths together and
+        // cut each coil segment to the longest piece in the batch to minimize waste.
+        const batchSize = Math.max(1, Math.floor((bm.coil_width || 24) / (bm.strip_width || 5)));
+        const expandPieces = (windows, typeKey) => {
+          const arr = [];
+          windows.forEach(({ u, w, h }) => computeWraps(w, h).forEach(p => {
+            if (p.type !== typeKey) return;
+            for (let q = 0; q < p.qty; q++) arr.push({ where: (u.label || "Window") + (u.location ? " · " + u.location : ""), part: p.part, length: p.length });
+          }));
+          return arr;
+        };
+        const makeBatches = (pieces) => {
+          const sorted = pieces.slice().sort((a, b) => b.length - a.length);
+          const batches = [];
+          for (let i = 0; i < sorted.length; i += batchSize) {
+            const items = sorted.slice(i, i + batchSize);
+            batches.push({ items, coilLen: items[0].length });
+          }
+          return batches;
+        };
+        const jobBatches = { topside: makeBatches(expandPieces(sizedWindows, "topside")), bottom: makeBatches(expandPieces(sizedWindows, "bottom")) };
+
         // Type-to-search job finder
         const mq = metalSearch.toLowerCase().trim();
         const metalMatches = savedJobs
@@ -4044,11 +4066,12 @@
             const margin = 12, contentW = pageW - margin * 2, bottomLimit = pageH - margin - 4;
             let y = margin;
             const GREEN = [109, 179, 68], COPPER = [184, 115, 51], DARK = [26, 26, 26];
-            const TEXT_MUTE = [130, 130, 130], BORDER = [221, 221, 221], CB = [150, 150, 150], ZEBRA = [248, 250, 246];
+            const TEXT_MUTE = [130, 130, 130], BORDER = [221, 221, 221], CB = [150, 150, 150];
             const ensure = (need, onBreak) => { if (y + need > bottomLimit) { pdf.addPage(); y = margin; if (onBreak) onBreak(); } };
 
-            // Header
-            try { pdf.addImage(LOGO_FULL, "PNG", margin, y, 55, 14); } catch (_) {}
+            // Header — logo drawn at its true 406×151 aspect ratio (no stretch)
+            const logoW = 46, logoH = logoW * 151 / 406;
+            try { pdf.addImage(LOGO_FULL, "PNG", margin, y, logoW, logoH); } catch (_) {}
             pdf.setFont("Roboto", "bold"); pdf.setFontSize(13); pdf.setTextColor(...DARK);
             pdf.text(name || "—", pageW - margin, y + 5, { align: "right" });
             pdf.setFont("Roboto", "normal"); pdf.setFontSize(9.5); pdf.setTextColor(...TEXT_MUTE);
@@ -4061,50 +4084,64 @@
             pdf.setDrawColor(...BORDER); pdf.setLineWidth(0.3); pdf.line(margin, y, pageW - margin, y);
             y += 6;
 
-            // Build rows grouped by metal type
+            // Batching note
+            pdf.setFont("Roboto", "normal"); pdf.setFontSize(8.5); pdf.setTextColor(...TEXT_MUTE);
+            pdf.text('Batched for ' + (bm.coil_width || 24) + '" coil — ' + batchSize + ' pieces per coil cut, grouped by length. Cut each coil segment to the batch length, then trim each piece.', margin, y, { maxWidth: contentW });
+            y += 7;
+
+            // Expand + batch each metal type by similar length
             const sections = [
-              { key: "topside", title: "TOP / SIDE L-FLANGE", color: GREEN, rows: [] },
-              { key: "bottom", title: "BOTTOM L-FLANGE", color: COPPER, rows: [] },
+              { key: "topside", title: "TOP / SIDE L-FLANGE", color: GREEN },
+              { key: "bottom", title: "BOTTOM L-FLANGE", color: COPPER },
             ];
-            const secTotals = { topside: { pieces: 0, inches: 0 }, bottom: { pieces: 0, inches: 0 } };
-            windows.forEach(({ u, w, h }) => computeWraps(w, h).forEach(p => {
-              secTotals[p.type].pieces += p.qty;
-              secTotals[p.type].inches += p.qty * p.length;
-              sections.find(s => s.key === p.type).rows.push({
-                where: (u.label || "Window") + (u.location ? " · " + u.location : ""),
-                part: p.part, cut: p.qty + " × " + toFraction(p.length) + '"',
-              });
-            }));
+            const secData = {};
+            sections.forEach(sec => {
+              const pieces = expandPieces(windows, sec.key);
+              const batches = makeBatches(pieces);
+              secData[sec.key] = { pieces, batches, coilInches: batches.reduce((s, b) => s + b.coilLen, 0) };
+            });
 
             const CB_X = margin + 2, TXT_X = margin + 11;
             const renderSectionHeader = (sec) => {
+              const d = secData[sec.key];
               pdf.setFillColor(...sec.color); pdf.rect(margin, y, contentW, 8, "F");
               pdf.setFont("Roboto", "bold"); pdf.setFontSize(10); pdf.setTextColor(255, 255, 255);
               pdf.text(sec.title, margin + 3, y + 5.4);
-              const t = secTotals[sec.key];
-              pdf.text(t.pieces + " pcs  ·  " + feet(t.inches) + " ft", pageW - margin - 3, y + 5.4, { align: "right" });
+              pdf.text(d.pieces.length + " pcs  ·  " + d.batches.length + " coil cut" + (d.batches.length === 1 ? "" : "s") + "  ·  " + feet(d.coilInches) + " ft coil", pageW - margin - 3, y + 5.4, { align: "right" });
               y += 8;
             };
+
             sections.forEach(sec => {
-              if (!sec.rows.length) return;
-              ensure(20);
+              const d = secData[sec.key];
+              if (!d.pieces.length) return;
+              ensure(26);
               renderSectionHeader(sec);
-              sec.rows.forEach((r, i) => {
-                const rowH = 9;
-                ensure(rowH, () => renderSectionHeader(sec));
-                if (i % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
-                pdf.setDrawColor(...CB); pdf.setLineWidth(0.4);
-                pdf.rect(CB_X, y + rowH / 2 - 2.5, 5, 5, "S");
-                pdf.setFont("Roboto", "bold"); pdf.setFontSize(10.5); pdf.setTextColor(...DARK);
-                pdf.text(r.where, TXT_X, y + 5.8);
-                pdf.setFont("Roboto", "normal"); pdf.setFontSize(9.5); pdf.setTextColor(...TEXT_MUTE);
-                pdf.text(r.part, margin + contentW * 0.6, y + 5.8);
-                pdf.setFont("Roboto", "bold"); pdf.setFontSize(11); pdf.setTextColor(...DARK);
-                pdf.text(r.cut, pageW - margin - 3, y + 5.8, { align: "right" });
-                pdf.setDrawColor(...BORDER); pdf.setLineWidth(0.2); pdf.line(margin, y + rowH, pageW - margin, y + rowH);
-                y += rowH;
+              d.batches.forEach((batch, bi) => {
+                const bh = 7;
+                ensure(bh + 9, () => renderSectionHeader(sec));
+                pdf.setFillColor(238, 240, 236); pdf.rect(margin, y, contentW, bh, "F");
+                pdf.setFont("Roboto", "bold"); pdf.setFontSize(9); pdf.setTextColor(...DARK);
+                pdf.text("BATCH " + (bi + 1) + "   —   cut coil @ " + toFraction(batch.coilLen) + '"', margin + 3, y + 4.8);
+                pdf.setFont("Roboto", "normal"); pdf.setTextColor(...TEXT_MUTE);
+                pdf.text(batch.items.length + " pc" + (batch.items.length === 1 ? "" : "s"), pageW - margin - 3, y + 4.8, { align: "right" });
+                y += bh;
+                batch.items.forEach(it => {
+                  const rowH = 8.5;
+                  ensure(rowH, () => renderSectionHeader(sec));
+                  pdf.setDrawColor(...CB); pdf.setLineWidth(0.4);
+                  pdf.rect(CB_X, y + rowH / 2 - 2.5, 5, 5, "S");
+                  pdf.setFont("Roboto", "bold"); pdf.setFontSize(10); pdf.setTextColor(...DARK);
+                  pdf.text(it.where, TXT_X, y + 5.6);
+                  pdf.setFont("Roboto", "normal"); pdf.setFontSize(9); pdf.setTextColor(...TEXT_MUTE);
+                  pdf.text(it.part, margin + contentW * 0.62, y + 5.6);
+                  pdf.setFont("Roboto", "bold"); pdf.setFontSize(10.5); pdf.setTextColor(...DARK);
+                  pdf.text(toFraction(it.length) + '"', pageW - margin - 3, y + 5.6, { align: "right" });
+                  pdf.setDrawColor(...BORDER); pdf.setLineWidth(0.2); pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+                  y += rowH;
+                });
+                y += 3;
               });
-              y += 6;
+              y += 4;
             });
 
             const lastName = (name || "Manual").split(" ").pop() || "Manual";
@@ -4117,9 +4154,6 @@
           }
         };
 
-        const mW = parseFloat(metalW) || 0, mH = parseFloat(metalH) || 0;
-        const manualValid = mW > 0 && mH > 0;
-
         // Manual list (no saved job) — build windows by hand
         const addManualUnit = () => setMetalManualUnits(prev => [...prev, { label: "", w: "", h: "" }]);
         const updateManualUnit = (i, key, val) => setMetalManualUnits(prev => prev.map((u, idx) => idx === i ? { ...u, [key]: val } : u));
@@ -4129,6 +4163,7 @@
           .filter(x => x.w > 0 && x.h > 0);
         const manualTotals = { topside: { pieces: 0, inches: 0 }, bottom: { pieces: 0, inches: 0 } };
         manualSized.forEach(({ w, h }) => computeWraps(w, h).forEach(p => { manualTotals[p.type].pieces += p.qty; manualTotals[p.type].inches += p.qty * p.length; }));
+        const manualBatches = { topside: makeBatches(expandPieces(manualSized, "topside")), bottom: makeBatches(expandPieces(manualSized, "bottom")) };
 
         const typeColor = t => t === "bottom" ? "#b87333" : "#6DB344";
         const PieceRow = ({ p }) => (
@@ -4171,33 +4206,25 @@
                 L-flange wrap lengths per window. Sides = Height + side add-on, Top = Width + top add-on (both Top/Side L-Flange). Bottom = Width + bottom add-on (Bottom L-Flange — different bend).
               </div>
 
-              {/* Add-on settings */}
+              {/* Add-on settings — collapsed by default */}
               <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase" }}>Wrap Add-ons</div>
-                  <button onClick={resetBM} style={{ background: "none", border: "none", fontSize: 11, color: "#999", cursor: "pointer", textDecoration: "underline" }}>Reset defaults</button>
+                <div onClick={() => setMetalAddonsOpen(o => !o)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase" }}>Wrap Add-ons & Coil</div>
+                  <span style={{ fontSize: 13, color: "#999" }}>{metalAddonsOpen ? "▲" : "▼"}</span>
                 </div>
-                <BMRow label="Side Add-on" desc="Added to Height for each side piece" value={bm.side_addon} onChange={v => updateBM("side_addon", v)} />
-                <BMRow label="Top Add-on" desc="Added to Width for the top piece" value={bm.top_addon} onChange={v => updateBM("top_addon", v)} />
-                <BMRow label="Bottom Add-on" desc="Added to Width for the bottom piece" value={bm.bottom_addon} onChange={v => updateBM("bottom_addon", v)} />
-              </div>
-
-              {/* Manual calculator */}
-              <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 }}>Quick Size</div>
-                <div style={{ display: "flex", gap: 12, marginBottom: manualValid ? 12 : 0 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>Width (in)</div>
-                    <input type="number" step="0.0625" value={metalW} onChange={e => setMetalW(e.target.value)} placeholder="W"
-                      style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 15, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+                {metalAddonsOpen && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 2 }}>
+                      <button onClick={resetBM} style={{ background: "none", border: "none", fontSize: 11, color: "#999", cursor: "pointer", textDecoration: "underline" }}>Reset defaults</button>
+                    </div>
+                    <BMRow label="Side Add-on" desc="Added to Height for each side piece" value={bm.side_addon} onChange={v => updateBM("side_addon", v)} />
+                    <BMRow label="Top Add-on" desc="Added to Width for the top piece" value={bm.top_addon} onChange={v => updateBM("top_addon", v)} />
+                    <BMRow label="Bottom Add-on" desc="Added to Width for the bottom piece" value={bm.bottom_addon} onChange={v => updateBM("bottom_addon", v)} />
+                    <BMRow label="Coil Width" desc="Coil stock width (in)" value={bm.coil_width} onChange={v => updateBM("coil_width", v)} />
+                    <BMRow label="Strip Width" desc="Width each wrap takes off the coil (in)" value={bm.strip_width} onChange={v => updateBM("strip_width", v)} />
+                    <div style={{ fontSize: 11, color: "#6DB344", fontWeight: 600, marginTop: 8 }}>→ {batchSize} pieces per coil cut</div>
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>Height (in)</div>
-                    <input type="number" step="0.0625" value={metalH} onChange={e => setMetalH(e.target.value)} placeholder="H"
-                      style={{ width: "100%", padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 15, fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
-                  </div>
-                </div>
-                {manualValid && computeWraps(mW, mH).map((p, i) => <PieceRow key={i} p={p} />)}
+                )}
               </div>
 
               {/* Job finder */}
@@ -4245,11 +4272,11 @@
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Job Totals</div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
                       <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#6DB344", marginRight: 6 }} />Top/Side L-Flange</span>
-                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{totals.topside.pieces} pcs · {feet(totals.topside.inches)}'</span>
+                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{totals.topside.pieces} pcs · {jobBatches.topside.length} coil cut{jobBatches.topside.length === 1 ? "" : "s"}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
                       <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#b87333", marginRight: 6 }} />Bottom L-Flange</span>
-                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{totals.bottom.pieces} pcs · {feet(totals.bottom.inches)}'</span>
+                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{totals.bottom.pieces} pcs · {jobBatches.bottom.length} coil cut{jobBatches.bottom.length === 1 ? "" : "s"}</span>
                     </div>
                     {missingCount > 0 && <div style={{ fontSize: 11, color: "#c0392b", marginTop: 6 }}>{missingCount} window{missingCount !== 1 ? "s" : ""} skipped (size not set).</div>}
                   </div>
@@ -4301,11 +4328,11 @@
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>List Totals</div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
                       <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#6DB344", marginRight: 6 }} />Top/Side L-Flange</span>
-                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{manualTotals.topside.pieces} pcs · {feet(manualTotals.topside.inches)}'</span>
+                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{manualTotals.topside.pieces} pcs · {manualBatches.topside.length} coil cut{manualBatches.topside.length === 1 ? "" : "s"}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
                       <span style={{ color: "#333" }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#b87333", marginRight: 6 }} />Bottom L-Flange</span>
-                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{manualTotals.bottom.pieces} pcs · {feet(manualTotals.bottom.inches)}'</span>
+                      <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{manualTotals.bottom.pieces} pcs · {manualBatches.bottom.length} coil cut{manualBatches.bottom.length === 1 ? "" : "s"}</span>
                     </div>
                   </div>
                 )}
