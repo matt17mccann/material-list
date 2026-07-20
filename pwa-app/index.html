@@ -986,7 +986,11 @@
         unit.customTrimPieces.forEach(ctp => {
           // Find and replace matching piece, or add as new
           const aliases = HEAD_CASING_ALIASES.includes(ctp.piece) ? HEAD_CASING_ALIASES : [ctp.piece];
-          const matchIdx = materials.findIndex(m => aliases.includes(m.name));
+          // "Other" is a free-form catch-all, so each one is its own line item.
+          // Never match an existing material — otherwise a second "Other" would
+          // find the first and overwrite it instead of adding alongside it.
+          const isOther = ctp.piece === "Other";
+          const matchIdx = isOther ? -1 : materials.findIndex(m => aliases.includes(m.name));
           const isJamb = ctp.piece.includes("Jamb") || ctp.piece.includes("Stool") || ctp.piece.includes("Sill");
           // Resolve the selected profile explicitly: jamb-stock labels for jamb/stool
           // pieces, then casing, then stop profiles. (getProfileWidth alone always
@@ -998,7 +1002,9 @@
           const profileWidth = jambStockOverride?.width ?? casingMatch?.width ?? stopMatch?.width ?? 3.5;
           const explicitThickness = ctp.thickness ? parseFloat(ctp.thickness) : null;
           const override = {
-            name: ctp.piece,
+            // Name an "Other" after its profile so several of them stay tellable
+            // apart on the report instead of all reading "Other".
+            name: isOther && ctp.profile ? ctp.profile : ctp.piece,
             qty: ctp.qty || 1,
             length: matchIdx >= 0 ? materials[matchIdx].length : (ctp.piece.includes("Side") ? h : w),
             // Custom (typed) profile — width is unknown, so leave it blank rather than guess
