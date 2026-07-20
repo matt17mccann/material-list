@@ -1684,6 +1684,25 @@
       return rows;
     }
 
+    // Extra material added under a specific unit (unit.manualMaterials), grouped by
+    // description and carrying the units it belongs to so the purchase summary can
+    // label it the same way cuts are. Job-level extras are deliberately excluded —
+    // they aren't tied to a unit and have their own section on the report.
+    function unitExtraMaterials(units) {
+      const rows = {};
+      (units || []).forEach(u => {
+        const src = (u.label || "Unit") + (u.location ? " (" + u.location + ")" : "");
+        (u.manualMaterials || []).forEach(mm => {
+          if (!mm.description) return;
+          const qty = mm.qty || 1;
+          if (!rows[mm.description]) rows[mm.description] = { description: mm.description, quantity: 0, sources: [] };
+          rows[mm.description].quantity += qty;
+          rows[mm.description].sources.push(qty > 1 ? src + " ×" + qty : src);
+        });
+      });
+      return Object.values(rows);
+    }
+
     // Jobs saved before the unit-extras fix printed unit-attached materials as a
     // single job-level line whose quantity never updated (stuck at 1). Flag any
     // saved job where the unit totals disagree with the job-level entry the old
@@ -1743,8 +1762,8 @@
       });
     }
 
-    function BoardSummary({ units, catalog, optimizePerUnit, extraBoards, extraMaterials, boardWaste }) {
-      const extraMats = mergedExtraMaterials(extraMaterials, units);
+    function BoardSummary({ units, catalog, optimizePerUnit, extraBoards, boardWaste }) {
+      const extraMats = unitExtraMaterials(units);
       const result = optimizeBoards(units, catalog, optimizePerUnit, boardWaste);
       const boards = [...result.boards];
       const summary = { ...result.summary };
@@ -1827,11 +1846,11 @@
                 </tr>
               ))}
 
-              {/* Extra material we're ordering — one line each, not cut from stock */}
+              {/* Extra material added under a unit — one line each, not cut from stock */}
               {extraMats.length > 0 && (
                 <tr>
                   <td colSpan={7} style={{ background: "#F0F0EF", padding: "7px 10px", fontWeight: 700, fontSize: 12, borderTop: "2px solid #bbb", borderBottom: "1px solid #ddd" }}>
-                    Extra Material — ordered, not cut from stock
+                    Extra Material — added per unit, not cut from stock
                   </td>
                 </tr>
               )}
@@ -1839,10 +1858,9 @@
                 <tr key={"xm" + i} style={{ borderBottom: "1px solid #ddd", background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
                   <td style={{ padding: "6px 10px", color: "#bbb" }}>—</td>
                   <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{m.quantity}</td>
-                  <td colSpan={5} style={{ padding: "6px 8px" }}>
-                    {m.description}
-                    {m.category ? <span style={{ color: "#999", marginLeft: 6, fontSize: 11 }}>({m.category})</span> : null}
-                  </td>
+                  <td colSpan={3} style={{ padding: "6px 8px" }}>{m.description}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 11 }}>{m.sources.join(", ")}</td>
+                  <td style={{ textAlign: "center", padding: "6px 8px", color: "#888" }}>—</td>
                 </tr>
               ))}
             </tbody>
@@ -2167,7 +2185,7 @@
             });
           }
 
-          const bsExtraMats = mergedExtraMaterials(job.extraMaterials, units);
+          const bsExtraMats = unitExtraMaterials(units);
           if (boards.length === 0 && bsExtraMats.length === 0) return;
 
           pdf.addPage();
@@ -2320,13 +2338,17 @@
             pdf.setFont("Roboto", "bold");
             pdf.setFontSize(9);
             pdf.setTextColor(...TEXT_DARK);
-            pdf.text("Extra Material — ordered, not cut from stock", margin + 2, y + 4.8);
+            pdf.text("Extra Material — added per unit, not cut from stock", margin + 2, y + 4.8);
             y += 7;
 
-            const xmDescX = margin + 36, xmDescW = contentW - 38;
+            // Line up with the board columns: qty under Stock, description under
+            // Type / Size, and the unit labels under Cuts from this board.
+            const xmDescX = margin + 36, xmDescW = 92;
+            const xmSrcX = margin + 130, xmSrcW = 40;
             bsExtraMats.forEach((m, i) => {
-              const lines = pdf.splitTextToSize(m.description + (m.category ? "  (" + m.category + ")" : ""), xmDescW);
-              const rowH = Math.max(6, lines.length * 3.4 + 2);
+              const lines = pdf.splitTextToSize(m.description, xmDescW);
+              const srcLines = pdf.splitTextToSize(m.sources.join(", "), xmSrcW);
+              const rowH = Math.max(6, Math.max(lines.length, srcLines.length) * 3.4 + 2);
               if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; }
               if (i % 2 === 1) {
                 pdf.setFillColor(...ZEBRA);
@@ -2336,12 +2358,15 @@
               pdf.setFontSize(8);
               pdf.setTextColor(...TEXT_MUTE);
               pdf.text("—", margin + 2, y + 4);
+              pdf.text("—", margin + 178, y + 4, { align: "center" });
               pdf.setFont("Roboto", "bold");
               pdf.setTextColor(...GREEN);
               pdf.text(String(m.quantity), margin + 26, y + 4, { align: "center" });
               pdf.setFont("Roboto", "normal");
               pdf.setTextColor(...TEXT_DARK);
               lines.forEach((ln, li) => pdf.text(ln, xmDescX, y + 4 + li * 3.4));
+              pdf.setTextColor(...TEXT_MUTE);
+              srcLines.forEach((ln, li) => pdf.text(ln, xmSrcX, y + 4 + li * 3.4));
               pdf.setDrawColor(...BORDER);
               pdf.line(margin, y + rowH, pageW - margin, y + rowH);
               y += rowH;
@@ -2688,7 +2713,7 @@
               </div>
             )}
 
-            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} extraMaterials={job.extraMaterials} /></div>
+            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} /></div>
 
             <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", display: "flex", justifyContent: "space-between" }}>
               <span>Materials Checklist | {job.address || ""}</span>
@@ -2845,7 +2870,7 @@
             </div>
           )}
 
-          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} extraMaterials={job.extraMaterials} /></div>
+          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} /></div>
 
           <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", textAlign: "center" }}>
             Renewal by Andersen — Detailed Cut List • {new Date().toLocaleDateString()}
@@ -2959,7 +2984,7 @@
 
             {/* ━━━ PAGE BREAK — Board Summary on its own page ━━━ */}
             <div data-pdf-new-page="true" data-pdf-section="board-summary">
-              <BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} extraMaterials={job.extraMaterials} />
+              <BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} />
             </div>
 
             <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", textAlign: "center" }}>
