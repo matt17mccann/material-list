@@ -1847,7 +1847,7 @@
           {/* Extra boards ordered whole */}
           {(extraBoards || []).length > 0 && (
             <div style={{ marginTop: 14, border: "1px solid #E8E8E8", borderRadius: 6, overflow: "hidden" }}>
-              <div style={{ padding: "8px 12px", background: "rgba(109,179,68,0.10)", fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Extra Boards — ordered whole</div>
+              <div style={{ padding: "8px 12px", background: "rgba(109,179,68,0.10)", fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Extra Boards</div>
               {extraBoards.map((eb, i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 12px", borderTop: "1px solid #e4ede0", fontSize: 13 }}>
                   <span>{[eb.species, eb.materialType, eb.profile].filter(Boolean).join(" ")}{eb.note ? <span style={{ color: "#999" }}> — {eb.note}</span> : null}</span>
@@ -1860,7 +1860,7 @@
           {/* Whole-job extra material */}
           {jobExtras.length > 0 && (
             <div style={{ marginTop: 14, border: "1px solid #E8E8E8", borderRadius: 6, overflow: "hidden" }}>
-              <div style={{ padding: "8px 12px", background: "rgba(109,179,68,0.10)", fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Extra Material — whole job</div>
+              <div style={{ padding: "8px 12px", background: "rgba(109,179,68,0.10)", fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Other Material</div>
               {jobExtras.map((m, i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 12px", borderTop: "1px solid #e4ede0", fontSize: 13 }}>
                   <span>{m.description}{m.category ? <span style={{ color: "#999", fontSize: 11, marginLeft: 6 }}>({m.category})</span> : null}</span>
@@ -2284,7 +2284,7 @@
             pdf.setFont("Roboto", "bold");
             pdf.setFontSize(9);
             pdf.setTextColor(...TEXT_DARK);
-            pdf.text("Extra Boards — ordered whole", margin + 3, y + 4.8);
+            pdf.text("Extra Boards", margin + 3, y + 4.8);
             y += 7;
             job.extraBoards.forEach((eb, i) => {
               const rowH = 6;
@@ -2313,7 +2313,7 @@
             pdf.setFont("Roboto", "bold");
             pdf.setFontSize(9);
             pdf.setTextColor(...TEXT_DARK);
-            pdf.text("Extra Material — whole job", margin + 3, y + 4.8);
+            pdf.text("Other Material", margin + 3, y + 4.8);
             y += 7;
             jobExtras.forEach((m, i) => {
               const desc = m.description + (m.category ? "  (" + m.category + ")" : "");
