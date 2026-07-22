@@ -163,6 +163,25 @@
       const resolvedLabel = JAMB_STOCK_RENAMES[label] || label;
       return jambStockList(catalog).find(j => j.label === resolvedLabel) || null;
     }
+    // Jamb-stock <option>s grouped and labeled by thickness so 5/8" and 5/4"
+    // (which sort next to each other by width) can't be grabbed by mistake.
+    function JambStockOptions({ catalog, allowTraditional }) {
+      const list = jambStockList(catalog).filter(j => !j.traditionalOnly || allowTraditional);
+      const groups = [
+        { t: 0.625, label: '——  5/8" thick  ——' },
+        { t: 0.75, label: '——  3/4" thick  ——' },
+        { t: 1.25, label: '——  5/4" THICK (heavy)  ——' },
+      ];
+      return groups.map(g => {
+        const items = list.filter(j => (j.thickness != null ? j.thickness : jambThicknessFromLabel(j.label)) === g.t);
+        if (!items.length) return null;
+        return (
+          <optgroup key={g.t} label={g.label}>
+            {items.map(j => <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>)}
+          </optgroup>
+        );
+      });
+    }
     function getJambStockWidth(neededWidth, catalog) {
       const list = jambStockList(catalog);
       for (const stock of list) {
@@ -1684,25 +1703,6 @@
       return rows;
     }
 
-    // Extra material added under a specific unit (unit.manualMaterials), grouped by
-    // description and carrying the units it belongs to so the purchase summary can
-    // label it the same way cuts are. Job-level extras are deliberately excluded —
-    // they aren't tied to a unit and have their own section on the report.
-    function unitExtraMaterials(units) {
-      const rows = {};
-      (units || []).forEach(u => {
-        const src = (u.label || "Unit") + (u.location ? " (" + u.location + ")" : "");
-        (u.manualMaterials || []).forEach(mm => {
-          if (!mm.description) return;
-          const qty = mm.qty || 1;
-          if (!rows[mm.description]) rows[mm.description] = { description: mm.description, quantity: 0, sources: [] };
-          rows[mm.description].quantity += qty;
-          rows[mm.description].sources.push(qty > 1 ? src + " ×" + qty : src);
-        });
-      });
-      return Object.values(rows);
-    }
-
     // Jobs saved before the unit-extras fix printed unit-attached materials as a
     // single job-level line whose quantity never updated (stuck at 1). Flag any
     // saved job where the unit totals disagree with the job-level entry the old
@@ -1762,109 +1762,117 @@
       });
     }
 
-    function BoardSummary({ units, catalog, optimizePerUnit, extraBoards, boardWaste }) {
-      const extraMats = unitExtraMaterials(units);
+    function BoardSummary({ units, catalog, optimizePerUnit, extraBoards, jobExtraMaterials, boardWaste }) {
+      // Purchasing totals are still board-optimized so nothing is lost — but the
+      // detail is shown per unit, not as a big factory board list.
       const result = optimizeBoards(units, catalog, optimizePerUnit, boardWaste);
-      const boards = [...result.boards];
       const summary = { ...result.summary };
+      let totalBoards = result.boards.length;
+      (extraBoards || []).forEach(eb => { const len = parseInt(eb.stockLength) || 120; summary[len] = (summary[len] || 0) + 1; totalBoards++; });
       const STOCK_LABELS = result.STOCK_LABELS;
 
-      // Append extra boards as real numbered entries
-      if (extraBoards && extraBoards.length > 0) {
-        const defaultFinish = units[0]?.finish || "";
-        extraBoards.forEach(eb => {
-          const stockLen = parseInt(eb.stockLength) || 120;
-          const isJamb = eb.materialType === "Jamb Extension";
-          const board = {
-            stockLength: stockLen,
-            materialType: eb.materialType || "Casing",
-            species: eb.species || units[0]?.species || "Oak",
-            finish: eb.finish || defaultFinish,
-            profile: isJamb ? null : (eb.profile || null),
-            jambStock: isJamb ? (findJambStock(eb.profile, catalog) || { label: eb.profile || "1x6", width: 5.5 }) : null,
-            cuts: [],
-            isExtra: true,
-            extraNote: eb.note || ""
-          };
-          boards.push(board);
-          summary[stockLen] = (summary[stockLen] || 0) + 1;
-        });
-      }
+      const perUnit = (units || [])
+        .filter(u => !isStormDoor(u))
+        .map(u => ({ u, mats: calcMaterials(u, catalog), extras: (u.manualMaterials || []).filter(m => m.description) }))
+        .filter(x => x.mats.length || x.extras.length);
+      const jobExtras = (jobExtraMaterials || []).filter(m => m.description);
 
-      if (boards.length === 0 && extraMats.length === 0) return null;
-      const totalBoards = boards.length;
+      if (perUnit.length === 0 && (extraBoards || []).length === 0 && jobExtras.length === 0) return null;
+
+      const th = { textAlign: "left", padding: "6px 10px", fontWeight: 700, color: "#6DB344", fontSize: 11 };
+      const thC = { ...th, textAlign: "center", color: "#5A9637" };
+      const stockOf = m => m.jambStock ? fixBasswoodThickness(m.species, m.jambStock.label) : "—";
+      const profileOf = m => m.profile ? fixBasswoodThickness(m.species, m.profile) : "—";
 
       return (
         <div style={{ marginTop: 28, pageBreakBefore: "always" }}>
           <div style={{ background: "#6DB344", color: "#fff", padding: "10px 14px", fontSize: 16, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
-            Board Purchase Summary
+            Job Summary — By Unit
             {optimizePerUnit && <span style={{ fontSize: 11, fontWeight: 400, marginLeft: 12, opacity: 0.85 }}> — Optimized per unit for grain matching</span>}
           </div>
 
-
-          {/* Quick totals */}
-          <div style={{ background: "#F5F5F4", padding: "10px 14px", display: "flex", gap: 20, fontSize: 14, borderBottom: "1px solid #E8E8E8" }}>
+          {/* Purchasing totals (kept) */}
+          <div style={{ background: "#F5F5F4", padding: "10px 14px", display: "flex", gap: 20, fontSize: 14, borderBottom: "1px solid #E8E8E8", flexWrap: "wrap" }}>
             <span><strong>Total Boards:</strong> {totalBoards}</span>
             {Object.entries(summary).sort((a,b) => Number(a[0]) - Number(b[0])).map(([len, count]) => (
               <span key={len}><strong>{STOCK_LABELS[len]}:</strong> {count}</span>
             ))}
-            {extraMats.length > 0 && <span><strong>Extra Material:</strong> {extraMats.length}</span>}
           </div>
 
-          {/* Detailed board list */}
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead>
-              <tr style={{ background: "#F0F0EF" }}>
-                <th style={{ textAlign: "left", padding: "7px 10px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Board #</th>
-                <th style={{ textAlign: "center", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Stock</th>
-                <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Type / Size</th>
-                <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Species</th>
-                <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Finish</th>
-                <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Cuts from this board</th>
-                <th style={{ textAlign: "center", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Waste</th>
-              </tr>
-            </thead>
-            <tbody>
-              {boards.map((board, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid #ddd", background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
-                  <td style={{ padding: "6px 10px", fontWeight: 600 }}>{i + 1}</td>
-                  <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{STOCK_LABELS[board.stockLength]}</td>
-                  <td style={{ padding: "6px 8px" }}>{board.species} {board.materialType}{board.jambStock ? ` (${fixBasswoodThickness(board.species, board.jambStock.label)})` : ""}{board.profile ? ` — ${fixBasswoodThickness(board.species, board.profile)}` : ""}{board.isExtra ? <span style={{ fontStyle: "italic", color: "#999", marginLeft: 6 }}>(Extra)</span> : ""}</td>
-                  <td style={{ padding: "6px 8px" }}>{board.species}</td>
-                  <td style={{ padding: "6px 8px" }}>{board.finish}</td>
-                  <td style={{ padding: "6px 8px", fontSize: 11 }}>
-                    {board.cuts.map((c, j) => (
-                      <span key={j}>
-                        {j > 0 && ", "}
-                        {toFraction(c.rawLength)}" — {c.source}
-                      </span>
+          {/* Per-unit material */}
+          {perUnit.map(({ u, mats, extras }, ui) => {
+            const w = combineMeasurement(u.widthWhole, u.widthFrac);
+            const h = combineMeasurement(u.heightWhole, u.heightFrac);
+            const jd = combineMeasurement(u.jambDepthWhole, u.jambDepthFrac);
+            return (
+              <div key={ui} style={{ marginTop: ui === 0 ? 0 : 14, border: "1px solid #E8E8E8", borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 12px", background: "rgba(109,179,68,0.10)" }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>{u.label || "Unit"}{u.location ? <span style={{ fontWeight: 500, color: "#777" }}> — {u.location}</span> : null}</span>
+                  <span style={{ fontSize: 12, color: "#777" }}>{u.unitType}{u.unitType === "Window" ? " • " + u.trimStyle : ""} · {toFraction(w)}"×{toFraction(h)}"{jd > 0 ? " · JD " + toFraction(jd) + '"' : ""} · {u.species}{u.finish ? " · " + u.finish : ""}</span>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: "#F5F5F4" }}>
+                      <th style={th}>Material</th>
+                      <th style={thC}>Qty</th>
+                      <th style={thC}>Length</th>
+                      <th style={thC}>Stock</th>
+                      <th style={thC}>Thick</th>
+                      <th style={thC}>Profile</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mats.map((m, j) => (
+                      <tr key={j} style={{ borderTop: "1px solid #e4ede0", background: j % 2 ? "#fafcf8" : "#fff" }}>
+                        <td style={{ padding: "7px 10px", fontWeight: 500 }}>{m.species ? `${m.species} ${m.name}` : m.name}</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 600 }}>{m.qty}</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 700, color: "#6DB344" }}>{toFraction(m.length)}"</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#666", fontWeight: m.jambStock ? 600 : 400 }}>{stockOf(m)}</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#666" }}>{m.thickness != null ? toFraction(m.thickness) + '"' : "—"}</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#666", fontSize: 11 }}>{profileOf(m)}</td>
+                      </tr>
                     ))}
-                  </td>
-                  <td style={{ textAlign: "center", padding: "6px 8px", color: board.remaining > 24 ? "#c0392b" : "#888" }}>
-                    {toFraction(board.remaining)}"
-                  </td>
-                </tr>
-              ))}
+                    {extras.map((m, j) => (
+                      <tr key={"e" + j} style={{ borderTop: "1px solid #e4ede0", background: "#fff8ef" }}>
+                        <td style={{ padding: "7px 10px", fontWeight: 500 }}>{m.description} <span style={{ fontSize: 10, fontWeight: 700, color: "#e67e22", textTransform: "uppercase" }}>Extra</span></td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 600 }}>{m.qty || 1}</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#bbb" }}>—</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#bbb" }}>—</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#bbb" }}>—</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#bbb" }}>—</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
 
-              {/* Extra material added under a unit — one line each, not cut from stock */}
-              {extraMats.length > 0 && (
-                <tr>
-                  <td colSpan={7} style={{ background: "#F0F0EF", padding: "7px 10px", fontWeight: 700, fontSize: 12, borderTop: "2px solid #bbb", borderBottom: "1px solid #ddd" }}>
-                    Extra Material — added per unit, not cut from stock
-                  </td>
-                </tr>
-              )}
-              {extraMats.map((m, i) => (
-                <tr key={"xm" + i} style={{ borderBottom: "1px solid #ddd", background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
-                  <td style={{ padding: "6px 10px", color: "#bbb" }}>—</td>
-                  <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{m.quantity}</td>
-                  <td colSpan={3} style={{ padding: "6px 8px" }}>{m.description}</td>
-                  <td style={{ padding: "6px 8px", fontSize: 11 }}>{m.sources.join(", ")}</td>
-                  <td style={{ textAlign: "center", padding: "6px 8px", color: "#888" }}>—</td>
-                </tr>
+          {/* Extra boards ordered whole */}
+          {(extraBoards || []).length > 0 && (
+            <div style={{ marginTop: 14, border: "1px solid #E8E8E8", borderRadius: 6, overflow: "hidden" }}>
+              <div style={{ padding: "8px 12px", background: "rgba(109,179,68,0.10)", fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Extra Boards — ordered whole</div>
+              {extraBoards.map((eb, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 12px", borderTop: "1px solid #e4ede0", fontSize: 13 }}>
+                  <span>{[eb.species, eb.materialType, eb.profile].filter(Boolean).join(" ")}{eb.note ? <span style={{ color: "#999" }}> — {eb.note}</span> : null}</span>
+                  <span style={{ fontWeight: 700, color: "#6DB344" }}>{STOCK_LABELS[parseInt(eb.stockLength) || 120] || (eb.stockLength + '"')}</span>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          )}
+
+          {/* Whole-job extra material */}
+          {jobExtras.length > 0 && (
+            <div style={{ marginTop: 14, border: "1px solid #E8E8E8", borderRadius: 6, overflow: "hidden" }}>
+              <div style={{ padding: "8px 12px", background: "rgba(109,179,68,0.10)", fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Extra Material — whole job</div>
+              {jobExtras.map((m, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 12px", borderTop: "1px solid #e4ede0", fontSize: 13 }}>
+                  <span>{m.description}{m.category ? <span style={{ color: "#999", fontSize: 11, marginLeft: 6 }}>({m.category})</span> : null}</span>
+                  <span style={{ fontWeight: 700, color: "#6DB344" }}>{m.quantity || 1}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       );
     }
@@ -2161,32 +2169,17 @@
 
         const renderBoardSummary = () => {
           const result = optimizeBoards(units, catalog, job.optimizePerUnit, offsets.boardWaste);
-          const boards = [...result.boards];
           const summary = { ...result.summary };
+          let totalBoards = result.boards.length;
+          (job.extraBoards || []).forEach(eb => { const len = parseInt(eb.stockLength) || 120; summary[len] = (summary[len] || 0) + 1; totalBoards++; });
           const STOCK_LABELS = result.STOCK_LABELS;
 
-          if (job.extraBoards && job.extraBoards.length > 0) {
-            const defaultFinish = units[0]?.finish || "";
-            job.extraBoards.forEach(eb => {
-              const stockLen = parseInt(eb.stockLength) || 120;
-              const isJamb = eb.materialType === "Jamb Extension";
-              boards.push({
-                stockLength: stockLen,
-                materialType: eb.materialType || "Casing",
-                species: eb.species || units[0]?.species || "Oak",
-                finish: eb.finish || defaultFinish,
-                profile: isJamb ? null : (eb.profile || null),
-                jambStock: isJamb ? (findJambStock(eb.profile, catalog) || { label: eb.profile || "1x6", width: 5.5 }) : null,
-                cuts: [],
-                remaining: 0,
-                isExtra: true,
-              });
-              summary[stockLen] = (summary[stockLen] || 0) + 1;
-            });
-          }
-
-          const bsExtraMats = unitExtraMaterials(units);
-          if (boards.length === 0 && bsExtraMats.length === 0) return;
+          const perUnit = (units || []).filter(u => !isStormDoor(u))
+            .map(u => ({ u, mats: calcMaterials(u, catalog), extras: (u.manualMaterials || []).filter(m => m.description) }))
+            .filter(x => x.mats.length || x.extras.length);
+          const jobExtras = (job.extraMaterials || []).filter(m => m.description);
+          if (perUnit.length === 0 && (job.extraBoards || []).length === 0 && jobExtras.length === 0) return;
+          const EXTRA_ORANGE = [230, 126, 34];
 
           pdf.addPage();
           y = margin;
@@ -2196,11 +2189,11 @@
           pdf.setFont("Roboto", "bold");
           pdf.setFontSize(12);
           pdf.setTextColor(255, 255, 255);
-          pdf.text("Board Purchase Summary", margin + 3, y + 6.2);
+          pdf.text("Job Summary — By Unit", margin + 3, y + 6.2);
           if (job.optimizePerUnit) {
             pdf.setFontSize(8);
             pdf.setFont("Roboto", "normal");
-            pdf.text(" — Optimized per unit for grain matching", margin + 3 + pdf.getTextWidth("Board Purchase Summary"), y + 6.2);
+            pdf.text(" — Optimized per unit for grain matching", margin + 3 + pdf.getTextWidth("Job Summary — By Unit"), y + 6.2);
           }
           y += 9;
 
@@ -2219,154 +2212,130 @@
             pdf.text(v, tx + lw, y + 5.4);
             tx += lw + pdf.getTextWidth(v) + 6;
           };
-          writeTot("Total Boards:", boards.length);
+          writeTot("Total Boards:", totalBoards);
           Object.entries(summary).sort((a, b) => Number(a[0]) - Number(b[0])).forEach(([len, count]) => {
             writeTot(STOCK_LABELS[len] + ":", count);
           });
-          if (bsExtraMats.length > 0) writeTot("Extra Material:", bsExtraMats.length);
-          y += 8;
+          y += 10;
 
-          const bsCols = [
-            { key: "num", label: "Board #", w: 18, align: "left" },
-            { key: "stock", label: "Stock", w: 16, align: "center" },
-            { key: "type", label: "Type / Size", w: 50, align: "left" },
-            { key: "species", label: "Species", w: 22, align: "left" },
-            { key: "finish", label: "Finish", w: 22, align: "left" },
-            { key: "cuts", label: "Cuts from this board", w: 42, align: "left" },
-            { key: "waste", label: "Waste", w: 16, align: "center" },
+          // Per-unit material table columns
+          const cols = [
+            { key: "mat", label: "Material", w: 78, align: "left" },
+            { key: "qty", label: "Qty", w: 14, align: "center" },
+            { key: "len", label: "Length", w: 24, align: "center" },
+            { key: "stock", label: "Stock", w: 26, align: "center" },
+            { key: "thick", label: "Thick", w: 20, align: "center" },
+            { key: "profile", label: "Profile", w: 24, align: "left" },
           ];
-
-          const drawBsHeader = () => {
-            pdf.setFillColor(240, 240, 239);
-            pdf.rect(margin, y, contentW, 7, "F");
-            pdf.setDrawColor(...BORDER_BB);
-            pdf.setLineWidth(0.5);
-            pdf.line(margin, y + 7, pageW - margin, y + 7);
-            pdf.setLineWidth(0.2);
+          const drawMatHeader = () => {
+            pdf.setFillColor(245, 245, 244);
+            pdf.rect(margin, y, contentW, 6, "F");
             pdf.setFont("Roboto", "bold");
-            pdf.setFontSize(9);
-            pdf.setTextColor(...TEXT_DARK);
+            pdf.setFontSize(8);
+            pdf.setTextColor(...GREEN);
             let cx = margin;
-            bsCols.forEach((c) => {
-              const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
-              pdf.text(c.label, tx2, y + 4.8, { align: c.align });
-              cx += c.w;
-            });
+            cols.forEach(c => { const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2; pdf.text(c.label, tx2, y + 4, { align: c.align }); cx += c.w; });
+            y += 6;
+          };
+          const drawUnitHeader = (u) => {
+            const w = combineMeasurement(u.widthWhole, u.widthFrac), h = combineMeasurement(u.heightWhole, u.heightFrac), jd = combineMeasurement(u.jambDepthWhole, u.jambDepthFrac);
+            pdf.setFillColor(238, 245, 231);
+            pdf.rect(margin, y, contentW, 7, "F");
+            pdf.setFont("Roboto", "bold");
+            pdf.setFontSize(9.5);
+            pdf.setTextColor(...TEXT_DARK);
+            pdf.text((u.label || "Unit") + (u.location ? "  —  " + u.location : ""), margin + 3, y + 4.8);
+            pdf.setFont("Roboto", "normal");
+            pdf.setFontSize(8);
+            pdf.setTextColor(...TEXT_MUTE);
+            const meta = u.unitType + (u.unitType === "Window" ? " • " + u.trimStyle : "") + "    " + toFraction(w) + '"×' + toFraction(h) + '"' + (jd > 0 ? "    JD " + toFraction(jd) + '"' : "") + "    " + u.species + (u.finish ? "    " + u.finish : "");
+            pdf.text(meta, pageW - margin - 3, y + 4.8, { align: "right" });
             y += 7;
           };
-          drawBsHeader();
 
-          pdf.setFont("Roboto", "normal");
-          pdf.setFontSize(8);
-          boards.forEach((board, i) => {
-            const cutsStr = (board.cuts || []).map(c => `${toFraction(c.rawLength)}" — ${c.source}`).join(", ");
-            const cutsCol = bsCols.find(c => c.key === "cuts");
-            const cutsLines = cutsStr ? pdf.splitTextToSize(cutsStr, cutsCol.w - 2) : [""];
-            const rowH = Math.max(6, cutsLines.length * 3.4 + 2);
-
-            if (y + rowH > bottomLimit) {
-              pdf.addPage();
-              y = margin;
-              drawBsHeader();
-              pdf.setFont("Roboto", "normal");
-              pdf.setFontSize(8);
-            }
-
-            if (i % 2 === 1) {
-              pdf.setFillColor(...ZEBRA);
-              pdf.rect(margin, y, contentW, rowH, "F");
-            }
-
-            const typeStr = `${board.species} ${board.materialType}` +
-              (board.jambStock ? ` (${fixBasswoodThickness(board.species, board.jambStock.label)})` : "") +
-              (board.profile ? ` — ${fixBasswoodThickness(board.species, board.profile)}` : "") +
-              (board.isExtra ? " (Extra)" : "");
-
-            const vals = {
-              num: String(i + 1),
-              stock: STOCK_LABELS[board.stockLength],
-              type: typeStr,
-              species: board.species,
-              finish: board.finish,
-              waste: toFraction(board.remaining || 0) + '"',
-            };
-
-            let cx = margin;
-            bsCols.forEach((c) => {
-              const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
-              if (c.key === "stock") {
-                pdf.setFont("Roboto", "bold");
-                pdf.setTextColor(...GREEN);
-              } else if (c.key === "num") {
-                pdf.setFont("Roboto", "bold");
-                pdf.setTextColor(...TEXT_DARK);
-              } else if (c.key === "waste") {
-                pdf.setFont("Roboto", "normal");
-                pdf.setTextColor(...((board.remaining || 0) > 24 ? NOTE_RED : TEXT_MUTE));
-              } else {
-                pdf.setFont("Roboto", "normal");
-                pdf.setTextColor(...TEXT_DARK);
-              }
-
-              if (c.key === "cuts") {
-                cutsLines.forEach((line, li) => {
-                  pdf.text(line, tx2, y + 4 + li * 3.4);
-                });
-              } else if (c.align === "left") {
-                const wrapped = pdf.splitTextToSize(vals[c.key], c.w - 2);
-                pdf.text(wrapped[0], tx2, y + 4);
-              } else {
-                pdf.text(vals[c.key], tx2, y + 4, { align: c.align });
-              }
-              cx += c.w;
+          perUnit.forEach(({ u, mats, extras }) => {
+            if (y + 20 > bottomLimit) { pdf.addPage(); y = margin; }
+            drawUnitHeader(u);
+            drawMatHeader();
+            const rows = [
+              ...mats.map(m => ({ mat: (m.species ? m.species + " " : "") + m.name, qty: String(m.qty), len: toFraction(m.length) + '"', stock: m.jambStock ? fixBasswoodThickness(m.species, m.jambStock.label) : "—", thick: m.thickness != null ? toFraction(m.thickness) + '"' : "—", profile: m.profile ? fixBasswoodThickness(m.species, m.profile) : "—", extra: false })),
+              ...extras.map(m => ({ mat: m.description, qty: String(m.qty || 1), len: "—", stock: "—", thick: "—", profile: "—", extra: true })),
+            ];
+            rows.forEach((r, ri) => {
+              const matLines = pdf.splitTextToSize(r.mat + (r.extra ? "  (extra)" : ""), cols[0].w - 2);
+              const rowH = Math.max(6, matLines.length * 3.4 + 2);
+              if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; drawUnitHeader(u); drawMatHeader(); }
+              if (ri % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
+              let cx = margin;
+              cols.forEach(c => {
+                const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
+                pdf.setFontSize(8.5);
+                if (c.key === "len") { pdf.setFont("Roboto", "bold"); pdf.setTextColor(...GREEN); }
+                else if (c.key === "qty") { pdf.setFont("Roboto", "bold"); pdf.setTextColor(...TEXT_DARK); }
+                else { pdf.setFont("Roboto", "normal"); pdf.setTextColor(...(r.extra ? EXTRA_ORANGE : TEXT_DARK)); }
+                if (c.key === "mat") { matLines.forEach((ln, li) => pdf.text(ln, tx2, y + 4 + li * 3.4)); }
+                else { pdf.text(r[c.key], tx2, y + 4, { align: c.align }); }
+                cx += c.w;
+              });
+              pdf.setDrawColor(...BORDER);
+              pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+              y += rowH;
             });
-
-            pdf.setDrawColor(...BORDER);
-            pdf.line(margin, y + rowH, pageW - margin, y + rowH);
-            y += rowH;
+            y += 4;
           });
 
-          // Extra material we're ordering — one line each, not cut from stock
-          if (bsExtraMats.length > 0) {
-            if (y + 14 > bottomLimit) { pdf.addPage(); y = margin; }
-            pdf.setFillColor(240, 240, 239);
+          // Extra boards ordered whole
+          if ((job.extraBoards || []).length > 0) {
+            if (y + 16 > bottomLimit) { pdf.addPage(); y = margin; }
+            pdf.setFillColor(238, 245, 231);
             pdf.rect(margin, y, contentW, 7, "F");
-            pdf.setDrawColor(...BORDER_BB);
-            pdf.setLineWidth(0.5);
-            pdf.line(margin, y + 7, pageW - margin, y + 7);
-            pdf.setLineWidth(0.2);
             pdf.setFont("Roboto", "bold");
             pdf.setFontSize(9);
             pdf.setTextColor(...TEXT_DARK);
-            pdf.text("Extra Material — added per unit, not cut from stock", margin + 2, y + 4.8);
+            pdf.text("Extra Boards — ordered whole", margin + 3, y + 4.8);
             y += 7;
-
-            // Line up with the board columns: qty under Stock, description under
-            // Type / Size, and the unit labels under Cuts from this board.
-            const xmDescX = margin + 36, xmDescW = 92;
-            const xmSrcX = margin + 130, xmSrcW = 40;
-            bsExtraMats.forEach((m, i) => {
-              const lines = pdf.splitTextToSize(m.description, xmDescW);
-              const srcLines = pdf.splitTextToSize(m.sources.join(", "), xmSrcW);
-              const rowH = Math.max(6, Math.max(lines.length, srcLines.length) * 3.4 + 2);
+            job.extraBoards.forEach((eb, i) => {
+              const rowH = 6;
               if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; }
-              if (i % 2 === 1) {
-                pdf.setFillColor(...ZEBRA);
-                pdf.rect(margin, y, contentW, rowH, "F");
-              }
+              if (i % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
               pdf.setFont("Roboto", "normal");
-              pdf.setFontSize(8);
-              pdf.setTextColor(...TEXT_MUTE);
-              pdf.text("—", margin + 2, y + 4);
-              pdf.text("—", margin + 178, y + 4, { align: "center" });
+              pdf.setFontSize(8.5);
+              pdf.setTextColor(...TEXT_DARK);
+              const desc = [eb.species, eb.materialType, eb.profile].filter(Boolean).join(" ") + (eb.note ? " — " + eb.note : "");
+              pdf.text(pdf.splitTextToSize(desc, contentW - 30)[0], margin + 3, y + 4);
               pdf.setFont("Roboto", "bold");
               pdf.setTextColor(...GREEN);
-              pdf.text(String(m.quantity), margin + 26, y + 4, { align: "center" });
+              pdf.text(STOCK_LABELS[parseInt(eb.stockLength) || 120] || (eb.stockLength + '"'), pageW - margin - 3, y + 4, { align: "right" });
+              pdf.setDrawColor(...BORDER);
+              pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+              y += rowH;
+            });
+            y += 4;
+          }
+
+          // Whole-job extra material
+          if (jobExtras.length > 0) {
+            if (y + 16 > bottomLimit) { pdf.addPage(); y = margin; }
+            pdf.setFillColor(238, 245, 231);
+            pdf.rect(margin, y, contentW, 7, "F");
+            pdf.setFont("Roboto", "bold");
+            pdf.setFontSize(9);
+            pdf.setTextColor(...TEXT_DARK);
+            pdf.text("Extra Material — whole job", margin + 3, y + 4.8);
+            y += 7;
+            jobExtras.forEach((m, i) => {
+              const desc = m.description + (m.category ? "  (" + m.category + ")" : "");
+              const lines = pdf.splitTextToSize(desc, contentW - 24);
+              const rowH = Math.max(6, lines.length * 3.4 + 2);
+              if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; }
+              if (i % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
               pdf.setFont("Roboto", "normal");
+              pdf.setFontSize(8.5);
               pdf.setTextColor(...TEXT_DARK);
-              lines.forEach((ln, li) => pdf.text(ln, xmDescX, y + 4 + li * 3.4));
-              pdf.setTextColor(...TEXT_MUTE);
-              srcLines.forEach((ln, li) => pdf.text(ln, xmSrcX, y + 4 + li * 3.4));
+              lines.forEach((ln, li) => pdf.text(ln, margin + 3, y + 4 + li * 3.4));
+              pdf.setFont("Roboto", "bold");
+              pdf.setTextColor(...GREEN);
+              pdf.text(String(m.quantity || 1), pageW - margin - 3, y + 4, { align: "right" });
               pdf.setDrawColor(...BORDER);
               pdf.line(margin, y + rowH, pageW - margin, y + rowH);
               y += rowH;
@@ -2713,7 +2682,7 @@
               </div>
             )}
 
-            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} /></div>
+            <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} jobExtraMaterials={job.extraMaterials} /></div>
 
             <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", display: "flex", justifyContent: "space-between" }}>
               <span>Materials Checklist | {job.address || ""}</span>
@@ -2870,7 +2839,7 @@
             </div>
           )}
 
-          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} /></div>
+          <div data-pdf-section="board-summary"><BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} jobExtraMaterials={job.extraMaterials} /></div>
 
           <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", textAlign: "center" }}>
             Renewal by Andersen — Detailed Cut List • {new Date().toLocaleDateString()}
@@ -2984,7 +2953,7 @@
 
             {/* ━━━ PAGE BREAK — Board Summary on its own page ━━━ */}
             <div data-pdf-new-page="true" data-pdf-section="board-summary">
-              <BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} />
+              <BoardSummary units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} jobExtraMaterials={job.extraMaterials} />
             </div>
 
             <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", textAlign: "center" }}>
@@ -4811,9 +4780,7 @@
                         })()})</option>
                         <option value="None">None (no jambs)</option>
                         <option value="Customer Supplying">Customer Supplying</option>
-                        {jambStockList(catalog).filter(j => !j.traditionalOnly || (globalTrim.trimStyle || "Picture Frame") === "Traditional").map(j => (
-                          <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
-                        ))}
+                        <JambStockOptions catalog={catalog} allowTraditional={(globalTrim.trimStyle || "Picture Frame") === "Traditional"} />
                       </select>
                     </div>
                     )}
@@ -5074,9 +5041,7 @@
                               })()})</option>
                               <option value="None">None (no jambs)</option>
                               <option value="Customer Supplying">Customer Supplying</option>
-                              {jambStockList(catalog).filter(j => !j.traditionalOnly || unit.trimStyle === "Traditional").map(j => (
-                                <option key={j.label} value={j.label}>{j.label} ({toFraction(j.width)}")</option>
-                              ))}
+                              <JambStockOptions catalog={catalog} allowTraditional={unit.trimStyle === "Traditional"} />
                             </select>
                           </div>
                           )}
@@ -5322,9 +5287,10 @@
                                           <optgroup label="Stop Profiles">
                                             {(catalog?.stopProfiles?.length ? catalog.stopProfiles : STOP_PROFILES).map(p => <option key={p.label} value={p.label}>{p.label}</option>)}
                                           </optgroup>
-                                          <optgroup label="Jamb Stock">
-                                            {jambStockList(catalog).map(j => <option key={j.label} value={j.label}>{j.label}</option>)}
-                                          </optgroup>
+                                          {[{ t: 0.625, label: 'Jamb Stock — 5/8" thick' }, { t: 0.75, label: 'Jamb Stock — 3/4" thick' }, { t: 1.25, label: 'Jamb Stock — 5/4" THICK' }].map(g => {
+                                            const items = jambStockList(catalog).filter(j => (j.thickness != null ? j.thickness : jambThicknessFromLabel(j.label)) === g.t);
+                                            return items.length ? <optgroup key={g.t} label={g.label}>{items.map(j => <option key={j.label} value={j.label}>{j.label}</option>)}</optgroup> : null;
+                                          })}
                                         </select>
                                     }
                                   </div>
