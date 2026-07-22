@@ -1762,6 +1762,13 @@
       });
     }
 
+    // Boards/material assigned to a single unit — the same aggregated stock lines
+    // shown on the checklist/PDF, scoped to one unit (not the individual cuts).
+    function unitBoardGroups(unit, catalog, boardWaste, showFinish) {
+      const { boards, STOCK_LABELS } = optimizeBoards([unit], catalog, false, boardWaste);
+      return aggregateBoardGroups(boards, STOCK_LABELS, showFinish);
+    }
+
     function BoardSummary({ units, catalog, optimizePerUnit, extraBoards, jobExtraMaterials, boardWaste }) {
       // Purchasing totals are still board-optimized so nothing is lost — but the
       // detail is shown per unit, not as a big factory board list.
@@ -1773,16 +1780,14 @@
 
       const perUnit = (units || [])
         .filter(u => !isStormDoor(u))
-        .map(u => ({ u, mats: calcMaterials(u, catalog), extras: (u.manualMaterials || []).filter(m => m.description) }))
-        .filter(x => x.mats.length || x.extras.length);
+        .map(u => ({ u, groups: unitBoardGroups(u, catalog, boardWaste, false), extras: (u.manualMaterials || []).filter(m => m.description) }))
+        .filter(x => x.groups.length || x.extras.length);
       const jobExtras = (jobExtraMaterials || []).filter(m => m.description);
 
       if (perUnit.length === 0 && (extraBoards || []).length === 0 && jobExtras.length === 0) return null;
 
       const th = { textAlign: "left", padding: "6px 10px", fontWeight: 700, color: "#6DB344", fontSize: 11 };
       const thC = { ...th, textAlign: "center", color: "#5A9637" };
-      const stockOf = m => m.jambStock ? fixBasswoodThickness(m.species, m.jambStock.label) : "—";
-      const profileOf = m => m.profile ? fixBasswoodThickness(m.species, m.profile) : "—";
 
       return (
         <div style={{ marginTop: 28, pageBreakBefore: "always" }}>
@@ -1799,8 +1804,8 @@
             ))}
           </div>
 
-          {/* Per-unit material */}
-          {perUnit.map(({ u, mats, extras }, ui) => {
+          {/* Per-unit boards / material assigned (not cuts — cuts live on the Detailed list) */}
+          {perUnit.map(({ u, groups, extras }, ui) => {
             const w = combineMeasurement(u.widthWhole, u.widthFrac);
             const h = combineMeasurement(u.heightWhole, u.heightFrac);
             const jd = combineMeasurement(u.jambDepthWhole, u.jambDepthFrac);
@@ -1813,33 +1818,24 @@
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: "#F5F5F4" }}>
-                      <th style={th}>Material</th>
+                      <th style={{ ...th, flex: "0 0 150px", width: 150 }}>Category</th>
+                      <th style={th}>Board / Material</th>
                       <th style={thC}>Qty</th>
-                      <th style={thC}>Length</th>
-                      <th style={thC}>Stock</th>
-                      <th style={thC}>Thick</th>
-                      <th style={thC}>Profile</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {mats.map((m, j) => (
+                    {groups.map((g, j) => (
                       <tr key={j} style={{ borderTop: "1px solid #e4ede0", background: j % 2 ? "#fafcf8" : "#fff" }}>
-                        <td style={{ padding: "7px 10px", fontWeight: 500 }}>{m.species ? `${m.species} ${m.name}` : m.name}</td>
-                        <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 600 }}>{m.qty}</td>
-                        <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 700, color: "#6DB344" }}>{toFraction(m.length)}"</td>
-                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#666", fontWeight: m.jambStock ? 600 : 400 }}>{stockOf(m)}</td>
-                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#666" }}>{m.thickness != null ? toFraction(m.thickness) + '"' : "—"}</td>
-                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#666", fontSize: 11 }}>{profileOf(m)}</td>
+                        <td style={{ padding: "7px 10px", fontSize: 11, fontWeight: 600, color: "#777", textTransform: "uppercase", letterSpacing: 0.4, width: 150 }}>{g.category}</td>
+                        <td style={{ padding: "7px 10px", fontWeight: 600 }}>{g.description}</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 700, color: "#6DB344" }}>{g.quantity}</td>
                       </tr>
                     ))}
                     {extras.map((m, j) => (
                       <tr key={"e" + j} style={{ borderTop: "1px solid #e4ede0", background: "#fff8ef" }}>
-                        <td style={{ padding: "7px 10px", fontWeight: 500 }}>{m.description} <span style={{ fontSize: 10, fontWeight: 700, color: "#e67e22", textTransform: "uppercase" }}>Extra</span></td>
+                        <td style={{ padding: "7px 10px", fontSize: 10, fontWeight: 700, color: "#e67e22", textTransform: "uppercase" }}>Extra</td>
+                        <td style={{ padding: "7px 10px", fontWeight: 500 }}>{m.description}</td>
                         <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 600 }}>{m.qty || 1}</td>
-                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#bbb" }}>—</td>
-                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#bbb" }}>—</td>
-                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#bbb" }}>—</td>
-                        <td style={{ textAlign: "center", padding: "7px 6px", color: "#bbb" }}>—</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2175,8 +2171,8 @@
           const STOCK_LABELS = result.STOCK_LABELS;
 
           const perUnit = (units || []).filter(u => !isStormDoor(u))
-            .map(u => ({ u, mats: calcMaterials(u, catalog), extras: (u.manualMaterials || []).filter(m => m.description) }))
-            .filter(x => x.mats.length || x.extras.length);
+            .map(u => ({ u, groups: unitBoardGroups(u, catalog, offsets.boardWaste, false), extras: (u.manualMaterials || []).filter(m => m.description) }))
+            .filter(x => x.groups.length || x.extras.length);
           const jobExtras = (job.extraMaterials || []).filter(m => m.description);
           if (perUnit.length === 0 && (job.extraBoards || []).length === 0 && jobExtras.length === 0) return;
           const EXTRA_ORANGE = [230, 126, 34];
@@ -2218,14 +2214,11 @@
           });
           y += 10;
 
-          // Per-unit material table columns
+          // Per-unit boards/material table columns (not cuts)
           const cols = [
-            { key: "mat", label: "Material", w: 78, align: "left" },
-            { key: "qty", label: "Qty", w: 14, align: "center" },
-            { key: "len", label: "Length", w: 24, align: "center" },
-            { key: "stock", label: "Stock", w: 26, align: "center" },
-            { key: "thick", label: "Thick", w: 20, align: "center" },
-            { key: "profile", label: "Profile", w: 24, align: "left" },
+            { key: "cat", label: "Category", w: 42, align: "left" },
+            { key: "desc", label: "Board / Material", w: 118, align: "left" },
+            { key: "qty", label: "Qty", w: 26, align: "center" },
           ];
           const drawMatHeader = () => {
             pdf.setFillColor(245, 245, 244);
@@ -2253,27 +2246,26 @@
             y += 7;
           };
 
-          perUnit.forEach(({ u, mats, extras }) => {
+          perUnit.forEach(({ u, groups, extras }) => {
             if (y + 20 > bottomLimit) { pdf.addPage(); y = margin; }
             drawUnitHeader(u);
             drawMatHeader();
             const rows = [
-              ...mats.map(m => ({ mat: (m.species ? m.species + " " : "") + m.name, qty: String(m.qty), len: toFraction(m.length) + '"', stock: m.jambStock ? fixBasswoodThickness(m.species, m.jambStock.label) : "—", thick: m.thickness != null ? toFraction(m.thickness) + '"' : "—", profile: m.profile ? fixBasswoodThickness(m.species, m.profile) : "—", extra: false })),
-              ...extras.map(m => ({ mat: m.description, qty: String(m.qty || 1), len: "—", stock: "—", thick: "—", profile: "—", extra: true })),
+              ...groups.map(g => ({ cat: g.category, desc: g.description, qty: String(g.quantity), extra: false })),
+              ...extras.map(m => ({ cat: "EXTRA", desc: m.description, qty: String(m.qty || 1), extra: true })),
             ];
             rows.forEach((r, ri) => {
-              const matLines = pdf.splitTextToSize(r.mat + (r.extra ? "  (extra)" : ""), cols[0].w - 2);
-              const rowH = Math.max(6, matLines.length * 3.4 + 2);
+              const descLines = pdf.splitTextToSize(r.desc, cols[1].w - 2);
+              const rowH = Math.max(6, descLines.length * 3.4 + 2);
               if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; drawUnitHeader(u); drawMatHeader(); }
               if (ri % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
               let cx = margin;
               cols.forEach(c => {
                 const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
-                pdf.setFontSize(8.5);
-                if (c.key === "len") { pdf.setFont("Roboto", "bold"); pdf.setTextColor(...GREEN); }
-                else if (c.key === "qty") { pdf.setFont("Roboto", "bold"); pdf.setTextColor(...TEXT_DARK); }
-                else { pdf.setFont("Roboto", "normal"); pdf.setTextColor(...(r.extra ? EXTRA_ORANGE : TEXT_DARK)); }
-                if (c.key === "mat") { matLines.forEach((ln, li) => pdf.text(ln, tx2, y + 4 + li * 3.4)); }
+                if (c.key === "qty") { pdf.setFont("Roboto", "bold"); pdf.setFontSize(8.5); pdf.setTextColor(...GREEN); }
+                else if (c.key === "cat") { pdf.setFont("Roboto", "normal"); pdf.setFontSize(7.5); pdf.setTextColor(...(r.extra ? EXTRA_ORANGE : TEXT_MUTE)); }
+                else { pdf.setFont("Roboto", r.extra ? "normal" : "bold"); pdf.setFontSize(8.5); pdf.setTextColor(...(r.extra ? EXTRA_ORANGE : TEXT_DARK)); }
+                if (c.key === "desc") { descLines.forEach((ln, li) => pdf.text(ln, tx2, y + 4 + li * 3.4)); }
                 else { pdf.text(r[c.key], tx2, y + 4, { align: c.align }); }
                 cx += c.w;
               });
@@ -5159,38 +5151,35 @@
                           );
                         })()}
 
-                        {/* Live Cut List */}
-                        {complete && (
+                        {/* Live Boards / Material (aggregated stock, not individual cuts) */}
+                        {complete && (() => {
+                          const boardGroups = unitBoardGroups(unit, catalog, offsets.boardWaste, false);
+                          return (
                           <div style={{ marginTop: 14, borderRadius: 8, border: "1px solid #E8E8E8", overflow: "hidden" }}>
                             <div style={{ padding: "7px 12px", background: "rgba(109,179,68,0.08)", fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1, textTransform: "uppercase" }}>
-                              Cut List
+                              Boards / Material
                             </div>
                             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                               <thead>
                                 <tr style={{ background: "#F5F5F4" }}>
-                                  <th style={{ textAlign: "left", padding: "6px 10px", fontWeight: 700, color: "#6DB344", fontSize: 11 }}>Material</th>
+                                  <th style={{ textAlign: "left", padding: "6px 10px", fontWeight: 700, color: "#6DB344", fontSize: 11 }}>Category</th>
+                                  <th style={{ textAlign: "left", padding: "6px 10px", fontWeight: 700, color: "#6DB344", fontSize: 11 }}>Board / Material</th>
                                   <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Qty</th>
-                                  <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Length</th>
-                                  <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Stock</th>
-                                  <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Thick</th>
-                                  <th style={{ textAlign: "center", padding: "6px 6px", fontWeight: 700, color: "#5A9637", fontSize: 11 }}>Profile</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {mats.map((m, j) => (
+                                {boardGroups.map((g, j) => (
                                   <tr key={j} style={{ borderTop: "1px solid #e4ede0", background: j % 2 ? "#fafcf8" : "#fff" }}>
-                                    <td style={{ padding: "7px 10px", fontWeight: 500 }}>{m.species ? `${m.species} ${m.name}` : m.name}</td>
-                                    <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 600 }}>{m.qty}</td>
-                                    <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 700, color: "#6DB344" }}>{toFraction(m.length)}"</td>
-                                    <td style={{ textAlign: "center", padding: "7px 6px", color: "#666", fontWeight: m.jambStock ? 600 : 400 }}>{m.jambStock ? m.jambStock.label : "—"}</td>
-                                    <td style={{ textAlign: "center", padding: "7px 6px", color: "#666" }}>{m.thickness != null ? toFraction(m.thickness) + '"' : "—"}</td>
-                                    <td style={{ textAlign: "center", padding: "7px 6px", color: "#666", fontSize: 11 }}>{m.profile || "—"}</td>
+                                    <td style={{ padding: "7px 10px", fontSize: 11, fontWeight: 600, color: "#777", textTransform: "uppercase", letterSpacing: 0.4 }}>{g.category}</td>
+                                    <td style={{ padding: "7px 10px", fontWeight: 600 }}>{g.description}</td>
+                                    <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 700, color: "#6DB344" }}>{g.quantity}</td>
                                   </tr>
                                 ))}
                               </tbody>
                             </table>
                           </div>
-                        )}
+                          );
+                        })()}
 
 
                         {/* Custom Trim Pieces */}
