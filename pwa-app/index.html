@@ -1754,8 +1754,12 @@
           cat = `${board.species.toUpperCase()} CASING`;
         }
         const key = cat + "|" + label;
-        if (!boardGroups[key]) boardGroups[key] = { category: cat, description: label, quantity: 0, length: STOCK_LABELS[board.stockLength] };
+        if (!boardGroups[key]) boardGroups[key] = { category: cat, description: label, quantity: 0, length: STOCK_LABELS[board.stockLength], unitKeys: new Set() };
         boardGroups[key].quantity++;
+        // Union of units whose cuts landed on any board merged into this group —
+        // used to flag boards shared across units in whole-job optimization mode.
+        // Empty when boards weren't tagged with _unitKeys (unitBoardGroups' single-unit case).
+        (board._unitKeys || []).forEach(k => boardGroups[key].unitKeys.add(k));
       });
       const catOrder = { "JAMB MATERIAL": 0, "STOOL": 1 }; // apron/casing/stop sort after by name
       const getCatOrder = (c) => catOrder[c] ?? (c.endsWith("APRON") ? 3 : 2);
@@ -1763,7 +1767,7 @@
         const oa = getCatOrder(a.category), ob = getCatOrder(b.category);
         if (oa !== ob) return oa - ob;
         return a.description.localeCompare(b.description);
-      });
+      }).map(g => ({ ...g, unitKeys: [...g.unitKeys] }));
     }
 
     // Extra boards (job.extraBoards) are entered one-per-card with no qty field,
@@ -1795,6 +1799,30 @@
       return aggregateBoardGroups(boards, STOCK_LABELS, showFinish);
     }
 
+    // Whole-job (optimizePerUnit = false) board groups, split out per unit. In this
+    // mode the bin-packer shares a single board's cuts across multiple units, so a
+    // per-unit board list built by re-optimizing each unit alone (unitBoardGroups)
+    // would be wrong — it can't see that sharing. Instead this runs the real
+    // job-wide optimizer ONCE, then attributes each resulting board to every unit
+    // whose cuts landed on it, tagging groups touched by 2+ units with `sharedWith`
+    // (the other unit keys) so each unit's table can note where else it's used.
+    function jobBoardGroupsByUnit(units, catalog, boardWaste, showFinish) {
+      const { boards, STOCK_LABELS } = optimizeBoards(units, catalog, false, boardWaste);
+      const byUnit = {};
+      boards.forEach(board => {
+        const keys = [...new Set((board.cuts || []).map(c => c.source))];
+        board._unitKeys = keys;
+        keys.forEach(k => { (byUnit[k] = byUnit[k] || []).push(board); });
+      });
+      const result = {};
+      Object.keys(byUnit).forEach(k => {
+        const groups = aggregateBoardGroups(byUnit[k], STOCK_LABELS, showFinish);
+        groups.forEach(g => { g.sharedWith = g.unitKeys.filter(u => u !== k); });
+        result[k] = groups;
+      });
+      return result;
+    }
+
     function BoardSummary({ units, catalog, optimizePerUnit, extraBoards, jobExtraMaterials, boardWaste }) {
       // Purchasing totals are still board-optimized so nothing is lost — but the
       // detail is shown per unit, not as a big factory board list.
@@ -1804,9 +1832,14 @@
       (extraBoards || []).forEach(eb => { const len = parseInt(eb.stockLength) || 120; summary[len] = (summary[len] || 0) + 1; totalBoards++; });
       const STOCK_LABELS = result.STOCK_LABELS;
 
+      // Whole-job (optimizePerUnit off) boards can be shared across units — compute
+      // those once, per unit, so shared rows can be flagged; per-unit mode never
+      // shares boards, so it keeps re-optimizing each unit in isolation as before.
+      const unitKey = u => u.label + (u.location ? " (" + u.location + ")" : "");
+      const jobSharedByUnit = optimizePerUnit ? null : jobBoardGroupsByUnit(units, catalog, boardWaste, false);
       const perUnit = (units || [])
         .filter(u => !isStormDoor(u))
-        .map(u => ({ u, groups: unitBoardGroups(u, catalog, boardWaste, false), extras: (u.manualMaterials || []).filter(m => m.description) }))
+        .map(u => ({ u, groups: optimizePerUnit ? unitBoardGroups(u, catalog, boardWaste, false) : (jobSharedByUnit[unitKey(u)] || []), extras: (u.manualMaterials || []).filter(m => m.description) }))
         .filter(x => x.groups.length || x.extras.length);
       const jobExtras = (jobExtraMaterials || []).filter(m => m.description);
 
@@ -1852,7 +1885,12 @@
                     {groups.map((g, j) => (
                       <tr key={j} style={{ borderTop: "1px solid #e4ede0", background: j % 2 ? "#fafcf8" : "#fff" }}>
                         <td style={{ padding: "7px 10px", fontSize: 11, fontWeight: 600, color: "#777", textTransform: "uppercase", letterSpacing: 0.4, width: 150 }}>{g.category}</td>
-                        <td style={{ padding: "7px 10px", fontWeight: 600 }}>{g.description}</td>
+                        <td style={{ padding: "7px 10px", fontWeight: 600 }}>
+                          {g.description}
+                          {g.sharedWith && g.sharedWith.length > 0 && (
+                            <span style={{ fontSize: 10, fontWeight: 500, color: "#999", marginLeft: 6 }}>(also used on {g.sharedWith.join(", ")})</span>
+                          )}
+                        </td>
                         <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 700, color: "#6DB344" }}>{g.quantity}</td>
                       </tr>
                     ))}
@@ -2234,8 +2272,10 @@
           (job.extraBoards || []).forEach(eb => { const len = parseInt(eb.stockLength) || 120; summary[len] = (summary[len] || 0) + 1; totalBoards++; });
           const STOCK_LABELS = result.STOCK_LABELS;
 
+          const unitKey = u => u.label + (u.location ? " (" + u.location + ")" : "");
+          const jobSharedByUnit = job.optimizePerUnit ? null : jobBoardGroupsByUnit(units, catalog, offsets.boardWaste, false);
           const perUnit = (units || []).filter(u => !isStormDoor(u))
-            .map(u => ({ u, groups: unitBoardGroups(u, catalog, offsets.boardWaste, false), extras: (u.manualMaterials || []).filter(m => m.description) }))
+            .map(u => ({ u, groups: job.optimizePerUnit ? unitBoardGroups(u, catalog, offsets.boardWaste, false) : (jobSharedByUnit[unitKey(u)] || []), extras: (u.manualMaterials || []).filter(m => m.description) }))
             .filter(x => x.groups.length || x.extras.length);
           const jobExtras = (job.extraMaterials || []).filter(m => m.description);
           if (perUnit.length === 0 && (job.extraBoards || []).length === 0 && jobExtras.length === 0) return;
@@ -2346,7 +2386,7 @@
             drawUnitHeader(u);
             drawMatHeader();
             const rows = [
-              ...groups.map(g => ({ cat: g.category, desc: g.description, qty: String(g.quantity), extra: false })),
+              ...groups.map(g => ({ cat: g.category, desc: g.description + (g.sharedWith && g.sharedWith.length ? "  (also used on " + g.sharedWith.join(", ") + ")" : ""), qty: String(g.quantity), extra: false })),
               ...extras.map(m => ({ cat: "EXTRA", desc: m.description, qty: String(m.qty || 1), extra: true })),
             ];
             rows.forEach((r, ri) => {
