@@ -1874,16 +1874,35 @@
     }
 
     // ─── REPORT VIEW ───
-    function ReportView({ job, jobId, units, catalog, offsets, globalTrim, reportType, submitted, allComplete, isResubmit, onSubmit, onBack, onEdit }) {
+    // Fill a saved job's info with defaults for any missing fields (module-level so
+    // both the editor and the report/export paths share one definition).
+    function mergedJobDefaults(savedJob) {
+      return {
+        customerName: "", address: "", poNumber: "", techMeasurer: "",
+        date: new Date().toISOString().split("T")[0],
+        prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "",
+        extraMaterials: [], extraBoards: [], bayMaterials: [],
+        customTrimMode: false, optimizePerUnit: true, showFinishOnChecklist: false,
+        ...savedJob,
+      };
+    }
+
+    function ReportView({ job, jobId, units, catalog, offsets, globalTrim, reportType, submitted, allComplete, isResubmit, savedJobs, onSubmit, onBack, onEdit }) {
       const reportRef = useRef();
       const [activeReport, setActiveReport] = useState(reportType || "checklist");
 
       const [pdfBusy, setPdfBusy] = useState(false);
+      const [exportBusy, setExportBusy] = useState(null); // {done,total} while exporting all
+      // Aliases so the PDF builders can be reused for any job (Export All), not
+      // just the currently-loaded one. Default to the loaded job/units.
+      const propJob = job, propUnits = units;
 
       // Build a text-based PDF with a real text layer (editable, searchable,
       // small file size). Reproduces the Checklist + Prefinish + Bay Material
       // + Board Summary sections using jsPDF's native text/drawing APIs.
-      const generatePDFDoc = async () => {
+      const generatePDFDoc = async (ovJob, ovUnits) => {
+        const job = ovJob || propJob;
+        const units = ovUnits || propUnits;
         const pdf = new jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
         // Embed Roboto so Adobe Acrobat can edit the text. PDF's standard
@@ -2351,7 +2370,7 @@
         renderChecklistBar();
         renderChecklistIntro();
 
-        const { extraRows, boardRows } = buildChecklist();
+        const { extraRows, boardRows } = buildChecklist(job, units);
         const noteRows = extraRows.filter(r => r.isNote);
         const materialRows = extraRows.filter(r => !r.isNote);
         const allRows = [...materialRows, ...(materialRows.length > 0 && boardRows.length ? [null] : []), ...boardRows];
@@ -2365,7 +2384,8 @@
         return pdf;
       };
 
-      const pdfFilename = () => {
+      const pdfFilename = (ovJob) => {
+        const job = ovJob || propJob;
         const lastName = (job.customerName || "").split(" ").pop() || "Job";
         const po = job.poNumber ? ` (${job.poNumber})` : "";
         return `${lastName} Material List${po}.pdf`;
@@ -2415,6 +2435,62 @@
           alert("Failed to generate PDF: " + (err && err.message ? err.message : String(err)));
         } finally {
           setPdfBusy(false);
+        }
+      };
+
+      // Export a PDF for EVERY saved + submitted job into a folder the user picks.
+      // Runs each job through the same normalization applySavedJob does so the
+      // output matches opening the job and hitting Save PDF. Used to snapshot the
+      // whole book before/after an offsets change and diff the two folders.
+      const exportAllPDFs = async () => {
+        if (exportBusy) return;
+        const jobs = (savedJobs || []);
+        if (jobs.length === 0) { alert("No saved jobs to export."); return; }
+        const normJob = sj => mergedJobDefaults(sj.job || {});
+        const normUnits = sj => (sj.units || []).map(u => ({
+          ...u,
+          casingProfile: u.casingProfile ? normalizeCasingProfile(u.casingProfile) : u.casingProfile,
+          customTrimPieces: (u.customTrimPieces || []).map(ctp => ({ ...ctp, profile: ctp.profile ? normalizeCasingProfile(ctp.profile) : ctp.profile })),
+        }));
+        // Sort submitted first, then by customer, for tidy folders
+        const ordered = jobs.slice().sort((a, b) => (b.submitted ? 1 : 0) - (a.submitted ? 1 : 0) || (a.job?.customerName || "").localeCompare(b.job?.customerName || ""));
+
+        let dirHandle = null;
+        const canPick = typeof window.showDirectoryPicker === "function";
+        if (canPick) {
+          try { dirHandle = await window.showDirectoryPicker({ mode: "readwrite" }); }
+          catch (e) { return; } // user cancelled the folder picker
+        } else {
+          alert("Your browser can't pick a folder, so each PDF will download to your Downloads folder instead. Move them into a Desktop folder afterward.");
+        }
+
+        setExportBusy({ done: 0, total: ordered.length });
+        const usedNames = new Set();
+        try {
+          for (let i = 0; i < ordered.length; i++) {
+            const sj = ordered[i];
+            const j = normJob(sj), u = normUnits(sj);
+            let name = (sj.submitted ? "SUBMITTED - " : "DRAFT - ") + pdfFilename(j);
+            // Guard against duplicate customer/PO collisions
+            if (usedNames.has(name)) name = name.replace(/\.pdf$/, "") + " #" + (i + 1) + ".pdf";
+            usedNames.add(name);
+            const pdf = await generatePDFDoc(j, u);
+            if (dirHandle) {
+              const fh = await dirHandle.getFileHandle(name, { create: true });
+              const w = await fh.createWritable();
+              await w.write(pdf.output("blob"));
+              await w.close();
+            } else {
+              pdf.save(name);
+            }
+            setExportBusy({ done: i + 1, total: ordered.length });
+          }
+          if (dirHandle) alert("Exported " + ordered.length + " PDFs to the folder you picked.");
+        } catch (err) {
+          console.error("Export all failed:", err);
+          alert("Export failed: " + (err && err.message ? err.message : String(err)));
+        } finally {
+          setExportBusy(null);
         }
       };
 
@@ -2485,7 +2561,9 @@
       };
 
       // ─── Aggregate materials for checklist view ───
-      const buildChecklist = () => {
+      const buildChecklist = (ovJob, ovUnits) => {
+        const job = ovJob || propJob;
+        const units = ovUnits || propUnits;
         const result = optimizeBoards(units, catalog, job.optimizePerUnit, offsets.boardWaste);
         const boards = [...result.boards];
         const STOCK_LABELS = result.STOCK_LABELS;
@@ -3010,6 +3088,11 @@
                 padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: pdfBusy ? "wait" : "pointer",
                 opacity: pdfBusy ? 0.5 : 1
               }}>{pdfBusy ? "Working…" : "Save PDF"}</button>
+              <button onClick={exportAllPDFs} disabled={!!exportBusy} title="Save a PDF of every saved + submitted job into a folder you pick" style={{
+                background: "none", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.8)",
+                padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: exportBusy ? "wait" : "pointer",
+                opacity: exportBusy ? 0.6 : 1
+              }}>{exportBusy ? `Exporting ${exportBusy.done}/${exportBusy.total}…` : "Export All PDFs"}</button>
             </div>
 
             <button onClick={handleEmail} disabled={pdfBusy} style={{
@@ -3437,15 +3520,6 @@
           alert(synced ? "Job saved!" : "Job saved locally (offline)");
         }
       };
-
-      const mergedJobDefaults = (savedJob) => ({
-        customerName: "", address: "", poNumber: "", techMeasurer: "",
-        date: new Date().toISOString().split("T")[0],
-        prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "",
-        extraMaterials: [], extraBoards: [], bayMaterials: [],
-        customTrimMode: false, optimizePerUnit: true, showFinishOnChecklist: false,
-        ...savedJob,
-      });
 
       const detectCustomModeFromUnits = (units) => {
         const cm = {};
@@ -4561,7 +4635,7 @@
 
       // ─── REPORT ───
       if (view === "report") {
-        return <ReportView job={job} jobId={jobId} units={units} catalog={catalog} offsets={offsets} globalTrim={globalTrim} reportType={reportType} submitted={submitted} allComplete={allComplete} isResubmit={savedJobs.some(j => j.id === jobId)} onSubmit={() => saveJob(true)} onBack={() => setView(reportFrom === "saved" ? "saved" : "editor")} onEdit={() => setView("editor")} />;
+        return <ReportView job={job} jobId={jobId} units={units} catalog={catalog} offsets={offsets} globalTrim={globalTrim} reportType={reportType} submitted={submitted} allComplete={allComplete} isResubmit={savedJobs.some(j => j.id === jobId)} savedJobs={savedJobs} onSubmit={() => saveJob(true)} onBack={() => setView(reportFrom === "saved" ? "saved" : "editor")} onEdit={() => setView("editor")} />;
       }
 
       // ─── EDITOR ───
