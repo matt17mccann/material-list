@@ -1766,6 +1766,28 @@
       });
     }
 
+    // Extra boards (job.extraBoards) are entered one-per-card with no qty field,
+    // so identical entries (same species/type/profile/length/note) are grouped
+    // here and counted — mirrors aggregateBoardGroups' category/description/quantity shape.
+    function groupExtraBoards(extraBoards, STOCK_LABELS) {
+      const groups = {};
+      (extraBoards || []).forEach(eb => {
+        const species = eb.species || "Oak";
+        const stockLen = parseInt(eb.stockLength) || 120;
+        const lengthLabel = STOCK_LABELS[stockLen] || (eb.stockLength + '"');
+        const cat = (eb.materialType || "Casing").toUpperCase();
+        const profileLabel = (eb.materialType === "Jamb Extension" || eb.materialType === "Casing")
+          ? fixBasswoodThickness(species, eb.profile || cat)
+          : (eb.profile || cat);
+        let desc = `${species} ${profileLabel} - ${lengthLabel}`;
+        if (eb.note) desc += ` — ${eb.note}`;
+        const key = cat + "|" + desc;
+        if (!groups[key]) groups[key] = { category: cat, description: desc, quantity: 0 };
+        groups[key].quantity++;
+      });
+      return Object.values(groups).sort((a, b) => a.category.localeCompare(b.category) || a.description.localeCompare(b.description));
+    }
+
     // Boards/material assigned to a single unit — the same aggregated stock lines
     // shown on the checklist/PDF, scoped to one unit (not the individual cuts).
     function unitBoardGroups(unit, catalog, boardWaste, showFinish) {
@@ -1797,7 +1819,6 @@
         <div style={{ marginTop: 28, pageBreakBefore: "always" }}>
           <div style={{ background: "#6DB344", color: "#fff", padding: "10px 14px", fontSize: 16, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
             Job Summary — By Unit
-            {optimizePerUnit && <span style={{ fontSize: 11, fontWeight: 400, marginLeft: 12, opacity: 0.85 }}> — Optimized per unit for grain matching</span>}
           </div>
 
           {/* Purchasing totals (kept) */}
@@ -1849,28 +1870,55 @@
           })}
 
           {/* Extra boards ordered whole */}
-          {(extraBoards || []).length > 0 && (
-            <div style={{ marginTop: 14, border: "1px solid #E8E8E8", borderRadius: 6, overflow: "hidden" }}>
-              <div style={{ padding: "8px 12px", background: "rgba(109,179,68,0.10)", fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Extra Boards</div>
-              {extraBoards.map((eb, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 12px", borderTop: "1px solid #e4ede0", fontSize: 13 }}>
-                  <span>{[eb.species, eb.materialType, eb.profile].filter(Boolean).join(" ")}{eb.note ? <span style={{ color: "#999" }}> — {eb.note}</span> : null}</span>
-                  <span style={{ fontWeight: 700, color: "#6DB344" }}>{STOCK_LABELS[parseInt(eb.stockLength) || 120] || (eb.stockLength + '"')}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          {(extraBoards || []).length > 0 && (() => {
+            const ebGroups = groupExtraBoards(extraBoards, STOCK_LABELS);
+            return (
+              <div style={{ marginTop: 14, border: "1px solid #E8E8E8", borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ padding: "8px 12px", background: "rgba(109,179,68,0.10)", fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Extra Boards</div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: "#F5F5F4" }}>
+                      <th style={{ ...th, flex: "0 0 150px", width: 150 }}>Category</th>
+                      <th style={th}>Board / Material</th>
+                      <th style={thC}>Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ebGroups.map((g, j) => (
+                      <tr key={j} style={{ borderTop: "1px solid #e4ede0", background: j % 2 ? "#fafcf8" : "#fff" }}>
+                        <td style={{ padding: "7px 10px", fontSize: 11, fontWeight: 600, color: "#777", textTransform: "uppercase", letterSpacing: 0.4, width: 150 }}>{g.category}</td>
+                        <td style={{ padding: "7px 10px", fontWeight: 600 }}>{g.description}</td>
+                        <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 700, color: "#6DB344" }}>{g.quantity}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
 
           {/* Whole-job extra material */}
           {jobExtras.length > 0 && (
             <div style={{ marginTop: 14, border: "1px solid #E8E8E8", borderRadius: 6, overflow: "hidden" }}>
               <div style={{ padding: "8px 12px", background: "rgba(109,179,68,0.10)", fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>Other Material</div>
-              {jobExtras.map((m, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 12px", borderTop: "1px solid #e4ede0", fontSize: 13 }}>
-                  <span>{m.description}{m.category ? <span style={{ color: "#999", fontSize: 11, marginLeft: 6 }}>({m.category})</span> : null}</span>
-                  <span style={{ fontWeight: 700, color: "#6DB344" }}>{m.quantity || 1}</span>
-                </div>
-              ))}
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#F5F5F4" }}>
+                    <th style={{ ...th, flex: "0 0 150px", width: 150 }}>Category</th>
+                    <th style={th}>Board / Material</th>
+                    <th style={thC}>Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {jobExtras.map((m, i) => (
+                    <tr key={i} style={{ borderTop: "1px solid #e4ede0", background: i % 2 ? "#fafcf8" : "#fff" }}>
+                      <td style={{ padding: "7px 10px", fontSize: 11, fontWeight: 600, color: "#777", textTransform: "uppercase", letterSpacing: 0.4, width: 150 }}>{m.category || "Other"}</td>
+                      <td style={{ padding: "7px 10px", fontWeight: 600 }}>{m.description}</td>
+                      <td style={{ textAlign: "center", padding: "7px 6px", fontWeight: 700, color: "#6DB344" }}>{m.quantity || 1}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
@@ -2019,13 +2067,6 @@
           pdf.setTextColor(...TEXT_MUTE);
           pdf.text("This list includes the sum total of all materials for the entire job.", margin + 3, y + 4.5);
           y += 7;
-          if (job.optimizePerUnit) {
-            pdf.setTextColor(...GREEN);
-            pdf.setFont("Roboto", "bold");
-            pdf.setFontSize(8);
-            pdf.text("Optimized per unit for grain matching", margin + 3, y + 3);
-            y += 5;
-          }
           pdf.setDrawColor(...BORDER);
           pdf.line(margin, y, pageW - margin, y);
           y += 1;
@@ -2209,11 +2250,6 @@
           pdf.setFontSize(12);
           pdf.setTextColor(255, 255, 255);
           pdf.text("Job Summary — By Unit", margin + 3, y + 6.2);
-          if (job.optimizePerUnit) {
-            pdf.setFontSize(8);
-            pdf.setFont("Roboto", "normal");
-            pdf.text(" — Optimized per unit for grain matching", margin + 3 + pdf.getTextWidth("Job Summary — By Unit"), y + 6.2);
-          }
           y += 9;
 
           pdf.setFillColor(...LIGHT_BG);
@@ -2269,6 +2305,42 @@
             y += 7;
           };
 
+          // Shared renderer for a titled group table (Extra Boards / Other Material) —
+          // uses the same cols/header/zebra styling as the per-unit tables so the
+          // Qty column lines up down the page.
+          const drawGroupTable = (title, rows) => {
+            if (!rows.length) return;
+            if (y + 16 > bottomLimit) { pdf.addPage(); y = margin; }
+            pdf.setFillColor(238, 245, 231);
+            pdf.rect(margin, y, contentW, 7, "F");
+            pdf.setFont("Roboto", "bold");
+            pdf.setFontSize(9);
+            pdf.setTextColor(...TEXT_DARK);
+            pdf.text(title, margin + 3, y + 4.8);
+            y += 7;
+            drawMatHeader();
+            rows.forEach((r, ri) => {
+              const descLines = pdf.splitTextToSize(r.desc, cols[1].w - 2);
+              const rowH = Math.max(6, descLines.length * 3.4 + 2);
+              if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; drawMatHeader(); }
+              if (ri % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
+              let cx = margin;
+              cols.forEach(c => {
+                const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
+                if (c.key === "qty") { pdf.setFont("Roboto", "bold"); pdf.setFontSize(8.5); pdf.setTextColor(...GREEN); }
+                else if (c.key === "cat") { pdf.setFont("Roboto", "normal"); pdf.setFontSize(7.5); pdf.setTextColor(...TEXT_MUTE); }
+                else { pdf.setFont("Roboto", "bold"); pdf.setFontSize(8.5); pdf.setTextColor(...TEXT_DARK); }
+                if (c.key === "desc") { descLines.forEach((ln, li) => pdf.text(ln, tx2, y + 4 + li * 3.4)); }
+                else { pdf.text(r[c.key], tx2, y + 4, { align: c.align }); }
+                cx += c.w;
+              });
+              pdf.setDrawColor(...BORDER);
+              pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+              y += rowH;
+            });
+            y += 4;
+          };
+
           perUnit.forEach(({ u, groups, extras }) => {
             if (y + 20 > bottomLimit) { pdf.addPage(); y = margin; }
             drawUnitHeader(u);
@@ -2299,63 +2371,12 @@
             y += 4;
           });
 
-          // Extra boards ordered whole
-          if ((job.extraBoards || []).length > 0) {
-            if (y + 16 > bottomLimit) { pdf.addPage(); y = margin; }
-            pdf.setFillColor(238, 245, 231);
-            pdf.rect(margin, y, contentW, 7, "F");
-            pdf.setFont("Roboto", "bold");
-            pdf.setFontSize(9);
-            pdf.setTextColor(...TEXT_DARK);
-            pdf.text("Extra Boards", margin + 3, y + 4.8);
-            y += 7;
-            job.extraBoards.forEach((eb, i) => {
-              const rowH = 6;
-              if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; }
-              if (i % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
-              pdf.setFont("Roboto", "normal");
-              pdf.setFontSize(8.5);
-              pdf.setTextColor(...TEXT_DARK);
-              const desc = [eb.species, eb.materialType, eb.profile].filter(Boolean).join(" ") + (eb.note ? " — " + eb.note : "");
-              pdf.text(pdf.splitTextToSize(desc, contentW - 30)[0], margin + 3, y + 4);
-              pdf.setFont("Roboto", "bold");
-              pdf.setTextColor(...GREEN);
-              pdf.text(STOCK_LABELS[parseInt(eb.stockLength) || 120] || (eb.stockLength + '"'), pageW - margin - 3, y + 4, { align: "right" });
-              pdf.setDrawColor(...BORDER);
-              pdf.line(margin, y + rowH, pageW - margin, y + rowH);
-              y += rowH;
-            });
-            y += 4;
-          }
+          // Extra boards ordered whole — grouped + counted (each is entered as its own
+          // card with no qty field, so identical entries need to be tallied)
+          drawGroupTable("Extra Boards", groupExtraBoards(job.extraBoards, STOCK_LABELS).map(g => ({ cat: g.category, desc: g.description, qty: String(g.quantity) })));
 
           // Whole-job extra material
-          if (jobExtras.length > 0) {
-            if (y + 16 > bottomLimit) { pdf.addPage(); y = margin; }
-            pdf.setFillColor(238, 245, 231);
-            pdf.rect(margin, y, contentW, 7, "F");
-            pdf.setFont("Roboto", "bold");
-            pdf.setFontSize(9);
-            pdf.setTextColor(...TEXT_DARK);
-            pdf.text("Other Material", margin + 3, y + 4.8);
-            y += 7;
-            jobExtras.forEach((m, i) => {
-              const desc = m.description + (m.category ? "  (" + m.category + ")" : "");
-              const lines = pdf.splitTextToSize(desc, contentW - 24);
-              const rowH = Math.max(6, lines.length * 3.4 + 2);
-              if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; }
-              if (i % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
-              pdf.setFont("Roboto", "normal");
-              pdf.setFontSize(8.5);
-              pdf.setTextColor(...TEXT_DARK);
-              lines.forEach((ln, li) => pdf.text(ln, margin + 3, y + 4 + li * 3.4));
-              pdf.setFont("Roboto", "bold");
-              pdf.setTextColor(...GREEN);
-              pdf.text(String(m.quantity || 1), pageW - margin - 3, y + 4, { align: "right" });
-              pdf.setDrawColor(...BORDER);
-              pdf.line(margin, y + rowH, pageW - margin, y + rowH);
-              y += rowH;
-            });
-          }
+          drawGroupTable("Other Material", jobExtras.map(m => ({ cat: (m.category || "Other").toUpperCase(), desc: m.description, qty: String(m.quantity || 1) })));
         };
 
         const writeFooters = () => {
@@ -2671,7 +2692,6 @@
 
               <div style={{ fontSize: 13, color: "#999", padding: "10px 14px", borderBottom: "1px solid #ddd" }}>
                 This list includes the sum total of all materials for the entire job.
-                {job.optimizePerUnit && <div style={{ marginTop: 4, fontSize: 12, color: "#6DB344", fontWeight: 600 }}>Optimized per unit for grain matching</div>}
               </div>
 
               {allRows.map((row, i) => {
@@ -2945,7 +2965,6 @@
               </div>
               <div style={{ fontSize: 13, color: "#999", padding: "10px 14px", borderBottom: "1px solid #ddd" }}>
                 This list includes the sum total of all materials for the entire job.
-                {job.optimizePerUnit && <div style={{ marginTop: 4, fontSize: 12, color: "#6DB344", fontWeight: 600 }}>Optimized per unit for grain matching</div>}
               </div>
               {allRows.map((row, i) => {
                 if (row === null) {
