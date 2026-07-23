@@ -958,7 +958,7 @@
         }
         if (!skipCasing) {
           materials.push(
-            { name: "Side Casing", qty: 2, length: h + casingW * 2 + o.sideCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Side Casing", qty: 2, length: h + casingW + o.sideCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
             { name: "Head Casing", qty: 1, length: w + casingW * 2 + o.headCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
           );
         }
@@ -976,7 +976,7 @@
         }
         if (!skipCasing) {
           materials.push(
-            { name: "Side Casing", qty: 2, length: h + casingW * 2 + o.sideCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+            { name: "Side Casing", qty: 2, length: h + casingW + o.sideCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
             { name: "Head Casing", qty: 1, length: w + casingW * 2 + o.headCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
           );
         }
@@ -4075,7 +4075,7 @@
                 { key: "apron_length", label: "Apron Length", desc: "W + value" },
               ]} />
               <OffsetCard title="Entry Doors" section="entry_door" fields={[
-                { key: "sideCasing_length", label: "Side Casing Length", desc: "H + 2x casing width + value" },
+                { key: "sideCasing_length", label: "Side Casing Length", desc: "H + 1x casing width + value" },
                 { key: "headCasing_length", label: "Head Casing Length", desc: "W + 2x casing width + value" },
                 { key: "threshold_length", label: "Threshold Length", desc: "W + value" },
                 { key: "sideJamb_length", label: "Side Jamb Length", desc: "H + value (deep-jamb add-on)" },
@@ -4087,7 +4087,7 @@
                 { key: "headJamb_length", label: "Head Jamb Length", desc: "W + value" },
                 { key: "sillJamb_length", label: "Sill Jamb Length", desc: "W + value" },
                 { key: "jamb_width", label: "Jamb Width", desc: "JD + value" },
-                { key: "sideCasing_length", label: "Side Casing Length", desc: "H + 2x casing width + value" },
+                { key: "sideCasing_length", label: "Side Casing Length", desc: "H + 1x casing width + value" },
                 { key: "headCasing_length", label: "Head Casing Length", desc: "W + 2x casing width + value" },
                 { key: "threshold_length", label: "Threshold Length", desc: "W + value" },
               ]} />
