@@ -940,7 +940,8 @@
           }
           if (!skipCasing) {
             materials.push(
-              { name: "Side Casing", qty: 2, length: h + casingW * 2 + o.sideCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
+              // Traditional sides miter only at the top (bottom lands on the stool) — 1x width
+              { name: "Side Casing", qty: 2, length: h + casingW + o.sideCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
               { name: "Head Casing", qty: 1, length: w + casingW * 2 + o.headCasing_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile },
               { name: "Apron", qty: 1, length: w + o.apron_length, width: getProfileWidth(unit.casingProfile, catalog), thickness: null, species: unit.species, category: "Casing", profile: unit.casingProfile }
             );
@@ -4069,7 +4070,7 @@
                 { key: "jamb_width", label: "Jamb Width", desc: "JD + value" },
                 { key: "stool_length", label: "Sill/Stool Length", desc: "W + value" },
                 { key: "stool_width_extra", label: "Stool Width Extra", desc: "Added to jamb width" },
-                { key: "sideCasing_length", label: "Side Casing Length", desc: "H + 2x casing width + value" },
+                { key: "sideCasing_length", label: "Side Casing Length", desc: "H + 1x casing width + value" },
                 { key: "headCasing_length", label: "Head Casing Length", desc: "W + 2x casing width + value" },
                 { key: "apron_length", label: "Apron Length", desc: "W + value" },
               ]} />
