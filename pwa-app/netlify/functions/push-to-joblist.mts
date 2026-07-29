@@ -53,6 +53,9 @@ export default async (req: Request, context: Context) => {
         fileName: body.fileName || "material-list.pdf",
         savedAt: body.savedAt || new Date().toISOString(),
         pdfBase64: body.pdfBase64 || null,
+        // Linear-feet cost payload (2026-07-29) — forwarded verbatim; the
+        // joblist prices it against its material_prices key. Optional.
+        materialLf: body.materialLf ?? null,
       }),
     });
 

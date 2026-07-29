@@ -1248,6 +1248,48 @@
       }
     }
 
+    // Aggregate the optimized board list (the same math the PDF's Job Summary
+    // uses) to linear feet per (materialType, profile / jamb stock, species,
+    // finish), for the joblist app's cost analysis. DATA ONLY — sent alongside
+    // the PDF push, never rendered on the printed material list (LF stays off
+    // the PDFs by design). Thresholds are pre-made products excluded from board
+    // stock, so their piece lengths are added from calcMaterials directly.
+    // Fail-open: any error returns null so the PDF push can never break on it.
+    function buildMaterialLf(units, job, catalog, boardWaste) {
+      try {
+        const result = optimizeBoards(units, catalog, job.optimizePerUnit, boardWaste);
+        const boards = [...result.boards, ...normalizeExtraBoards(job.extraBoards, units, catalog)];
+        const agg = new Map();
+        const add = (key, seed, feet) => {
+          const cur = agg.get(key) || { ...seed, feet: 0, boards: 0 };
+          cur.feet += feet;
+          cur.boards++;
+          agg.set(key, cur);
+        };
+        boards.forEach(b => {
+          if (!b.stockLength) return;
+          const jamb = b.jambStock ? b.jambStock.label : null;
+          const key = [b.materialType, b.profile || "", jamb || "", b.species, b.finish || ""].join("|");
+          add(key, { materialType: b.materialType, profileCode: b.profile || null, jambStock: jamb, species: b.species, finish: b.finish || null }, b.stockLength / 12);
+        });
+        (units || []).forEach(u => {
+          if (isStormDoor(u) || !isUnitComplete(u)) return;
+          calcMaterials(u, catalog).forEach(m => {
+            if (m.category !== "Threshold") return;
+            const key = ["Threshold", "", "", m.species, u.finish || ""].join("|");
+            add(key, { materialType: "Threshold", profileCode: null, jambStock: null, species: m.species, finish: u.finish || null }, ((m.length || 0) / 12) * (m.qty || 1));
+          });
+        });
+        const lines = [...agg.values()]
+          .map(l => ({ ...l, feet: Math.round(l.feet * 10) / 10 }))
+          .filter(l => l.feet > 0);
+        return lines.length ? { lines, savedAt: new Date().toISOString() } : null;
+      } catch (e) {
+        console.warn("materialLf aggregation failed", e);
+        return null;
+      }
+    }
+
     // Catalog API
     // Bring a catalog's jamb stock up to date: rename legacy "1xN" labels to canonical
     // stock labels so toggles match the calc, ensure Basswood-only widths (5/8x8/10/12)
@@ -2484,6 +2526,8 @@
               fileName: pdfFilename(),
               savedAt: new Date().toISOString(),
               pdfBase64,
+              // Linear-feet cost data for the joblist Costs tab (not on the PDF).
+              materialLf: buildMaterialLf(units, job, catalog, offsets.boardWaste),
             });
             // If the push didn't go through, allow a retry on the next submit.
             if (!result || result.pushed === false) joblistPushed.delete(jobId);
