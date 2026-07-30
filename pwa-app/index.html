@@ -1290,6 +1290,45 @@
       }
     }
 
+    // ONE-TIME BACKFILL HOOK (2026-07-29): compute + push LF cost data for every
+    // SAVED job, without touching the stored PDFs. Run from the browser console:
+    //   await window.__joblistLfBackfill()      → dry-run (computes, pushes nothing)
+    //   await window.__joblistLfBackfill(true)  → push to the joblist app
+    // Every normal submit already pushes LF automatically — this only exists to
+    // seed history. Harmless to leave in place; it does nothing unless called.
+    window.__joblistLfBackfill = async function (write = false) {
+      const [jobsList, catalog, offsetsApi] = await Promise.all([
+        apiRequest("/api/jobs"),
+        fetchCatalogFromAPI(),
+        fetchOffsetsFromAPI(),
+      ]);
+      const offsets = { ...DEFAULT_OFFSETS, ...(offsetsApi || {}) };
+      const out = [];
+      for (const rec of jobsList || []) {
+        const job = rec.job || {};
+        const units = rec.units || [];
+        const name = job.customerName || rec.id;
+        if (!job.poNumber) { out.push({ name, skip: "no PO #" }); continue; }
+        const materialLf = buildMaterialLf(units, job, catalog, offsets.boardWaste);
+        if (!materialLf) { out.push({ name, po: job.poNumber, skip: "no LF (no complete units)" }); continue; }
+        const feet = Math.round(materialLf.lines.reduce((s, l) => s + l.feet, 0));
+        let pushed = "dry-run";
+        if (write) {
+          const res = await pushPdfToJoblist({
+            jobId: rec.id,
+            customerName: job.customerName || "",
+            poNumber: job.poNumber || "",
+            savedAt: rec.savedAt || new Date().toISOString(),
+            materialLf,
+          });
+          pushed = res && res.pushed ? "pushed" : "FAILED";
+        }
+        out.push({ name, po: job.poNumber, lines: materialLf.lines.length, feet, pushed });
+      }
+      console.table(out);
+      return out;
+    };
+
     // Catalog API
     // Bring a catalog's jamb stock up to date: rename legacy "1xN" labels to canonical
     // stock labels so toggles match the calc, ensure Basswood-only widths (5/8x8/10/12)
