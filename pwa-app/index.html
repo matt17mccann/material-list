@@ -1536,9 +1536,11 @@
       // Per-unit mode: run optimizer separately for each unit, then combine
       if (perUnit) {
         let allBoards = [];
+        const allWarnings = [];
         units.forEach(unit => {
           const result = optimizeBoards([unit], catalog, false, boardWaste);
           allBoards.push(...result.boards);
+          allWarnings.push(...result.warnings);
         });
         allBoards.sort((a, b) => {
           if (a.materialType !== b.materialType) return a.materialType.localeCompare(b.materialType);
@@ -1547,7 +1549,7 @@
         });
         const summary = {};
         allBoards.forEach(board => { summary[board.stockLength] = (summary[board.stockLength] || 0) + 1; });
-        return { boards: allBoards, summary, STOCK_LABELS: STOCK_LABELS_PROXY };
+        return { boards: allBoards, summary, warnings: allWarnings, STOCK_LABELS: STOCK_LABELS_PROXY };
       }
       // 8'/10'/12' standard, plus any custom lengths declared in the catalog
       const ALL_STOCK_LENGTHS = [...new Set([96, 120, 144, ...getCatalogExtraLengths(catalog)])].sort((a, b) => a - b);
@@ -1605,6 +1607,7 @@
 
       // For each group, try ALL possible combinations of stock lengths and pick the one with least total waste
       const allBoards = [];
+      const warnings = []; // cuts that don't fit any available stock length
       Object.values(groups).forEach(group => {
         const allSorted = [...group.cuts].sort((a, b) => b.length - a.length);
 
@@ -1627,13 +1630,23 @@
         allSorted.forEach(cut => {
           if (cut.length > usableMax) {
             const n = Math.ceil(cut.length / usableMax);
+            warnings.push({
+              source: cut.source,
+              cutName: cut.cutName,
+              length: cut.rawLength,
+              material: `${group.species} ${group.profile || (group.jambStock && group.jambStock.label) || group.materialType}`,
+              maxStock,
+              pieces: n,
+            });
             let remainingLen = cut.length;
             for (let i = 0; i < n; i++) {
               const seg = Math.min(remainingLen, usableMax);
               remainingLen -= seg;
               splicedBoards.push({
                 stockLength: maxStock,
-                cuts: [{ ...cut, rawLength: seg, length: seg, source: `${cut.source} (spliced ${i + 1}/${n} of ${toFraction(cut.rawLength)}")` }],
+                // NOTE: `source` must stay the plain unit key — per-unit attribution
+                // (jobBoardGroupsByUnit) matches on it. Splice info goes in spliceNote.
+                cuts: [{ ...cut, rawLength: seg, length: seg, spliceNote: `spliced ${i + 1}/${n} of ${toFraction(cut.rawLength)}"` }],
                 remaining: usableMax - seg,
                 materialType: group.materialType,
                 species: group.species,
@@ -1656,7 +1669,9 @@
 
         // Strategy: try packing with preference for each stock length, then pick best overall
         for (const preferredStock of [null, ...STOCK_LENGTHS]) {
-          const boards = [];
+          // Seed with the spliced boards so their leftover (the tail board of a
+          // spliced piece can have a lot left) is available to the other cuts.
+          const boards = splicedBoards.map(b => ({ ...b, cuts: [...b.cuts] }));
 
           sorted.forEach(cut => {
             // Try to fit into existing board
@@ -1720,7 +1735,7 @@
           }
         }
 
-        allBoards.push(...(bestBoards || []), ...splicedBoards);
+        allBoards.push(...(bestBoards || []));
       });
 
       // Sort boards: by material type, then species, then stock length
@@ -1737,7 +1752,7 @@
         summary[key] = (summary[key] || 0) + 1;
       });
 
-      return { boards: allBoards, summary, STOCK_LABELS };
+      return { boards: allBoards, summary, warnings, STOCK_LABELS };
     }
 
     // Normalize the job's extra boards into the same shape optimizeBoards emits, so
@@ -2738,6 +2753,18 @@
           const unitList = jambUnits.length === units.length ? "All Units" : ("Units: " + jambUnits.join(", "));
           rows.push({ category: "NOTE", description: `CUSTOMER SUPPLYING JAMBS — ${unitList}`, quantity: "", isNote: true });
         }
+
+        // Pieces longer than the longest available stock — the optimizer splices
+        // them across boards so counts aren't short, but that's rarely acceptable
+        // for trim, so call it out (usually means a longer length needs stocking).
+        const oversize = {};
+        (result.warnings || []).forEach(w => {
+          const txt = `PIECE LONGER THAN AVAILABLE STOCK — ${w.source} ${w.cutName} ${toFraction(w.length)}" — longest ${w.material} on hand is ${STOCK_LABELS[w.maxStock]}; split across ${w.pieces} boards`;
+          oversize[txt] = (oversize[txt] || 0) + 1;
+        });
+        Object.entries(oversize).forEach(([txt, n]) => {
+          rows.push({ category: "NOTE", description: n > 1 ? `${txt} (×${n})` : txt, quantity: "", isNote: true });
+        });
 
         // Coil / extra materials first — unit-attached manual materials are
         // summed across all units so the job total reflects real quantities
