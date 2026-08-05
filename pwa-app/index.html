@@ -287,6 +287,18 @@
       '1x4': '5/8x4', '1x6': '5/8x6', '1x8': '3/4x8', '1x10': '3/4x10', '1x12': '3/4x12',
     };
 
+    // Extra boards store a profile label the same way units do, so saved ones can
+    // still hold a legacy label ("1x4 (RBA-S4S-3.5)" casing, "1x6" jamb stock).
+    // Units get mapped forward on load; extra boards were missed, which printed the
+    // old and new label for the same profile as two separate checklist rows.
+    function normalizeExtraBoardProfile(eb) {
+      if (!eb || !eb.profile) return eb;
+      const profile = eb.materialType === "Jamb Extension"
+        ? (JAMB_STOCK_RENAMES[eb.profile] || eb.profile)
+        : normalizeCasingProfile(eb.profile);
+      return profile === eb.profile ? eb : { ...eb, profile };
+    }
+
     const STOP_PROFILES = [
       { label: '1x4 Stop', width: 3.5, code: 'STOP-1x4', pineOnly: false },
       { label: 'Colonial 3-1/4" Stop', width: 3.25, code: 'STOP-COL', pineOnly: false },
@@ -1760,7 +1772,7 @@
     function normalizeExtraBoards(extraBoards, units, catalog) {
       if (!extraBoards || !extraBoards.length) return [];
       const defaultFinish = units[0]?.finish || "";
-      return extraBoards.map(eb => {
+      return extraBoards.map(normalizeExtraBoardProfile).map(eb => {
         const stockLen = parseInt(eb.stockLength) || 120;
         const isJamb = eb.materialType === "Jamb Extension";
         return {
@@ -1871,7 +1883,7 @@
     // here and counted — mirrors aggregateBoardGroups' category/description/quantity shape.
     function groupExtraBoards(extraBoards, STOCK_LABELS) {
       const groups = {};
-      (extraBoards || []).forEach(eb => {
+      (extraBoards || []).map(normalizeExtraBoardProfile).forEach(eb => {
         const species = eb.species || "Oak";
         const stockLen = parseInt(eb.stockLength) || 120;
         const lengthLabel = STOCK_LABELS[stockLen] || (eb.stockLength + '"');
@@ -2063,7 +2075,7 @@
     // Fill a saved job's info with defaults for any missing fields (module-level so
     // both the editor and the report/export paths share one definition).
     function mergedJobDefaults(savedJob) {
-      return {
+      const merged = {
         customerName: "", address: "", poNumber: "", techMeasurer: "",
         date: new Date().toISOString().split("T")[0],
         prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "",
@@ -2071,6 +2083,10 @@
         customTrimMode: false, optimizePerUnit: true, showFinishOnChecklist: false,
         ...savedJob,
       };
+      // Map legacy extra-board profile labels forward, the same way units are
+      // normalized on load — both job loaders go through here.
+      merged.extraBoards = (merged.extraBoards || []).map(normalizeExtraBoardProfile);
+      return merged;
     }
 
     function ReportView({ job, jobId, units, catalog, offsets, globalTrim, reportType, submitted, allComplete, isResubmit, savedJobs, onSubmit, onBack, onEdit }) {
@@ -6041,7 +6057,7 @@
                   );
                 }
                 const { boards: unitBoards, STOCK_LABELS } = optimizeBoards(completeUnits, catalog, job.optimizePerUnit, offsets.boardWaste);
-                const extraBoardEntries = (job.extraBoards || []).map(eb => ({
+                const extraBoardEntries = (job.extraBoards || []).map(normalizeExtraBoardProfile).map(eb => ({
                   stockLength: parseInt(eb.stockLength) || 120,
                   materialType: eb.materialType || "Casing",
                   species: eb.species || units[0]?.species || "Oak",
