@@ -3018,13 +3018,20 @@
         setPdfBusy(true);
         try {
           const pdf = await generatePDFDoc(null, null, activeReport);
+          // Embed the print action in the PDF so the viewer opens the dialog once
+          // it has actually rendered. Calling win.print() on the load event raced
+          // the viewer and printed blank pages on longer docs (the detailed list
+          // runs many pages, so it never won that race).
+          if (typeof pdf.autoPrint === "function") pdf.autoPrint();
           const blob = pdf.output("blob");
           const url = URL.createObjectURL(blob);
           const win = window.open(url);
           if (win) {
-            win.onload = () => { win.print(); };
+            // Release the blob once the viewer has had time to load it.
+            setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 60000);
           } else {
             // window.open blocked (common on iOS PWA) — fall back to download
+            URL.revokeObjectURL(url);
             pdf.save(pdfFilename(null, activeReport));
           }
         } catch (err) {
