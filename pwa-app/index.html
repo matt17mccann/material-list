@@ -1930,6 +1930,84 @@
       return result;
     }
 
+    // ─── BOARD CUT LIST (the original OptiCutter-style view) ───
+    // Every physical board that gets bought, numbered, with the exact cuts that
+    // come off it and the drop left over. Detailed report only — the checklist
+    // and the per-unit Job Summary stay aggregated.
+    function BoardCutList({ units, catalog, optimizePerUnit, extraBoards, boardWaste }) {
+      const result = optimizeBoards(units, catalog, optimizePerUnit, boardWaste);
+      const boards = [...result.boards];
+      const summary = { ...result.summary };
+      const STOCK_LABELS = result.STOCK_LABELS;
+
+      // Extra boards are real boards to buy, so they get numbered rows too —
+      // they just carry no cuts. normalizeExtraBoards keeps them 1:1 with the
+      // source array (and maps legacy profile labels forward), so notes zip by index.
+      const ebNotes = (extraBoards || []).map(eb => eb.note || "");
+      normalizeExtraBoards(extraBoards, units, catalog).forEach((b, i) => {
+        boards.push({ ...b, cuts: [], remaining: 0, extraNote: ebNotes[i] });
+        summary[b.stockLength] = (summary[b.stockLength] || 0) + 1;
+      });
+
+      if (boards.length === 0) return null;
+
+      return (
+        <div style={{ marginTop: 28, pageBreakBefore: "always" }}>
+          <div style={{ background: "#6DB344", color: "#fff", padding: "10px 14px", fontSize: 16, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
+            Board Cut List
+            <span style={{ fontSize: 11, fontWeight: 400, marginLeft: 12, opacity: 0.85 }}>— every board, and the cuts that come off it</span>
+          </div>
+
+          <div style={{ background: "#F5F5F4", padding: "10px 14px", display: "flex", gap: 20, fontSize: 14, borderBottom: "1px solid #E8E8E8", flexWrap: "wrap" }}>
+            <span><strong>Total Boards:</strong> {boards.length}</span>
+            {Object.entries(summary).sort((a, b) => Number(a[0]) - Number(b[0])).map(([len, count]) => (
+              <span key={len}><strong>{STOCK_LABELS[len]}:</strong> {count}</span>
+            ))}
+          </div>
+
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: "#F0F0EF" }}>
+                <th style={{ textAlign: "left", padding: "7px 10px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Board #</th>
+                <th style={{ textAlign: "center", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Stock</th>
+                <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Type / Size</th>
+                <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Species</th>
+                <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Finish</th>
+                <th style={{ textAlign: "left", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Cuts from this board</th>
+                <th style={{ textAlign: "center", padding: "7px 8px", borderBottom: "2px solid #bbb", fontWeight: 700 }}>Waste</th>
+              </tr>
+            </thead>
+            <tbody>
+              {boards.map((board, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #ddd", background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
+                  <td style={{ padding: "6px 10px", fontWeight: 600 }}>{i + 1}</td>
+                  <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{STOCK_LABELS[board.stockLength]}</td>
+                  <td style={{ padding: "6px 8px" }}>
+                    {board.species} {board.materialType}
+                    {board.jambStock ? ` (${fixBasswoodThickness(board.species, board.jambStock.label)})` : ""}
+                    {board.profile ? ` — ${fixBasswoodThickness(board.species, board.profile)}` : ""}
+                    {board.isExtra && <span style={{ fontStyle: "italic", color: "#999", marginLeft: 6 }}>(Extra{board.extraNote ? ` — ${board.extraNote}` : ""})</span>}
+                  </td>
+                  <td style={{ padding: "6px 8px" }}>{board.species}</td>
+                  <td style={{ padding: "6px 8px" }}>{board.finish}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 11 }}>
+                    {board.cuts.length === 0
+                      ? <span style={{ color: "#bbb" }}>—</span>
+                      : board.cuts.map((c, j) => (
+                          <span key={j}>{j > 0 && ", "}{toFraction(c.rawLength)}" — {c.source}</span>
+                        ))}
+                  </td>
+                  <td style={{ textAlign: "center", padding: "6px 8px", color: board.remaining > 24 ? "#c0392b" : "#888" }}>
+                    {toFraction(board.remaining)}"
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
     function BoardSummary({ units, catalog, optimizePerUnit, extraBoards, jobExtraMaterials, boardWaste }) {
       // Purchasing totals are still board-optimized so nothing is lost — but the
       // detail is shown per unit, not as a big factory board list.
@@ -2678,6 +2756,109 @@
           });
         };
 
+        // ── BOARD CUT LIST — board-by-board cutting reference (OptiCutter style).
+        // Starts its own page and goes last on the detailed list.
+        const renderBoardCutList = () => {
+          const result = optimizeBoards(units, catalog, job.optimizePerUnit, offsets.boardWaste);
+          const boards = [...result.boards];
+          const summary = { ...result.summary };
+          const STOCK_LABELS = result.STOCK_LABELS;
+          const ebNotes = (job.extraBoards || []).map(eb => eb.note || "");
+          normalizeExtraBoards(job.extraBoards, units, catalog).forEach((b, i) => {
+            boards.push({ ...b, cuts: [], remaining: 0, extraNote: ebNotes[i] });
+            summary[b.stockLength] = (summary[b.stockLength] || 0) + 1;
+          });
+          if (!boards.length) return;
+
+          pdf.addPage();
+          y = margin;
+
+          pdf.setFillColor(...GREEN);
+          pdf.rect(margin, y, contentW, 9, "F");
+          pdf.setFont("Roboto", "bold"); pdf.setFontSize(12); pdf.setTextColor(255, 255, 255);
+          pdf.text("Board Cut List", margin + 3, y + 6.2);
+          pdf.setFont("Roboto", "normal"); pdf.setFontSize(8);
+          pdf.text("every board, and the cuts that come off it", pageW - margin - 3, y + 6.2, { align: "right" });
+          y += 9;
+
+          pdf.setFillColor(...LIGHT_BG);
+          pdf.rect(margin, y, contentW, 8, "F");
+          pdf.setFontSize(10); pdf.setTextColor(...TEXT_DARK);
+          let tx = margin + 3;
+          const writeTot = (lbl, val) => {
+            pdf.setFont("Roboto", "bold"); pdf.text(lbl, tx, y + 5.4);
+            const lw = pdf.getTextWidth(lbl);
+            pdf.setFont("Roboto", "normal");
+            const v = " " + String(val);
+            pdf.text(v, tx + lw, y + 5.4);
+            tx += lw + pdf.getTextWidth(v) + 6;
+          };
+          writeTot("Total Boards:", boards.length);
+          Object.entries(summary).sort((a, b) => Number(a[0]) - Number(b[0])).forEach(([len, count]) => writeTot(STOCK_LABELS[len] + ":", count));
+          y += 10;
+
+          const bCols = [
+            { key: "num", label: "Board #", w: 16, align: "left" },
+            { key: "stock", label: "Stock", w: 15, align: "center" },
+            { key: "type", label: "Type / Size", w: 46, align: "left" },
+            { key: "species", label: "Species", w: 20, align: "left" },
+            { key: "finish", label: "Finish", w: 26, align: "left" },
+            { key: "cuts", label: "Cuts from this board", w: contentW - 155, align: "left" },
+            { key: "waste", label: "Waste", w: 16, align: "center" },
+          ];
+          const drawBcHeader = () => {
+            pdf.setFillColor(240, 240, 239);
+            pdf.rect(margin, y, contentW, 6.6, "F");
+            pdf.setDrawColor(...BORDER_BB); pdf.setLineWidth(0.5);
+            pdf.line(margin, y + 6.6, pageW - margin, y + 6.6); pdf.setLineWidth(0.2);
+            pdf.setFont("Roboto", "bold"); pdf.setFontSize(8.5); pdf.setTextColor(...TEXT_DARK);
+            let cx = margin;
+            bCols.forEach(c => { const t2 = c.align === "center" ? cx + c.w / 2 : cx + 2; pdf.text(c.label, t2, y + 4.5, { align: c.align }); cx += c.w; });
+            y += 6.6;
+          };
+          drawBcHeader();
+
+          boards.forEach((board, i) => {
+            const cutsStr = (board.cuts || []).map(c => `${toFraction(c.rawLength)}" — ${c.source}`).join(", ") || "—";
+            const cutsCol = bCols.find(c => c.key === "cuts");
+            const cutsLines = pdf.splitTextToSize(cutsStr, cutsCol.w - 2);
+            const typeStr = `${board.species} ${board.materialType}`
+              + (board.jambStock ? ` (${fixBasswoodThickness(board.species, board.jambStock.label)})` : "")
+              + (board.profile ? ` — ${fixBasswoodThickness(board.species, board.profile)}` : "")
+              + (board.isExtra ? ` (Extra${board.extraNote ? " — " + board.extraNote : ""})` : "");
+            const typeLines = pdf.splitTextToSize(typeStr, bCols[2].w - 2);
+            const rowH = Math.max(6.5, Math.max(cutsLines.length, typeLines.length) * 3.6 + 2.2);
+            if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; drawBcHeader(); }
+            if (i % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
+
+            const vals = {
+              num: String(i + 1),
+              stock: STOCK_LABELS[board.stockLength],
+              species: board.species,
+              finish: board.finish || "",
+              waste: toFraction(board.remaining || 0) + '"',
+            };
+            let cx = margin;
+            bCols.forEach(c => {
+              const t2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
+              pdf.setFontSize(8.5);
+              if (c.key === "stock") { pdf.setFont("Roboto", "bold"); pdf.setTextColor(...GREEN); }
+              else if (c.key === "num") { pdf.setFont("Roboto", "bold"); pdf.setTextColor(...TEXT_DARK); }
+              else if (c.key === "waste") { pdf.setFont("Roboto", "normal"); pdf.setTextColor(...((board.remaining || 0) > 24 ? NOTE_RED : TEXT_MUTE)); }
+              else { pdf.setFont("Roboto", "normal"); pdf.setTextColor(...TEXT_DARK); }
+
+              if (c.key === "cuts") { pdf.setFontSize(8); cutsLines.forEach((ln, li) => pdf.text(ln, t2, y + 4.3 + li * 3.6)); }
+              else if (c.key === "type") { typeLines.forEach((ln, li) => pdf.text(ln, t2, y + 4.3 + li * 3.6)); }
+              else if (c.align === "left") { pdf.text(pdf.splitTextToSize(vals[c.key], c.w - 2)[0], t2, y + 4.3); }
+              else { pdf.text(vals[c.key], t2, y + 4.3, { align: c.align }); }
+              cx += c.w;
+            });
+            pdf.setDrawColor(...BORDER);
+            pdf.line(margin, y + rowH, pageW - margin, y + rowH);
+            y += rowH;
+          });
+        };
+
         const writeFooters = () => {
           const totalPages = pdf.internal.getNumberOfPages();
           for (let p = 1; p <= totalPages; p++) {
@@ -2697,6 +2878,7 @@
           renderPrefinish(buildChecklist(job, units).extraRows.filter(r => r.isNote));
           renderExtraMaterialsTable();
           renderBayMaterial();
+          renderBoardCutList();
         } else {
           renderChecklistBar();
           renderChecklistIntro();
@@ -3296,7 +3478,11 @@
           )}
 
           {/* Job Summary intentionally lives only on the Checklist — the detailed
-              list already shows each unit's boards inline, above. */}
+              list already shows each unit's boards inline, above. The board-by-board
+              cut list goes last, as the shop's cutting reference. */}
+          <div data-pdf-section="board-cut-list">
+            <BoardCutList units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} />
+          </div>
 
           <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", textAlign: "center" }}>
             Renewal by Andersen — Detailed Cut List • {new Date().toLocaleDateString()}
