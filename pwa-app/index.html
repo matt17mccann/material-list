@@ -767,12 +767,31 @@
       // --- Tech measurer: find a known tech name anywhere in the text ---
       jobInfo.techMeasurer = TECH_MEASURERS.find(t => text.includes(t)) || "";
 
-      // --- Address: street number + street name + city/state/zip ---
-      const addrM = text.match(/(\d+\s+[^\n,]{5,60}(?:Road|Rd|Avenue|Ave|Street|St|Drive|Dr|Lane|Ln|Way|Court|Ct|Blvd|County Road|Cty Rd)[^\n]*)\s*\n\s*([A-Za-z][\w\s]+,\s*[A-Z]{2}\s+\d{5})/i);
+      // --- Header block: these packages always open with three lines —
+      // customer name, street, then "City, ST 12345". Anchoring on that shape is
+      // far more reliable than hunting for a street suffix: real addresses here
+      // include "Highway 8", "Maple Ridge" and "County Road L", which have no
+      // suffix to match, and names like "Julie & Tom Pakonen" contain "&".
+      const headLines = text.split("\n").map(l => l.trim()).filter(Boolean);
+      const cityLineRe = /^[A-Za-z][A-Za-z .'-]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?$/;
+      for (let i = 0; i + 2 < Math.min(headLines.length, 8); i++) {
+        const nameLine = headLines[i], streetLine = headLines[i + 1], cityLine = headLines[i + 2];
+        if (!cityLineRe.test(cityLine)) continue;
+        if (!/\d/.test(streetLine)) continue;                       // street carries a number
+        if (/[:|@]/.test(nameLine)) continue;                        // "dba:", "Legal Name:", emails
+        if (/renewal|andersen|legal|solutions|inc\b|llc\b/i.test(nameLine)) continue;
+        if (!/^[A-Za-z][A-Za-z .'&-]+$/.test(nameLine)) continue;
+        jobInfo.customerName = nameLine;
+        jobInfo.address = streetLine + ", " + cityLine;
+        break;
+      }
+
+      // --- Address fallback: street number + street name + city/state/zip ---
+      const addrM = jobInfo.address ? null : text.match(/(\d+\s+[^\n,]{2,60}(?:Road|Rd|Avenue|Ave|Street|St|Drive|Dr|Lane|Ln|Way|Court|Ct|Blvd|County Road|Cty Rd)[^\n]*)\s*\n\s*([A-Za-z][\w\s]+,\s*[A-Z]{2}\s+\d{5})/i);
       if (addrM) jobInfo.address = `${addrM[1].trim()}, ${addrM[2].trim()}`;
 
-      // --- Customer name: the line directly above the street address ---
-      if (addrM) {
+      // --- Customer name fallback: the line directly above the street address ---
+      if (!jobInfo.customerName && addrM) {
         const lines = text.slice(0, addrM.index).split("\n").map(l => l.trim()).filter(Boolean);
         const cand = lines[lines.length - 1] || "";
         if (/^[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){1,3}$/.test(cand) && !/renewal|andersen|legal|solutions|inc\b|llc\b/i.test(cand)) {
@@ -785,8 +804,12 @@
         if (nameM) jobInfo.customerName = nameM[1].trim();
       }
 
-      // --- PO number: starts with R, RD, or RP followed by digits, often near phone numbers ---
-      const poM = text.match(/\b(R[PD]?\d[\d-]{3,15})\b/i);
+      // --- PO number: R / RD / RP, optionally hyphenated, then the order digits
+      // and a rep suffix — e.g. "R-04799562-JB3", "RP-04810283-MC3-RF". The old
+      // pattern required a digit straight after the R and so matched none of the
+      // current packages (they all print the hyphen).
+      const poM = text.match(/\b(R[PD]?-?\d{6,9}(?:-[A-Za-z0-9]+)*)\b/i)
+               || text.match(/\b(R[PD]?\d[\d-]{3,15})\b/i);
       if (poM) jobInfo.poNumber = poM[1].toUpperCase();
 
       // --- Units ---
@@ -801,7 +824,11 @@
       // overwrites a labeled match.
       const sizePlain = new RegExp(FRAC + '"\\s+' + FRAC + '"', "g");
       const found = new Map();
-      const allIds = [...text.matchAll(idPat)];
+      // Only scan the order-summary table onward. The header block above it opens
+      // with the customer's street address, so a house number like "400 Maple
+      // Ridge" was being read as unit 400 and added as a phantom unit.
+      const tableStart = (() => { const m = text.match(/ID\s*#/); return m ? m.index : 0; })();
+      const allIds = [...text.matchAll(idPat)].filter(m => m.index >= tableStart);
       // Nearest unit ID to a size match: last ID within 600 chars before it, else first within 400 after
       function nearestId(pos) {
         let b = -1, a = -1;
@@ -3926,6 +3953,7 @@
           const ext = file.name.split(".").pop().toLowerCase();
 
           let data;
+          let pdfDiag = null;   // set on the PDF path so a failure can explain itself
 
           if (ext === "zip") {
             // ── ZIP — extract first .json file inside ──
@@ -3961,6 +3989,7 @@
             const arrayBuffer = await file.arrayBuffer();
             const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
             const pdf = await loadingTask.promise;
+            pdfDiag = { pages: pdf.numPages, chars: 0, looksLikePackage: false };
             let fullText = "";
             for (let i = 1; i <= pdf.numPages; i++) {
               const page = await pdf.getPage(i);
@@ -3975,11 +4004,34 @@
               }
               fullText += pageText + "\n\n";
             }
+            pdfDiag.chars = fullText.trim().length;
+            pdfDiag.looksLikePackage = /ID\s*#/.test(fullText) || /Order Summary/i.test(fullText);
             data = parseInstallerPackageText(fullText);
           }
 
           if (!data.units || !data.units.length) {
-            alert("No units found in this file.\n\nSupported formats:\n• rSuite DL Export (.json or .zip)\n• rSuite Measured Project (.csv)\n• RBA Installer Package (.pdf)");
+            // A bare "no units" message reads as "wrong file type", which sends
+            // people hunting for a different export. Say which stage actually
+            // failed, and include the numbers to quote when reporting it.
+            let msg;
+            if (!pdfDiag) {
+              msg = "No units found in this file.\n\nSupported formats:\n• rSuite DL Export (.json or .zip)\n• rSuite Measured Project (.csv)\n• RBA Installer Package (.pdf)";
+            } else if (pdfDiag.chars === 0) {
+              msg = "Couldn't read any text from this PDF (" + pdfDiag.pages + " pages).\n\n"
+                  + "It's most likely a scan or photo of the package rather than the original file — "
+                  + "those have no text layer to read. Try downloading the package straight from "
+                  + "Salesforce/rSuite instead of a printed or re-saved copy.";
+            } else if (!pdfDiag.looksLikePackage) {
+              msg = "This PDF doesn't look like an RBA Installer or TechMapp package "
+                  + "(" + pdfDiag.pages + " pages, " + pdfDiag.chars + " characters read).\n\n"
+                  + "It's missing the Order Summary / ID# table the units are read from.";
+            } else {
+              msg = "Read the package but couldn't pull any units out of it "
+                  + "(" + pdfDiag.pages + " pages, " + pdfDiag.chars + " characters).\n\n"
+                  + "The Order Summary was found but no unit rows matched — this package may use "
+                  + "a layout the app hasn't seen. Please send this exact PDF to Matt with these numbers.";
+            }
+            alert(msg);
             setPdfParsing(false);
             return;
           }
