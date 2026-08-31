@@ -1957,14 +1957,51 @@
       return result;
     }
 
+    // ─── DETAILED-LIST DISPLAY FILTER ───
+    // Category keys the Detailed view can toggle on/off. One mapping per data
+    // shape so the cut rows, Boards-to-Pull groups, and Board Cut List all
+    // filter consistently.
+    const MAT_FILTER_DEFS = [
+      { key: "jamb", label: "Jambs" },
+      { key: "stool", label: "Stools" },
+      { key: "casing", label: "Casing" },
+      { key: "apron", label: "Aprons" },
+      { key: "stop", label: "Stops" },
+      { key: "other", label: "Other" },
+    ];
+    const ALL_MAT_FILTER = { jamb: true, stool: true, casing: true, apron: true, stop: true, other: true };
+    function matFilterKey(m) { // calcMaterials row
+      if (m.category === "Jamb") return (m.name.includes("Sill") || m.name.includes("Stool")) ? "stool" : "jamb";
+      if (m.category === "Casing") return m.name.includes("Apron") ? "apron" : "casing";
+      if (m.category === "Stop") return "stop";
+      return "other"; // thresholds etc.
+    }
+    function groupFilterKey(cat) { // aggregateBoardGroups category string
+      if (cat === "JAMB MATERIAL") return "jamb";
+      if (cat === "STOOL") return "stool";
+      if (cat.endsWith("APRON")) return "apron";
+      if (cat.endsWith("STOP")) return "stop";
+      if (cat.endsWith("CASING")) return "casing";
+      return "other";
+    }
+    function boardFilterKey(board) { // optimizer board
+      const isStool = board.cuts && board.cuts.some(c => c.cutName && (c.cutName.includes("Stool") || c.cutName.includes("Sill")));
+      if (board.materialType === "Jamb Extension") return isStool ? "stool" : "jamb";
+      if (board.materialType === "Apron") return "apron";
+      if (board.materialType === "Stop") return "stop";
+      if (board.materialType === "Other") return "other";
+      return "casing";
+    }
+    const matFilterAllOn = f => !f || MAT_FILTER_DEFS.every(d => f[d.key]);
+    const matFilterNames = f => MAT_FILTER_DEFS.filter(d => f && f[d.key]).map(d => d.label).join(", ");
+
     // ─── BOARD CUT LIST (the original OptiCutter-style view) ───
     // Every physical board that gets bought, numbered, with the exact cuts that
     // come off it and the drop left over. Detailed report only — the checklist
     // and the per-unit Job Summary stay aggregated.
-    function BoardCutList({ units, catalog, optimizePerUnit, extraBoards, boardWaste }) {
+    function BoardCutList({ units, catalog, optimizePerUnit, extraBoards, boardWaste, filter }) {
       const result = optimizeBoards(units, catalog, optimizePerUnit, boardWaste);
-      const boards = [...result.boards];
-      const summary = { ...result.summary };
+      const allBoards = [...result.boards];
       const STOCK_LABELS = result.STOCK_LABELS;
 
       // Extra boards are real boards to buy, so they get numbered rows too —
@@ -1972,9 +2009,16 @@
       // source array (and maps legacy profile labels forward), so notes zip by index.
       const ebNotes = (extraBoards || []).map(eb => eb.note || "");
       normalizeExtraBoards(extraBoards, units, catalog).forEach((b, i) => {
-        boards.push({ ...b, cuts: [], remaining: 0, extraNote: ebNotes[i] });
-        summary[b.stockLength] = (summary[b.stockLength] || 0) + 1;
+        allBoards.push({ ...b, cuts: [], remaining: 0, extraNote: ebNotes[i] });
       });
+
+      // Number every board BEFORE filtering so a filtered view keeps the same
+      // board numbers as the full list (and as the printed labels).
+      const numbered = allBoards.map((b, i) => ({ b, num: i + 1 }))
+        .filter(({ b }) => matFilterAllOn(filter) || filter[boardFilterKey(b)]);
+      const boards = numbered.map(x => x.b);
+      const summary = {};
+      boards.forEach(b => { summary[b.stockLength] = (summary[b.stockLength] || 0) + 1; });
 
       if (boards.length === 0) return null;
 
@@ -2005,9 +2049,9 @@
               </tr>
             </thead>
             <tbody>
-              {boards.map((board, i) => (
+              {numbered.map(({ b: board, num }, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #ddd", background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
-                  <td style={{ padding: "6px 10px", fontWeight: 600 }}>{i + 1}</td>
+                  <td style={{ padding: "6px 10px", fontWeight: 600 }}>{num}</td>
                   <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{STOCK_LABELS[board.stockLength]}</td>
                   <td style={{ padding: "6px 8px" }}>
                     {board.species} {board.materialType}
@@ -2196,6 +2240,7 @@
     function ReportView({ job, jobId, units, catalog, offsets, globalTrim, reportType, submitted, allComplete, isResubmit, savedJobs, onSubmit, onBack, onEdit }) {
       const reportRef = useRef();
       const [activeReport, setActiveReport] = useState(reportType || "checklist");
+      const [detailFilter, setDetailFilter] = useState({ ...ALL_MAT_FILTER }); // detailed-list display filter
 
       const [pdfBusy, setPdfBusy] = useState(false);
       const [exportBusy, setExportBusy] = useState(null); // {done,total} while exporting all
@@ -2206,10 +2251,12 @@
       // Build a text-based PDF with a real text layer (editable, searchable,
       // small file size). Reproduces the Checklist + Prefinish + Bay Material
       // + Board Summary sections using jsPDF's native text/drawing APIs.
-      const generatePDFDoc = async (ovJob, ovUnits, mode = "checklist") => {
+      const generatePDFDoc = async (ovJob, ovUnits, mode = "checklist", ovFilter = null) => {
         const job = ovJob || propJob;
         const units = ovUnits || propUnits;
         const isDetailed = mode === "detailed";
+        // Detailed-mode display filter (from the on-screen chips) — null means all
+        const dFilter = isDetailed && ovFilter && !matFilterAllOn(ovFilter) ? ovFilter : null;
         const pdf = new jspdf.jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
         // Embed Roboto so Adobe Acrobat can edit the text. PDF's standard
@@ -2666,11 +2713,22 @@
             y += 6.6;
           };
 
+          if (dFilter) {
+            // Make a partial printout impossible to mistake for the full list
+            ensure(9);
+            pdf.setFillColor(...NOTE_ORANGE_BG);
+            pdf.rect(margin, y, contentW, 7, "F");
+            pdf.setFont("Roboto", "bold"); pdf.setFontSize(9); pdf.setTextColor(...NOTE_RED);
+            pdf.text("FILTERED VIEW — showing " + (matFilterNames(dFilter) || "nothing") + " only. Not the complete material list.", margin + 3, y + 4.8);
+            y += 10;
+          }
+
           units.forEach((unit) => {
             const excluded = isStormDoor(unit) || !isUnitComplete(unit);
-            const mats = excluded ? [] : calcMaterials(unit, catalog);
-            const manual = (unit.manualMaterials || []).filter(mm => mm.description);
-            const bg = excluded ? [] : boardsFor(unit);
+            const mats = (excluded ? [] : calcMaterials(unit, catalog)).filter(m => !dFilter || dFilter[matFilterKey(m)]);
+            const manual = (!dFilter || dFilter.other) ? (unit.manualMaterials || []).filter(mm => mm.description) : [];
+            const bg = excluded ? [] : boardsFor(unit).filter(g => !dFilter || dFilter[groupFilterKey(g.category)]);
+            if (!excluded && dFilter && !mats.length && !manual.length && !bg.length) return; // fully filtered out
             const hasJD = unit.trimStyle !== "Stops" && unit.jambDepthWhole;
 
             ensure(32);
@@ -2787,14 +2845,18 @@
         // Starts its own page and goes last on the detailed list.
         const renderBoardCutList = () => {
           const result = optimizeBoards(units, catalog, job.optimizePerUnit, offsets.boardWaste);
-          const boards = [...result.boards];
-          const summary = { ...result.summary };
+          const allBoards = [...result.boards];
           const STOCK_LABELS = result.STOCK_LABELS;
           const ebNotes = (job.extraBoards || []).map(eb => eb.note || "");
           normalizeExtraBoards(job.extraBoards, units, catalog).forEach((b, i) => {
-            boards.push({ ...b, cuts: [], remaining: 0, extraNote: ebNotes[i] });
-            summary[b.stockLength] = (summary[b.stockLength] || 0) + 1;
+            allBoards.push({ ...b, cuts: [], remaining: 0, extraNote: ebNotes[i] });
           });
+          // Number before filtering so board numbers stay stable across views/labels
+          const numbered = allBoards.map((b, i) => ({ b, num: i + 1 }))
+            .filter(({ b }) => !dFilter || dFilter[boardFilterKey(b)]);
+          const boards = numbered.map(x => x.b);
+          const summary = {};
+          boards.forEach(b => { summary[b.stockLength] = (summary[b.stockLength] || 0) + 1; });
           if (!boards.length) return;
 
           pdf.addPage();
@@ -2845,7 +2907,7 @@
           };
           drawBcHeader();
 
-          boards.forEach((board, i) => {
+          numbered.forEach(({ b: board, num }, i) => {
             const cutsStr = (board.cuts || []).map(c => `${toFraction(c.rawLength)}" — ${c.source}`).join(", ") || "—";
             const cutsCol = bCols.find(c => c.key === "cuts");
             const cutsLines = pdf.splitTextToSize(cutsStr, cutsCol.w - 2);
@@ -2859,7 +2921,7 @@
             if (i % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
 
             const vals = {
-              num: String(i + 1),
+              num: String(num),
               stock: STOCK_LABELS[board.stockLength],
               species: board.species,
               finish: board.finish || "",
@@ -2903,8 +2965,10 @@
         if (isDetailed) {
           renderDetailedList();
           renderPrefinish(buildChecklist(job, units).extraRows.filter(r => r.isNote));
-          renderExtraMaterialsTable();
-          renderBayMaterial();
+          if (!dFilter || dFilter.other) {
+            renderExtraMaterialsTable();
+            renderBayMaterial();
+          }
           renderBoardCutList();
         } else {
           renderChecklistBar();
@@ -2974,7 +3038,7 @@
         try {
           // Print/Save follow whichever tab is showing, so the Detailed tab no
           // longer silently saves the Checklist.
-          const pdf = await generatePDFDoc(null, null, activeReport);
+          const pdf = await generatePDFDoc(null, null, activeReport, detailFilter);
           pdf.save(pdfFilename(null, activeReport));
         } catch (err) {
           console.error("Save PDF failed:", err);
@@ -3040,11 +3104,108 @@
         }
       };
 
+      // ── AVERY 5160 CUT LABELS ──
+      // One sticker per physical cut piece (plus one per extra board), so nothing
+      // gets hand-written on tape. 5160 grid: letter sheet, 3 × 10 labels of
+      // 2-5/8" × 1", 0.5" top margin, 0.1875" side margin, 2.75" column pitch.
+      // Must be printed at 100% / Actual Size or the grid drifts off the stickers.
+      const handleLabels = async () => {
+        if (pdfBusy) return;
+        setPdfBusy(true);
+        try {
+          const filter = activeReport === "detailed" && !matFilterAllOn(detailFilter) ? detailFilter : null;
+          const result = optimizeBoards(units, catalog, job.optimizePerUnit, offsets.boardWaste);
+          const allBoards = [...result.boards];
+          const STOCK_LABELS = result.STOCK_LABELS;
+          const ebNotes = (job.extraBoards || []).map(eb => eb.note || "");
+          normalizeExtraBoards(job.extraBoards, units, catalog).forEach((b, i) => {
+            allBoards.push({ ...b, cuts: [], remaining: 0, extraNote: ebNotes[i] });
+          });
+          // Same numbering as the Board Cut List: number everything, then filter
+          const numbered = allBoards.map((b, i) => ({ b, num: i + 1 }))
+            .filter(({ b }) => !filter || filter[boardFilterKey(b)]);
+
+          const lastName = (job.customerName || "").split(" ").pop() || "Job";
+          const jobTag = [lastName, job.poNumber].filter(Boolean).join(" · ");
+          const labels = [];
+          numbered.forEach(({ b, num }) => {
+            const stockLbl = b.jambStock
+              ? fixBasswoodThickness(b.species, b.jambStock.label)
+              : (b.profile ? fixBasswoodThickness(b.species, b.profile) : "");
+            if (!b.cuts || b.cuts.length === 0) {
+              labels.push({
+                l1: "EXTRA BOARD" + (b.extraNote ? " — " + b.extraNote : ""),
+                name: b.species + " " + b.materialType,
+                len: STOCK_LABELS[b.stockLength] || "",
+                l3: stockLbl,
+                l4: jobTag + " · Bd " + num,
+              });
+            } else {
+              b.cuts.forEach(c => labels.push({
+                l1: c.source,
+                name: c.cutName || "Cut",
+                len: toFraction(c.rawLength) + '"',
+                l3: [b.species, stockLbl].filter(Boolean).join(" "),
+                l4: jobTag + " · Bd " + num,
+              }));
+            }
+          });
+          if (!labels.length) { alert("No cuts to label" + (filter ? " with the current filter." : ".")); return; }
+
+          const pdf = new jspdf.jsPDF({ unit: "in", format: "letter" });
+          const G = { left: 0.1875, top: 0.5, w: 2.625, h: 1.0, px: 2.75, py: 1.0, perPage: 30, inset: 0.11 };
+          labels.forEach((lb, i) => {
+            const idx = i % G.perPage;
+            if (i > 0 && idx === 0) pdf.addPage();
+            const col = idx % 3, row = Math.floor(idx / 3);
+            const x = G.left + col * G.px, y0 = G.top + row * G.py;
+            const tx = x + G.inset, cw = G.w - G.inset * 2;
+
+            pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(70, 70, 70);
+            pdf.text(pdf.splitTextToSize(lb.l1, cw)[0], tx, y0 + 0.21);
+
+            pdf.setFont("helvetica", "bold"); pdf.setFontSize(13); pdf.setTextColor(0, 0, 0);
+            const lenW = pdf.getTextWidth(lb.len);
+            pdf.text(lb.len, x + G.w - G.inset, y0 + 0.47, { align: "right" });
+            pdf.setFontSize(10.5);
+            pdf.text(pdf.splitTextToSize(lb.name, cw - lenW - 0.12)[0], tx, y0 + 0.47);
+
+            pdf.setFont("helvetica", "normal"); pdf.setFontSize(7); pdf.setTextColor(115, 115, 115);
+            pdf.text(pdf.splitTextToSize(lb.l3, cw)[0], tx, y0 + 0.67);
+            pdf.setFontSize(6.5);
+            pdf.text(pdf.splitTextToSize(lb.l4, cw)[0], tx, y0 + 0.85);
+          });
+
+          // Print-scale reminder in the sheet's bottom margin (outside the stickers)
+          const pageCount = pdf.internal.getNumberOfPages();
+          for (let pg = 1; pg <= pageCount; pg++) {
+            pdf.setPage(pg);
+            pdf.setFont("helvetica", "normal"); pdf.setFontSize(6.5); pdf.setTextColor(160, 160, 160);
+            pdf.text("Avery 5160 — print at 100% / Actual Size (no scaling)", 4.25, 10.78, { align: "center" });
+          }
+
+          if (typeof pdf.autoPrint === "function") pdf.autoPrint();
+          const url = URL.createObjectURL(pdf.output("blob"));
+          const win = window.open(url);
+          if (win) {
+            setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 60000);
+          } else {
+            URL.revokeObjectURL(url);
+            pdf.save(`${lastName} Cut Labels${job.poNumber ? ` (${job.poNumber})` : ""}.pdf`);
+          }
+        } catch (err) {
+          console.error("Labels failed:", err);
+          alert("Failed to generate labels: " + (err && err.message ? err.message : String(err)));
+        } finally {
+          setPdfBusy(false);
+        }
+      };
+
       const handlePrint = async () => {
         if (pdfBusy) return;
         setPdfBusy(true);
         try {
-          const pdf = await generatePDFDoc(null, null, activeReport);
+          const pdf = await generatePDFDoc(null, null, activeReport, detailFilter);
           // Embed the print action in the PDF so the viewer opens the dialog once
           // it has actually rendered. Calling win.print() on the load event raced
           // the viewer and printed blank pages on longer docs (the detailed list
@@ -3073,7 +3234,7 @@
         if (pdfBusy) return;
         setPdfBusy(true);
         try {
-          const pdf = await generatePDFDoc(null, null, activeReport);
+          const pdf = await generatePDFDoc(null, null, activeReport, detailFilter);
           const filename = pdfFilename(null, activeReport);
           const pdfBlob = pdf.output("blob");
 
@@ -3341,11 +3502,41 @@
         <div style={{ padding: "32px 28px", maxWidth: 900, margin: "0 auto", fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif" }}>
           <ReportHeader subtitle="Detailed Cut List" />
 
+          {/* Display filter — screen chips; Print/Save PDF/Labels follow it too */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "0 0 18px" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Show:</span>
+            {MAT_FILTER_DEFS.map(d => (
+              <button key={d.key} onClick={() => setDetailFilter(p => ({ ...p, [d.key]: !p[d.key] }))} style={{
+                padding: "6px 14px", borderRadius: 16, border: "1px solid",
+                borderColor: detailFilter[d.key] ? "#6DB344" : "#ccc",
+                background: detailFilter[d.key] ? "rgba(109,179,68,0.12)" : "#fff",
+                color: detailFilter[d.key] ? "#3e7020" : "#999",
+                fontSize: 12, fontWeight: 700, cursor: "pointer"
+              }}>{d.label}</button>
+            ))}
+            {!matFilterAllOn(detailFilter) && (
+              <button onClick={() => setDetailFilter({ ...ALL_MAT_FILTER })} style={{
+                padding: "6px 14px", borderRadius: 16, border: "1px solid #1a1a1a",
+                background: "#1a1a1a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer"
+              }}>Show All</button>
+            )}
+          </div>
+          {!matFilterAllOn(detailFilter) && (
+            <div style={{ margin: "0 0 18px", padding: "8px 12px", background: "rgba(230,126,34,0.10)", border: "1px solid #e67e22", borderRadius: 6, fontSize: 12, fontWeight: 700, color: "#c0392b" }}>
+              Filtered view — showing {matFilterNames(detailFilter) || "nothing"}. Print, Save PDF, and Labels follow this filter.
+            </div>
+          )}
+
           {units.map((unit, i) => {
             // Match the board optimizer's gates: storm doors get no trim, and
             // incomplete units would render garbage lengths from missing dims
             const excluded = isStormDoor(unit) || !isUnitComplete(unit);
-            const mats = excluded ? [] : calcMaterials(unit, catalog);
+            const mats = (excluded ? [] : calcMaterials(unit, catalog)).filter(m => detailFilter[matFilterKey(m)]);
+            const manualShown = detailFilter.other ? (unit.manualMaterials || []).filter(mm => mm.description) : [];
+            const unitGroups = excluded ? [] : boardsFor(unit).filter(g => detailFilter[groupFilterKey(g.category)]);
+            // A fully filtered-out unit adds nothing — drop it so a jambs-only
+            // view reads as a clean jamb list, not a stack of empty unit headers.
+            if (!excluded && !mats.length && !manualShown.length && !unitGroups.length) return null;
             const hasJD = unit.trimStyle !== "Stops" && unit.jambDepthWhole;
             return (
               <div key={unit.id} data-pdf-section={"unit-" + i} style={{ marginBottom: 24, pageBreakInside: "avoid" }}>
@@ -3396,7 +3587,7 @@
                         </tr>
                       );
                     })}
-                    {(unit.manualMaterials || []).filter(mm => mm.description).map((mm, j) => (
+                    {manualShown.map((mm, j) => (
                       <tr key={"manual-" + j} style={{ borderBottom: "1px solid #ddd", background: "#fdf6e8" }}>
                         <td style={{ padding: "6px 12px" }}>{mm.description} <span style={{ fontSize: 10, color: "#b87333", fontWeight: 700 }}>MANUAL</span></td>
                         <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 600 }}>{mm.qty}</td>
@@ -3409,7 +3600,7 @@
 
                 {/* Actual boards the cuts above come out of */}
                 {!excluded && (() => {
-                  const bg = boardsFor(unit);
+                  const bg = unitGroups;
                   if (!bg.length) return null;
                   return (
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -3460,8 +3651,8 @@
             )}
           </div>
 
-          {/* Extra Materials */}
-          {extraMats.length > 0 && (
+          {/* Extra Materials — job-level "other" material, follows the Other chip */}
+          {detailFilter.other && extraMats.length > 0 && (
             <div data-pdf-section="extra-materials" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
               <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
                 Extra Materials
@@ -3487,7 +3678,7 @@
 
 
           {/* Bay Material */}
-          {(job.bayMaterials || []).length > 0 && (
+          {detailFilter.other && (job.bayMaterials || []).length > 0 && (
             <div data-pdf-section="bay-material" style={{ marginTop: 24, pageBreakInside: "avoid" }}>
               <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
                 Bay Material
@@ -3515,7 +3706,7 @@
               list already shows each unit's boards inline, above. The board-by-board
               cut list goes last, as the shop's cutting reference. */}
           <div data-pdf-section="board-cut-list">
-            <BoardCutList units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} />
+            <BoardCutList units={units} catalog={catalog} optimizePerUnit={job.optimizePerUnit} boardWaste={offsets.boardWaste} extraBoards={job.extraBoards} filter={detailFilter} />
           </div>
 
           <div data-pdf-section="footer" style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 11, color: "#999", textAlign: "center" }}>
@@ -3694,6 +3885,11 @@
                 padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: pdfBusy ? "wait" : "pointer",
                 opacity: pdfBusy ? 0.5 : 1
               }}>{pdfBusy ? "Working…" : "Save PDF"}</button>
+              <button onClick={handleLabels} disabled={pdfBusy} title="Print a sticker for every board cut — Avery 5160 (30 per sheet)" style={{
+                background: "none", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.8)",
+                padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: pdfBusy ? "wait" : "pointer",
+                opacity: pdfBusy ? 0.5 : 1
+              }}>{pdfBusy ? "Working…" : "Labels"}</button>
               <button onClick={exportAllPDFs} disabled={!!exportBusy} title="Save a PDF of every saved + submitted job into a folder you pick" style={{
                 background: "none", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.8)",
                 padding: "8px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: exportBusy ? "wait" : "pointer",
