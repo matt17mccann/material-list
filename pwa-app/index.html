@@ -3125,28 +3125,30 @@
           const numbered = allBoards.map((b, i) => ({ b, num: i + 1 }))
             .filter(({ b }) => !filter || filter[boardFilterKey(b)]);
 
+          const jobName = job.customerName || "Job";
           const lastName = (job.customerName || "").split(" ").pop() || "Job";
-          const jobTag = [lastName, job.poNumber].filter(Boolean).join(" · ");
           const labels = [];
-          numbered.forEach(({ b, num }) => {
+          numbered.forEach(({ b }) => {
             const stockLbl = b.jambStock
               ? fixBasswoodThickness(b.species, b.jambStock.label)
               : (b.profile ? fixBasswoodThickness(b.species, b.profile) : "");
+            const material = [b.species, stockLbl || b.materialType].filter(Boolean).join(" ");
+            const stain = b.finish || "";
             if (!b.cuts || b.cuts.length === 0) {
               labels.push({
-                l1: "EXTRA BOARD" + (b.extraNote ? " — " + b.extraNote : ""),
-                name: b.species + " " + b.materialType,
+                job: jobName,
+                unit: "EXTRA BOARD" + (b.extraNote ? " — " + b.extraNote : ""),
+                piece: b.materialType,
                 len: STOCK_LABELS[b.stockLength] || "",
-                l3: stockLbl,
-                l4: jobTag + " · Bd " + num,
+                material, stain,
               });
             } else {
               b.cuts.forEach(c => labels.push({
-                l1: c.source,
-                name: c.cutName || "Cut",
+                job: jobName,
+                unit: c.source.replace(" (", " — ").replace(/\)$/, ""),
+                piece: c.cutName || "Cut",
                 len: toFraction(c.rawLength) + '"',
-                l3: [b.species, stockLbl].filter(Boolean).join(" "),
-                l4: jobTag + " · Bd " + num,
+                material, stain,
               }));
             }
           });
@@ -3161,19 +3163,22 @@
             const x = G.left + col * G.px, y0 = G.top + row * G.py;
             const tx = x + G.inset, cw = G.w - G.inset * 2;
 
-            pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor(70, 70, 70);
-            pdf.text(pdf.splitTextToSize(lb.l1, cw)[0], tx, y0 + 0.21);
+            // Five lines in 1": job / unit+room (length right) / piece / material / stain
+            pdf.setFont("helvetica", "bold"); pdf.setFontSize(7.5); pdf.setTextColor(110, 110, 110);
+            pdf.text(pdf.splitTextToSize(lb.job, cw)[0], tx, y0 + 0.17);
 
-            pdf.setFont("helvetica", "bold"); pdf.setFontSize(13); pdf.setTextColor(0, 0, 0);
+            pdf.setFont("helvetica", "bold"); pdf.setFontSize(12.5); pdf.setTextColor(0, 0, 0);
             const lenW = pdf.getTextWidth(lb.len);
-            pdf.text(lb.len, x + G.w - G.inset, y0 + 0.47, { align: "right" });
+            pdf.text(lb.len, x + G.w - G.inset, y0 + 0.37, { align: "right" });
             pdf.setFontSize(10.5);
-            pdf.text(pdf.splitTextToSize(lb.name, cw - lenW - 0.12)[0], tx, y0 + 0.47);
+            pdf.text(pdf.splitTextToSize(lb.unit, cw - lenW - 0.12)[0], tx, y0 + 0.37);
 
-            pdf.setFont("helvetica", "normal"); pdf.setFontSize(7); pdf.setTextColor(115, 115, 115);
-            pdf.text(pdf.splitTextToSize(lb.l3, cw)[0], tx, y0 + 0.67);
-            pdf.setFontSize(6.5);
-            pdf.text(pdf.splitTextToSize(lb.l4, cw)[0], tx, y0 + 0.85);
+            pdf.setFont("helvetica", "normal"); pdf.setFontSize(8.5); pdf.setTextColor(40, 40, 40);
+            pdf.text(pdf.splitTextToSize(lb.piece, cw)[0], tx, y0 + 0.55);
+
+            pdf.setFontSize(7); pdf.setTextColor(115, 115, 115);
+            pdf.text(pdf.splitTextToSize(lb.material, cw)[0], tx, y0 + 0.72);
+            pdf.text(pdf.splitTextToSize(lb.stain, cw)[0], tx, y0 + 0.88);
           });
 
           // Print-scale reminder in the sheet's bottom margin (outside the stickers)
