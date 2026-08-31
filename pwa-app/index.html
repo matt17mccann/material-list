@@ -3128,6 +3128,7 @@
           const jobName = job.customerName || "Job";
           const lastName = (job.customerName || "").split(" ").pop() || "Job";
           const labels = [];
+          const tbSeen = {}; // Top/Bottom pair counter (see below)
           numbered.forEach(({ b }) => {
             const stockLbl = b.jambStock
               ? fixBasswoodThickness(b.species, b.jambStock.label)
@@ -3138,18 +3139,32 @@
               labels.push({
                 job: jobName,
                 unit: "EXTRA BOARD" + (b.extraNote ? " — " + b.extraNote : ""),
-                piece: b.materialType,
+                // Extra boards keep the material on the sticker — there's no cut
+                // list entry to identify a whole spare board otherwise
+                piece: material,
                 len: STOCK_LABELS[b.stockLength] || "",
-                material, stain,
+                stain,
               });
             } else {
-              b.cuts.forEach(c => labels.push({
-                job: jobName,
-                unit: c.source.replace(" (", " — ").replace(/\)$/, ""),
-                piece: c.cutName || "Cut",
-                len: toFraction(c.rawLength) + '"',
-                material, stain,
-              }));
+              b.cuts.forEach(c => {
+                let piece = c.cutName || "Cut";
+                // "Top/Bottom X" pieces come as an identical pair — split the pair
+                // so one sticker reads "Top X" and the other "Bottom X" instead of
+                // two interchangeable stickers. Counted per unit + piece + length,
+                // so the pairing holds even when the two land on different boards.
+                if (/Top\/Bottom/.test(piece)) {
+                  const k = c.source + "|" + piece + "|" + c.rawLength;
+                  tbSeen[k] = (tbSeen[k] || 0) + 1;
+                  piece = piece.replace("Top/Bottom", tbSeen[k] % 2 === 1 ? "Top" : "Bottom");
+                }
+                labels.push({
+                  job: jobName,
+                  unit: c.source.replace(" (", " — ").replace(/\)$/, ""),
+                  piece,
+                  len: toFraction(c.rawLength) + '"',
+                  stain,
+                });
+              });
             }
           });
           if (!labels.length) { alert("No cuts to label" + (filter ? " with the current filter." : ".")); return; }
@@ -3163,22 +3178,23 @@
             const x = G.left + col * G.px, y0 = G.top + row * G.py;
             const tx = x + G.inset, cw = G.w - G.inset * 2;
 
-            // Five lines in 1": job / unit+room (length right) / piece / material / stain
+            // Four lines in 1": job / unit+room (length right) / piece / stain.
+            // No material line — the wood it's stuck to says what it is. The
+            // stain is what the prefinish crew reads, so it gets the big line.
             pdf.setFont("helvetica", "bold"); pdf.setFontSize(7.5); pdf.setTextColor(110, 110, 110);
-            pdf.text(pdf.splitTextToSize(lb.job, cw)[0], tx, y0 + 0.17);
+            pdf.text(pdf.splitTextToSize(lb.job, cw)[0], tx, y0 + 0.18);
 
             pdf.setFont("helvetica", "bold"); pdf.setFontSize(12.5); pdf.setTextColor(0, 0, 0);
             const lenW = pdf.getTextWidth(lb.len);
-            pdf.text(lb.len, x + G.w - G.inset, y0 + 0.37, { align: "right" });
+            pdf.text(lb.len, x + G.w - G.inset, y0 + 0.39, { align: "right" });
             pdf.setFontSize(10.5);
-            pdf.text(pdf.splitTextToSize(lb.unit, cw - lenW - 0.12)[0], tx, y0 + 0.37);
+            pdf.text(pdf.splitTextToSize(lb.unit, cw - lenW - 0.12)[0], tx, y0 + 0.39);
 
-            pdf.setFont("helvetica", "normal"); pdf.setFontSize(8.5); pdf.setTextColor(40, 40, 40);
-            pdf.text(pdf.splitTextToSize(lb.piece, cw)[0], tx, y0 + 0.55);
+            pdf.setFont("helvetica", "normal"); pdf.setFontSize(9); pdf.setTextColor(40, 40, 40);
+            pdf.text(pdf.splitTextToSize(lb.piece, cw)[0], tx, y0 + 0.60);
 
-            pdf.setFontSize(7); pdf.setTextColor(115, 115, 115);
-            pdf.text(pdf.splitTextToSize(lb.material, cw)[0], tx, y0 + 0.72);
-            pdf.text(pdf.splitTextToSize(lb.stain, cw)[0], tx, y0 + 0.88);
+            pdf.setFont("helvetica", "bold"); pdf.setFontSize(10.5); pdf.setTextColor(0, 0, 0);
+            pdf.text(pdf.splitTextToSize(lb.stain, cw)[0], tx, y0 + 0.85);
           });
 
           // Print-scale reminder in the sheet's bottom margin (outside the stickers)
