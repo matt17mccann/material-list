@@ -1659,43 +1659,37 @@
         if (!STOCK_LENGTHS.length) STOCK_LENGTHS = ALL_STOCK_LENGTHS;
         const maxStock = STOCK_LENGTHS[STOCK_LENGTHS.length - 1];
 
-        // Cuts longer than the longest available board can't be made from a single
-        // board — they must be spliced across multiple boards. Allocate those up front
-        // (ceil of needed length over the max board) so quantities are never short.
+        // Cuts longer than the longest available board can't be made from stock
+        // on hand. List them as ONE board at the length actually needed (rounded up
+        // to the next whole foot) and flag it — splicing trim isn't acceptable, so
+        // the list should say what has to be sourced rather than hide it.
         const splicedBoards = [];
         const sorted = [];
         const usableMax = Math.max(1, maxStock - MIN_CUTOFF); // per-board waste reserve
         allSorted.forEach(cut => {
           if (cut.length > usableMax) {
-            const n = Math.ceil(cut.length / usableMax);
+            const needStock = Math.ceil((cut.length + MIN_CUTOFF) / 12) * 12;
             warnings.push({
               source: cut.source,
               cutName: cut.cutName,
               length: cut.rawLength,
               material: `${group.species} ${group.profile || (group.jambStock && group.jambStock.label) || group.materialType}`,
               maxStock,
-              pieces: n,
+              needStock,
             });
-            let remainingLen = cut.length;
-            for (let i = 0; i < n; i++) {
-              const seg = Math.min(remainingLen, usableMax);
-              remainingLen -= seg;
-              splicedBoards.push({
-                stockLength: maxStock,
-                // NOTE: `source` must stay the plain unit key — per-unit attribution
-                // (jobBoardGroupsByUnit) matches on it. Splice info goes in spliceNote.
-                cuts: [{ ...cut, rawLength: seg, length: seg, spliceNote: `spliced ${i + 1}/${n} of ${toFraction(cut.rawLength)}"` }],
-                remaining: usableMax - seg,
-                materialType: group.materialType,
-                species: group.species,
-                finish: group.finish,
-                profile: group.profile,
-                jambStock: group.jambStock,
-                width: group.width,
-                thickness: group.thickness,
-                spliced: true,
-              });
-            }
+            splicedBoards.push({
+              stockLength: needStock,
+              cuts: [cut],
+              remaining: 0, // non-stock length — don't pack other cuts onto it
+              materialType: group.materialType,
+              species: group.species,
+              finish: group.finish,
+              profile: group.profile,
+              jambStock: group.jambStock,
+              width: group.width,
+              thickness: group.thickness,
+              oversize: true,
+            });
           } else {
             sorted.push(cut);
           }
@@ -1864,7 +1858,7 @@
         const isStool = board.cuts && board.cuts.some(c => c.cutName && (c.cutName.includes("Stool") || c.cutName.includes("Sill")));
         const isJamb = board.materialType === "Jamb Extension" && !isStool;
         const isApron = board.materialType === "Apron";
-        const finishTag = showFinish && board.finish ? ` — ${board.finish}` : "";
+        const finishTag = (showFinish && board.finish ? ` — ${board.finish}` : "") + (board.oversize ? " ★ HARD TO SOURCE" : "");
         let label, cat;
         if (isStool) {
           const stockLabel = fixBasswoodThickness(board.species, board.jambStock ? board.jambStock.label : "5/8x6");
@@ -1888,7 +1882,7 @@
           cat = `${board.species.toUpperCase()} CASING`;
         }
         const key = cat + "|" + label;
-        if (!boardGroups[key]) boardGroups[key] = { category: cat, description: label, quantity: 0, length: STOCK_LABELS[board.stockLength], unitKeys: new Set() };
+        if (!boardGroups[key]) boardGroups[key] = { category: cat, description: label, quantity: 0, length: STOCK_LABELS[board.stockLength], unitKeys: new Set(), oversize: !!board.oversize };
         boardGroups[key].quantity++;
         // Union of units whose cuts landed on any board merged into this group —
         // used to flag boards shared across units in whole-job optimization mode.
@@ -2052,7 +2046,7 @@
               {numbered.map(({ b: board, num }, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #ddd", background: i % 2 === 0 ? "#fff" : "#fafcf8" }}>
                   <td style={{ padding: "6px 10px", fontWeight: 600 }}>{num}</td>
-                  <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: "#6DB344" }}>{STOCK_LABELS[board.stockLength]}</td>
+                  <td style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: board.oversize ? "#c0392b" : "#6DB344" }}>{STOCK_LABELS[board.stockLength]}{board.oversize ? " ★" : ""}</td>
                   <td style={{ padding: "6px 8px" }}>
                     {board.species} {board.materialType}
                     {board.jambStock ? ` (${fixBasswoodThickness(board.species, board.jambStock.label)})` : ""}
@@ -2141,7 +2135,7 @@
                     {groups.map((g, j) => (
                       <tr key={j} style={{ borderTop: "1px solid #e4ede0", background: j % 2 ? "#fafcf8" : "#fff" }}>
                         <td style={{ padding: "7px 10px", fontSize: 11, fontWeight: 600, color: "#777", textTransform: "uppercase", letterSpacing: 0.4, width: 150 }}>{g.category}</td>
-                        <td style={{ padding: "7px 10px", fontWeight: 600 }}>
+                        <td style={{ padding: "7px 10px", fontWeight: 600, color: g.oversize ? "#c0392b" : undefined }}>
                           {g.description}
                           {g.sharedWith && g.sharedWith.length > 0 && (
                             <span style={{ fontSize: 10, fontWeight: 500, color: "#999", marginLeft: 6 }}>(also used on {g.sharedWith.join(", ")})</span>
@@ -2639,7 +2633,7 @@
                 const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
                 if (c.key === "qty") { pdf.setFont("Roboto", "bold"); pdf.setFontSize(9.5); pdf.setTextColor(...GREEN); }
                 else if (c.key === "cat") { pdf.setFont("Roboto", "normal"); pdf.setFontSize(8.5); pdf.setTextColor(...TEXT_MUTE); }
-                else { pdf.setFont("Roboto", "bold"); pdf.setFontSize(9.5); pdf.setTextColor(...TEXT_DARK); }
+                else { pdf.setFont("Roboto", "bold"); pdf.setFontSize(9.5); pdf.setTextColor(...(r.oversize ? NOTE_RED : TEXT_DARK)); }
                 if (c.key === "desc") { descLines.forEach((ln, li) => pdf.text(ln, tx2, y + 4.6 + li * 3.8)); }
                 else { pdf.text(r[c.key], tx2, y + 4.6, { align: c.align }); }
                 cx += c.w;
@@ -2656,7 +2650,7 @@
             drawUnitHeader(u);
             drawMatHeader();
             const rows = [
-              ...groups.map(g => ({ cat: g.category, desc: g.description + (g.sharedWith && g.sharedWith.length ? "  (also used on " + g.sharedWith.join(", ") + ")" : ""), qty: String(g.quantity), extra: false })),
+              ...groups.map(g => ({ cat: g.category, desc: g.description + (g.sharedWith && g.sharedWith.length ? "  (also used on " + g.sharedWith.join(", ") + ")" : ""), qty: String(g.quantity), extra: false, oversize: g.oversize })),
               ...extras.map(m => ({ cat: "EXTRA", desc: m.description, qty: String(m.qty || 1), extra: true })),
             ];
             rows.forEach((r, ri) => {
@@ -2810,7 +2804,7 @@
                 const rowH = Math.max(7, lines.length * 3.8 + 2.4);
                 if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; }
                 if (k % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
-                pdf.setFont("Roboto", "normal"); pdf.setFontSize(9); pdf.setTextColor(...TEXT_DARK);
+                pdf.setFont("Roboto", "normal"); pdf.setFontSize(9); pdf.setTextColor(...(g.oversize ? NOTE_RED : TEXT_DARK));
                 lines.forEach((ln, li) => pdf.text(ln, margin + 3, y + 4.6 + li * 3.8));
                 pdf.setFont("Roboto", "bold"); pdf.setTextColor(...GREEN);
                 pdf.text(String(g.quantity), pageW - margin - 12, y + 4.6, { align: "center" });
@@ -2922,7 +2916,7 @@
 
             const vals = {
               num: String(num),
-              stock: STOCK_LABELS[board.stockLength],
+              stock: STOCK_LABELS[board.stockLength] + (board.oversize ? " ★" : ""),
               species: board.species,
               finish: board.finish || "",
               waste: toFraction(board.remaining || 0) + '"',
@@ -2931,7 +2925,7 @@
             bCols.forEach(c => {
               const t2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
               pdf.setFontSize(8.5);
-              if (c.key === "stock") { pdf.setFont("Roboto", "bold"); pdf.setTextColor(...GREEN); }
+              if (c.key === "stock") { pdf.setFont("Roboto", "bold"); pdf.setTextColor(...(board.oversize ? NOTE_RED : GREEN)); }
               else if (c.key === "num") { pdf.setFont("Roboto", "bold"); pdf.setTextColor(...TEXT_DARK); }
               else if (c.key === "waste") { pdf.setFont("Roboto", "normal"); pdf.setTextColor(...((board.remaining || 0) > 24 ? NOTE_RED : TEXT_MUTE)); }
               else { pdf.setFont("Roboto", "normal"); pdf.setTextColor(...TEXT_DARK); }
@@ -3320,12 +3314,11 @@
           rows.push({ category: "NOTE", description: `CUSTOMER SUPPLYING JAMBS — ${unitList}`, quantity: "", isNote: true });
         }
 
-        // Pieces longer than the longest available stock — the optimizer splices
-        // them across boards so counts aren't short, but that's rarely acceptable
-        // for trim, so call it out (usually means a longer length needs stocking).
+        // Pieces longer than the longest available stock — listed above at the
+        // length actually needed (★), so call out that it has to be sourced.
         const oversize = {};
         (result.warnings || []).forEach(w => {
-          const txt = `PIECE LONGER THAN AVAILABLE STOCK — ${w.source} ${w.cutName} ${toFraction(w.length)}" — longest ${w.material} on hand is ${STOCK_LABELS[w.maxStock]}; split across ${w.pieces} boards`;
+          const txt = `★ HARD TO SOURCE — ${w.source} ${w.cutName} ${toFraction(w.length)}" needs a ${STOCK_LABELS[w.needStock]} ${w.material}; longest on hand is ${STOCK_LABELS[w.maxStock]}`;
           oversize[txt] = (oversize[txt] || 0) + 1;
         });
         Object.entries(oversize).forEach(([txt, n]) => {
@@ -3636,7 +3629,7 @@
                           <tr key={k} style={{ borderBottom: "1px solid #ddd", background: k % 2 === 0 ? "#fff" : "#fafbfa" }}>
                             <td style={{ padding: "6px 12px" }}>
                               <span style={{ fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.4, marginRight: 8 }}>{g.category}</span>
-                              <strong>{g.description}</strong>
+                              <strong style={{ color: g.oversize ? "#c0392b" : undefined }}>{g.description}</strong>
                               {g.sharedWith && g.sharedWith.length > 0 && (
                                 <span style={{ fontSize: 10, fontWeight: 500, color: "#999", marginLeft: 6 }}>(also used on {g.sharedWith.join(", ")})</span>
                               )}
