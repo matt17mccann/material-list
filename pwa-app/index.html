@@ -2554,25 +2554,25 @@
           y += 9;
 
           pdf.setFillColor(...LIGHT_BG);
-          pdf.rect(margin, y, contentW, 8, "F");
+          pdf.rect(margin, y, contentW, 9, "F");
           pdf.setFont("Roboto", "bold");
-          pdf.setFontSize(10);
+          pdf.setFontSize(11);
           pdf.setTextColor(...TEXT_DARK);
           let tx = margin + 3;
           const writeTot = (lbl, val) => {
             pdf.setFont("Roboto", "bold");
-            pdf.text(lbl, tx, y + 5.4);
+            pdf.text(lbl, tx, y + 6);
             const lw = pdf.getTextWidth(lbl);
             pdf.setFont("Roboto", "normal");
             const v = " " + String(val);
-            pdf.text(v, tx + lw, y + 5.4);
+            pdf.text(v, tx + lw, y + 6);
             tx += lw + pdf.getTextWidth(v) + 6;
           };
           writeTot("Total Boards:", totalBoards);
           Object.entries(summary).sort((a, b) => Number(a[0]) - Number(b[0])).forEach(([len, count]) => {
             writeTot(STOCK_LABELS[len] + ":", count);
           });
-          y += 10;
+          y += 11;
 
           // Per-unit boards/material table columns (not cuts) — cat/qty are fixed,
           // desc soaks up whatever width the margin leaves so a narrower margin
@@ -2585,28 +2585,34 @@
           ];
           const drawMatHeader = () => {
             pdf.setFillColor(245, 245, 244);
-            pdf.rect(margin, y, contentW, 6.6, "F");
+            pdf.rect(margin, y, contentW, 7.4, "F");
             pdf.setFont("Roboto", "bold");
-            pdf.setFontSize(9);
+            pdf.setFontSize(10);
             pdf.setTextColor(...GREEN);
             let cx = margin;
-            cols.forEach(c => { const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2; pdf.text(c.label, tx2, y + 4.4, { align: c.align }); cx += c.w; });
-            y += 6.6;
+            cols.forEach(c => { const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2; pdf.text(c.label, tx2, y + 5, { align: c.align }); cx += c.w; });
+            y += 7.4;
           };
           const drawUnitHeader = (u) => {
             const w = combineMeasurement(u.widthWhole, u.widthFrac), h = combineMeasurement(u.heightWhole, u.heightFrac), jd = combineMeasurement(u.jambDepthWhole, u.jambDepthFrac);
             pdf.setFillColor(238, 245, 231);
-            pdf.rect(margin, y, contentW, 7.8, "F");
+            pdf.rect(margin, y, contentW, 11, "F");
             pdf.setFont("Roboto", "bold");
-            pdf.setFontSize(10.5);
-            pdf.setTextColor(...TEXT_DARK);
-            pdf.text((u.label || "Unit") + (u.location ? "  —  " + u.location : ""), margin + 3, y + 5.3);
+            pdf.setFontSize(15);
+            pdf.setTextColor(...GREEN);
+            pdf.text("UNIT " + (u.label || "?"), margin + 3, y + 7.6);
+            const unitW = pdf.getTextWidth("UNIT " + (u.label || "?"));
+            if (u.location) {
+              pdf.setFontSize(13);
+              pdf.setTextColor(...TEXT_DARK);
+              pdf.text("—  " + u.location, margin + 3 + unitW + 3, y + 7.6);
+            }
             pdf.setFont("Roboto", "normal");
-            pdf.setFontSize(8.5);
+            pdf.setFontSize(9);
             pdf.setTextColor(...TEXT_MUTE);
             const meta = u.unitType + (u.unitType === "Window" ? " • " + u.trimStyle : "") + "    " + toFraction(w) + '"×' + toFraction(h) + '"' + (jd > 0 ? "    JD " + toFraction(jd) + '"' : "") + "    " + u.species + (u.finish ? "    " + u.finish : "");
-            pdf.text(meta, pageW - margin - 3, y + 5.3, { align: "right" });
-            y += 7.8;
+            pdf.text(meta, pageW - margin - 3, y + 7.6, { align: "right" });
+            y += 11;
           };
 
           // Shared renderer for a titled group table (Extra Boards / Other Material) —
@@ -2614,28 +2620,28 @@
           // Qty column lines up down the page.
           const drawGroupTable = (title, rows) => {
             if (!rows.length) return;
-            if (y + 18 > bottomLimit) { pdf.addPage(); y = margin; }
+            if (y + 28 > bottomLimit) { pdf.addPage(); y = margin; }
             pdf.setFillColor(238, 245, 231);
-            pdf.rect(margin, y, contentW, 7.8, "F");
+            pdf.rect(margin, y, contentW, 11, "F");
             pdf.setFont("Roboto", "bold");
-            pdf.setFontSize(10);
+            pdf.setFontSize(13);
             pdf.setTextColor(...TEXT_DARK);
-            pdf.text(title, margin + 3, y + 5.3);
-            y += 7.8;
+            pdf.text(title, margin + 3, y + 7.6);
+            y += 11;
             drawMatHeader();
             rows.forEach((r, ri) => {
-              const descLines = pdf.splitTextToSize(r.desc, cols[1].w - 2);
-              const rowH = Math.max(7, descLines.length * 3.8 + 2.4);
+              pdf.setFontSize(11.5); const descLines = pdf.splitTextToSize(r.desc, cols[1].w - 2);
+              const rowH = Math.max(9, descLines.length * 4.6 + 3);
               if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; drawMatHeader(); }
               if (ri % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
               let cx = margin;
               cols.forEach(c => {
                 const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
-                if (c.key === "qty") { pdf.setFont("Roboto", "bold"); pdf.setFontSize(9.5); pdf.setTextColor(...GREEN); }
-                else if (c.key === "cat") { pdf.setFont("Roboto", "normal"); pdf.setFontSize(8.5); pdf.setTextColor(...TEXT_MUTE); }
-                else { pdf.setFont("Roboto", "bold"); pdf.setFontSize(9.5); pdf.setTextColor(...(r.oversize ? NOTE_RED : TEXT_DARK)); }
-                if (c.key === "desc") { descLines.forEach((ln, li) => pdf.text(ln, tx2, y + 4.6 + li * 3.8)); }
-                else { pdf.text(r[c.key], tx2, y + 4.6, { align: c.align }); }
+                if (c.key === "qty") { pdf.setFont("Roboto", "bold"); pdf.setFontSize(14); pdf.setTextColor(...GREEN); }
+                else if (c.key === "cat") { pdf.setFont("Roboto", "normal"); pdf.setFontSize(9); pdf.setTextColor(...TEXT_MUTE); }
+                else { pdf.setFont("Roboto", "bold"); pdf.setFontSize(11.5); pdf.setTextColor(...(r.oversize ? NOTE_RED : TEXT_DARK)); }
+                if (c.key === "desc") { descLines.forEach((ln, li) => pdf.text(ln, tx2, y + 6 + li * 4.6)); }
+                else { pdf.text(r[c.key], tx2, y + 6.2, { align: c.align }); }
                 cx += c.w;
               });
               pdf.setDrawColor(...BORDER);
@@ -2646,7 +2652,7 @@
           };
 
           perUnit.forEach(({ u, groups, extras }) => {
-            if (y + 22 > bottomLimit) { pdf.addPage(); y = margin; }
+            if (y + 30 > bottomLimit) { pdf.addPage(); y = margin; }
             drawUnitHeader(u);
             drawMatHeader();
             const rows = [
@@ -2654,18 +2660,18 @@
               ...extras.map(m => ({ cat: "EXTRA", desc: m.description, qty: String(m.qty || 1), extra: true })),
             ];
             rows.forEach((r, ri) => {
-              const descLines = pdf.splitTextToSize(r.desc, cols[1].w - 2);
-              const rowH = Math.max(7, descLines.length * 3.8 + 2.4);
+              pdf.setFontSize(11.5); const descLines = pdf.splitTextToSize(r.desc, cols[1].w - 2);
+              const rowH = Math.max(9, descLines.length * 4.6 + 3);
               if (y + rowH > bottomLimit) { pdf.addPage(); y = margin; drawUnitHeader(u); drawMatHeader(); }
               if (ri % 2 === 1) { pdf.setFillColor(...ZEBRA); pdf.rect(margin, y, contentW, rowH, "F"); }
               let cx = margin;
               cols.forEach(c => {
                 const tx2 = c.align === "center" ? cx + c.w / 2 : cx + 2;
-                if (c.key === "qty") { pdf.setFont("Roboto", "bold"); pdf.setFontSize(9.5); pdf.setTextColor(...GREEN); }
-                else if (c.key === "cat") { pdf.setFont("Roboto", "normal"); pdf.setFontSize(8.5); pdf.setTextColor(...(r.extra ? EXTRA_ORANGE : TEXT_MUTE)); }
-                else { pdf.setFont("Roboto", r.extra ? "normal" : "bold"); pdf.setFontSize(9.5); pdf.setTextColor(...(r.extra ? EXTRA_ORANGE : TEXT_DARK)); }
-                if (c.key === "desc") { descLines.forEach((ln, li) => pdf.text(ln, tx2, y + 4.6 + li * 3.8)); }
-                else { pdf.text(r[c.key], tx2, y + 4.6, { align: c.align }); }
+                if (c.key === "qty") { pdf.setFont("Roboto", "bold"); pdf.setFontSize(14); pdf.setTextColor(...GREEN); }
+                else if (c.key === "cat") { pdf.setFont("Roboto", "normal"); pdf.setFontSize(9); pdf.setTextColor(...(r.extra ? EXTRA_ORANGE : TEXT_MUTE)); }
+                else { pdf.setFont("Roboto", r.extra ? "normal" : "bold"); pdf.setFontSize(11.5); pdf.setTextColor(...(r.extra ? EXTRA_ORANGE : TEXT_DARK)); }
+                if (c.key === "desc") { descLines.forEach((ln, li) => pdf.text(ln, tx2, y + 6 + li * 4.6)); }
+                else { pdf.text(r[c.key], tx2, y + 6.2, { align: c.align }); }
                 cx += c.w;
               });
               pdf.setDrawColor(...BORDER);
