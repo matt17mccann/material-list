@@ -2231,7 +2231,10 @@
       return merged;
     }
 
-    function ReportView({ job, jobId, units, catalog, offsets, globalTrim, reportType, submitted, allComplete, isResubmit, savedJobs, onSubmit, onBack, onEdit }) {
+    function ReportView({ job, jobId, units: allUnits, catalog, offsets, globalTrim, reportType, submitted, allComplete, isResubmit, savedJobs, onSubmit, onBack, onEdit }) {
+      // Storm doors ("101S") get no trim, so they don't belong on the material
+      // list at all — not as a row, not in the unit count.
+      const units = React.useMemo(() => (allUnits || []).filter(u => !isStormDoor(u)), [allUnits]);
       const reportRef = useRef();
       const [activeReport, setActiveReport] = useState(reportType || "checklist");
       const [detailFilter, setDetailFilter] = useState({ ...ALL_MAT_FILTER }); // detailed-list display filter
@@ -2247,7 +2250,7 @@
       // + Board Summary sections using jsPDF's native text/drawing APIs.
       const generatePDFDoc = async (ovJob, ovUnits, mode = "checklist", ovFilter = null) => {
         const job = ovJob || propJob;
-        const units = ovUnits || propUnits;
+        const units = ovUnits ? ovUnits.filter(u => !isStormDoor(u)) : propUnits;
         const isDetailed = mode === "detailed";
         // Detailed-mode display filter (from the on-screen chips) — null means all
         const dFilter = isDetailed && ovFilter && !matFilterAllOn(ovFilter) ? ovFilter : null;
@@ -2443,7 +2446,7 @@
         };
 
         const renderPrefinish = (noteRows) => {
-          const hasPrefinish = !!(job.prefinishNotes || job.pfWindowsNeeded);
+          const hasPrefinish = !!(job.prefinishNotes || job.pfWindowsNeeded || job.customStain);
           if (!hasPrefinish && noteRows.length === 0) return;
 
           y += 6;
@@ -2451,6 +2454,17 @@
           if (hasPrefinish) {
             ensure(20);
             renderBlackHeaderBar("PREFINISH / WAREHOUSE NOTES");
+
+            if (job.customStain) {
+              ensure(8);
+              pdf.setFillColor(...NOTE_ORANGE_BG);
+              pdf.rect(margin, y, contentW, 8, "F");
+              pdf.setFont("Roboto", "bold");
+              pdf.setFontSize(11);
+              pdf.setTextColor(...NOTE_RED);
+              pdf.text("CUSTOM STAIN / COLOR", margin + 3, y + 5.6);
+              y += 8;
+            }
 
             if (job.prefinishNotes) {
               const lines = pdf.splitTextToSize(job.prefinishNotes, contentW - 6);
@@ -3019,6 +3033,8 @@
               fileName: pdfFilename(),
               savedAt: new Date().toISOString(),
               pdfBase64,
+              // Flags the job on the joblist timeline + prefinish queue.
+              customStain: !!job.customStain,
               // Linear-feet cost data for the joblist Costs tab (not on the PDF).
               materialLf: buildMaterialLf(units, job, catalog, offsets.boardWaste),
             });
@@ -3298,7 +3314,7 @@
       // ─── Aggregate materials for checklist view ───
       const buildChecklist = (ovJob, ovUnits) => {
         const job = ovJob || propJob;
-        const units = ovUnits || propUnits;
+        const units = ovUnits ? ovUnits.filter(u => !isStormDoor(u)) : propUnits;
         const result = optimizeBoards(units, catalog, job.optimizePerUnit, offsets.boardWaste);
         const boards = [...result.boards];
         const STOCK_LABELS = result.STOCK_LABELS;
@@ -3447,11 +3463,16 @@
             </div>
 
             {/* Prefinishing Notes */}
-            {(job.prefinishNotes || job.pfWindowsNeeded) && (
+            {(job.prefinishNotes || job.pfWindowsNeeded || job.customStain) && (
               <div data-pdf-section="prefinish" style={{ marginTop: 28, pageBreakInside: "avoid" }}>
                 <div style={{ display: "flex", padding: "8px 14px", background: "#1a1a1a", color: "#fff", fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>
                   Prefinish / Warehouse Notes
                 </div>
+                {job.customStain && (
+                  <div style={{ padding: "10px 14px", fontSize: 15, fontWeight: 800, color: "#c0392b", background: "rgba(230,126,34,0.10)", borderBottom: "1px solid #e67e22" }}>
+                    CUSTOM STAIN / COLOR
+                  </div>
+                )}
                 {job.prefinishNotes && (
                   <div style={{ padding: "12px 14px", fontSize: 15, fontWeight: 700, background: "rgba(109,179,68,0.25)", borderBottom: "1px solid #c5e0b4", color: "#1C1C1C" }}>
                     {job.prefinishNotes}
@@ -3471,7 +3492,7 @@
               </div>
             )}
             {/* Customer supplying notes — shown even without prefinish section */}
-            {!(job.prefinishNotes || job.pfWindowsNeeded) && noteRows.length > 0 && (
+            {!(job.prefinishNotes || job.pfWindowsNeeded || job.customStain) && noteRows.length > 0 && (
               <div data-pdf-section="notes" style={{ marginTop: 28, pageBreakInside: "avoid" }}>
                 {noteRows.map((note, ni) => (
                   <div key={"note-" + ni} style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700, color: "#c0392b", background: "rgba(230,126,34,0.10)", borderBottom: "1px solid #e67e22" }}>
@@ -3656,6 +3677,11 @@
             <div style={{ background: "#6DB344", color: "#fff", padding: "8px 14px", fontSize: 14, fontWeight: "bold", borderRadius: "6px 6px 0 0" }}>
               Prefinish / Warehouse Notes
             </div>
+            {job.customStain && (
+              <div style={{ padding: "10px 14px", fontSize: 15, fontWeight: 800, color: "#c0392b", background: "rgba(230,126,34,0.10)", borderBottom: "1px solid #e67e22" }}>
+                CUSTOM STAIN / COLOR
+              </div>
+            )}
             {job.prefinishNotes && (
               <div style={{ padding: "12px 14px", fontSize: 15, fontWeight: 700, background: "rgba(109,179,68,0.25)", borderBottom: "1px solid #c5e0b4", color: "#1C1C1C" }}>
                 {job.prefinishNotes}
@@ -3788,11 +3814,16 @@
             </div>
 
             {/* Prefinishing Notes */}
-            {(job.prefinishNotes || job.pfWindowsNeeded) && (
+            {(job.prefinishNotes || job.pfWindowsNeeded || job.customStain) && (
               <div data-pdf-section="prefinish" style={{ marginTop: 28 }}>
                 <div style={{ display: "flex", padding: "8px 14px", background: "#1a1a1a", color: "#fff", fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>
                   Prefinish / Warehouse Notes
                 </div>
+                {job.customStain && (
+                  <div style={{ padding: "10px 14px", fontSize: 15, fontWeight: 800, color: "#c0392b", background: "rgba(230,126,34,0.10)", borderBottom: "1px solid #e67e22" }}>
+                    CUSTOM STAIN / COLOR
+                  </div>
+                )}
                 {job.prefinishNotes && (
                   <div style={{ padding: "12px 14px", fontSize: 15, fontWeight: 700, background: "rgba(109,179,68,0.25)", borderBottom: "1px solid #c5e0b4", color: "#1C1C1C" }}>
                     {job.prefinishNotes}
@@ -3809,7 +3840,7 @@
                 ))}
               </div>
             )}
-            {!(job.prefinishNotes || job.pfWindowsNeeded) && noteRows.length > 0 && (
+            {!(job.prefinishNotes || job.pfWindowsNeeded || job.customStain) && noteRows.length > 0 && (
               <div data-pdf-section="notes" style={{ marginTop: 28 }}>
                 {noteRows.map((note, ni) => (
                   <div key={"note-" + ni} style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700, color: "#c0392b", background: "rgba(230,126,34,0.10)", borderBottom: "1px solid #e67e22" }}>
@@ -4224,6 +4255,9 @@
             pdfDiag.looksLikePackage = /ID\s*#/.test(fullText) || /Order Summary/i.test(fullText);
             data = parseInstallerPackageText(fullText);
           }
+
+          // Storm doors ("101S") get no trim — keep them off the list entirely
+          if (data.units) data.units = data.units.filter(u => !isStormDoor(u));
 
           if (!data.units || !data.units.length) {
             // A bare "no units" message reads as "wrong file type", which sends
@@ -6493,6 +6527,16 @@
                     Auto-fill: {globalTrim.finishType}: {globalTrim.finish}
                   </button>
                 )}
+              </div>
+
+              {/* Custom stain/color — travels to the joblist timeline + prefinish queue */}
+              <div style={{ marginTop: 14 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 16, fontWeight: 600, color: "#333", cursor: "pointer" }}>
+                  <input type="checkbox" checked={job.customStain || false}
+                    onChange={e => updateJob("customStain", e.target.checked)}
+                    style={{ width: 20, height: 20, accentColor: "#6DB344" }} />
+                  Job Has Custom Stain/Color
+                </label>
               </div>
 
               {/* PF Windows checkbox */}

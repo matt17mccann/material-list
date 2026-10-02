@@ -56,6 +56,9 @@ export default async (req: Request, context: Context) => {
         // Linear-feet cost payload (2026-07-29) — forwarded verbatim; the
         // joblist prices it against its material_prices key. Optional.
         materialLf: body.materialLf ?? null,
+        // "Job Has Custom Stain/Color" checkbox. Sent only when the client
+        // supplied a real boolean, so LF-only backfill pushes never clear it.
+        ...(typeof body.customStain === "boolean" ? { customStain: body.customStain } : {}),
       }),
     });
 
