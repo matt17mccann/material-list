@@ -4031,6 +4031,7 @@
       const [metalWork, setMetalWork] = useState([]); // editable working wrap list: [{label, location, w, h, width}]
       const [metalListName, setMetalListName] = useState(""); // list title for export (job customer or manual)
       const [metalListPo, setMetalListPo] = useState(""); // list PO for export
+      const [metalCoil, setMetalCoil] = useState(""); // coil color for the wrap list (from the job's Coil material, editable)
       const pdfInputRef = useRef(null);
 
       // Online/offline tracking — flush queued offline jobs on reconnect
@@ -5030,12 +5031,17 @@
           setMetalWork(rows);
           setMetalListName(s.job.customerName || "");
           setMetalListPo(s.job.poNumber || "");
+          // Coil color(s) the job was ordered with ("Coil - White" extra materials)
+          setMetalCoil((s.job.extraMaterials || [])
+            .filter(m => /^coil\b/i.test(m.category || "") || /^coil\s*-/i.test(m.description || ""))
+            .map(m => String(m.description || "").replace(/^coil\s*-\s*/i, "").trim())
+            .filter((v, i, a) => v && a.indexOf(v) === i).join(" / "));
           setMetalSearch("");
         };
         const addWorkRow = () => setMetalWork(prev => [...prev, { label: "", location: "", w: "", h: "", width: String(defWidth) }]);
         const updateWorkRow = (i, key, val) => setMetalWork(prev => prev.map((r, idx) => idx === i ? { ...r, [key]: val } : r));
         const removeWorkRow = (i) => setMetalWork(prev => prev.filter((_, idx) => idx !== i));
-        const clearWork = () => { setMetalWork([]); setMetalListName(""); setMetalListPo(""); };
+        const clearWork = () => { setMetalWork([]); setMetalListName(""); setMetalListPo(""); setMetalCoil(""); };
 
         // Type-to-search job finder
         const mq = metalSearch.toLowerCase().trim();
@@ -5049,7 +5055,7 @@
 
         // Warehouse cut list PDF — grouped by metal type, one checkbox per cut.
         // Works for a saved job or a manual list; windows = [{ u:{label,location}, w, h }].
-        const runMetalPDF = async ({ name, po, date, windows }) => {
+        const runMetalPDF = async ({ name, po, date, windows, coil }) => {
           if (!windows || windows.length === 0) return;
           setMetalExporting(true);
           try {
@@ -5088,7 +5094,17 @@
             pdf.text("L-Flange Wrap Cut List", margin, y + 2);
             y += 8;
             pdf.setDrawColor(...BORDER); pdf.setLineWidth(0.3); pdf.line(margin, y, pageW - margin, y);
-            y += 6;
+            y += 4;
+
+            // Coil color — the first thing the warehouse needs before pulling stock
+            const coilTxt = String(coil || "").trim();
+            pdf.setFillColor(...(coilTxt ? DARK : [253, 240, 227]));
+            pdf.rect(margin, y, contentW, 11, "F");
+            pdf.setFont("Roboto", "bold"); pdf.setFontSize(9); pdf.setTextColor(...(coilTxt ? GREEN : [192, 57, 43]));
+            pdf.text("COIL COLOR", margin + 3, y + 7);
+            pdf.setFontSize(15); pdf.setTextColor(...(coilTxt ? [255, 255, 255] : [192, 57, 43]));
+            pdf.text(pdf.splitTextToSize(coilTxt ? coilTxt.toUpperCase() : "NOT SET — CONFIRM BEFORE CUTTING", contentW - 34)[0], margin + 28, y + 7.6);
+            y += 16;
 
             // Batching note
             pdf.setFont("Roboto", "normal"); pdf.setFontSize(8.5); pdf.setTextColor(...TEXT_MUTE);
@@ -5263,6 +5279,16 @@
                     style={{ flex: 1, minWidth: 0, padding: "9px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, boxSizing: "border-box" }} />
                 </div>
 
+                {/* Coil color — filled from the job's Coil material, editable for manual lists */}
+                <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, padding: "10px 12px", borderRadius: 6, background: metalCoil.trim() ? "#1a1a1a" : "#FDF0E3", border: metalCoil.trim() ? "1px solid #1a1a1a" : "1px solid #e67e22" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase", color: metalCoil.trim() ? "#6DB344" : "#c0392b", whiteSpace: "nowrap" }}>Coil Color</span>
+                  <input type="text" list="metal-coil-colors" value={metalCoil} onChange={e => setMetalCoil(e.target.value)} placeholder="Not set — pick or type a color"
+                    style={{ flex: 1, minWidth: 0, padding: "8px 10px", border: "none", borderRadius: 4, fontSize: 18, fontWeight: 800, boxSizing: "border-box", background: metalCoil.trim() ? "#1a1a1a" : "#fff", color: metalCoil.trim() ? "#fff" : "#1a1a1a" }} />
+                  <datalist id="metal-coil-colors">
+                    {[...COIL_COLORS, ...(catalog.customCoils || [])].filter((v, i, a) => a.indexOf(v) === i).map(c => <option key={c} value={c} />)}
+                  </datalist>
+                </div>
+
                 <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 10, color: "#aaa", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, padding: "0 2px 4px" }}>
                   <span style={{ flex: "0 0 66px" }}>Label</span>
                   <span style={{ flex: 1, textAlign: "center" }}>W</span>
@@ -5313,7 +5339,7 @@
                 )}
 
                 {workSized.length > 0 && (
-                  <button onClick={() => runMetalPDF({ name: metalListName || "Wrap List", po: metalListPo, date: "", windows: workSized })} disabled={metalExporting} style={{
+                  <button onClick={() => runMetalPDF({ name: metalListName || "Wrap List", po: metalListPo, date: "", windows: workSized, coil: metalCoil })} disabled={metalExporting} style={{
                     width: "100%", marginTop: 12, padding: "13px 0", border: "none", borderRadius: 6,
                     background: metalExporting ? "#9ecb7f" : "#6DB344", fontSize: 14, fontWeight: 700,
                     color: "#fff", cursor: metalExporting ? "default" : "pointer", letterSpacing: 0.3
