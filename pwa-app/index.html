@@ -4027,6 +4027,13 @@
       const [savedTechFilter, setSavedTechFilter] = useState(""); // filter by tech measurer
       const [extraLenDrafts, setExtraLenDrafts] = useState({}); // per-catalog-item input drafts for adding custom lengths
       const [reportFrom, setReportFrom] = useState("editor"); // where to go back from report view
+      // Truck Report — jobs whose product is arriving, read from the joblist
+      const [truck, setTruck] = useState({ loading: false, error: "", data: null });
+      const [truckAhead, setTruckAhead] = useState(28);
+      const [truckHidePrinted, setTruckHidePrinted] = useState(false);
+      const [truckPrinted, setTruckPrinted] = useState(() => {
+        try { return JSON.parse(localStorage.getItem("cutlist_truck_printed") || "{}"); } catch { return {}; }
+      });
       const [submitted, setSubmitted] = useState(false); // tracks if current job has been submitted
       const [reportType, setReportType] = useState("checklist"); // "checklist" or "detailed"
       const [metalSearch, setMetalSearch] = useState(""); // type-to-search job finder
@@ -4548,6 +4555,16 @@
                 color: "#fff", cursor: "pointer",
                 letterSpacing: 0.5, marginBottom: 10
               }}>+ New Job</button>
+
+              <button onClick={() => setView("truck")} style={{
+                width: "100%", padding: "16px 0", border: "2px solid #6DB344", borderRadius: 6,
+                background: "rgba(109,179,68,0.12)", fontSize: 15, fontWeight: 800,
+                color: "#fff", cursor: "pointer", letterSpacing: 0.5, marginBottom: 10,
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10
+              }}>
+                <span style={{ fontSize: 20 }}>🚚</span> Truck Report
+                <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.55)" }}>what's coming in</span>
+              </button>
 
               <button onClick={() => { setSavedFilter("drafts"); setView("saved"); }} style={{
                 width: "100%", padding: "14px 0", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
@@ -5521,9 +5538,180 @@
         );
       }
 
+      // ─── TRUCK REPORT ───
+      // Jobs whose product is arriving (joblist delivery dates), matched to the
+      // material lists saved here — so lists get printed as product comes in,
+      // not months ahead.
+      if (view === "truck") {
+        const loadTruck = async (ahead = truckAhead) => {
+          setTruck(t => ({ ...t, loading: true, error: "" }));
+          try {
+            const res = await fetch(`/api/truck-report?back=14&ahead=${ahead}`, { cache: "no-store" });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || data.ok === false) throw new Error((data && data.error) || `HTTP ${res.status}`);
+            setTruck({ loading: false, error: "", data });
+          } catch (e) {
+            setTruck(t => ({ ...t, loading: false, error: navigator.onLine ? (e.message || "Couldn't reach the joblist") : "Offline — connect to load the truck report" }));
+          }
+        };
+        if (!truck.data && !truck.loading && !truck.error) setTimeout(() => loadTruck(), 0);
+
+        const orderKeyOf = (po) => {
+          const runs = String(po || "").match(/\d+/g);
+          if (!runs) return "";
+          const longest = runs.reduce((a, b) => (b.length >= a.length ? b : a), "");
+          return longest.length >= 4 ? String(parseInt(longest, 10)) : "";
+        };
+        const byId = new Map(savedJobs.map(s => [s.id, s]));
+        const byOrder = new Map();
+        // Newest save wins when two saved lists carry the same order #
+        [...savedJobs].sort((a, b) => (a.savedAt || "").localeCompare(b.savedAt || "")).forEach(s => {
+          const k = orderKeyOf(s.job && s.job.poNumber);
+          if (k) byOrder.set(k, s);
+        });
+        const matchSaved = (tj) =>
+          (tj.materialList && byId.get(tj.materialList.cutlistJobId)) || (tj.orderKey && byOrder.get(tj.orderKey)) || null;
+
+        const setPrinted = (key, on) => {
+          setTruckPrinted(prev => {
+            const next = { ...prev };
+            const n = new Date();
+            if (on) next[key] = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; else delete next[key];
+            try { localStorage.setItem("cutlist_truck_printed", JSON.stringify(next)); } catch {}
+            return next;
+          });
+        };
+
+        const today = (truck.data && truck.data.today) || new Date().toISOString().slice(0, 10);
+        const fmtDay = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); };
+        const weekOf = (iso) => { const [y, m, d] = iso.split("-").map(Number); const t = new Date(y, m - 1, d); t.setDate(t.getDate() - ((t.getDay() + 6) % 7)); return t; };
+
+        const rows = ((truck.data && truck.data.jobs) || []).map(tj => {
+          const saved = matchSaved(tj);
+          const pKey = saved ? saved.id : "jl:" + tj.id;
+          return { tj, saved, pKey, printed: truckPrinted[pKey] || null };
+        });
+        const counts = {
+          total: rows.length,
+          toPrint: rows.filter(r => r.saved && r.saved.submitted && !r.printed).length,
+          drafts: rows.filter(r => r.saved && !r.saved.submitted).length,
+          missing: rows.filter(r => !r.saved).length,
+        };
+        const shown = rows.filter(r => !(truckHidePrinted && r.printed));
+
+        // Group by delivery week (Monday start), past weeks first
+        const weeks = [];
+        shown.forEach(r => {
+          const d = r.tj.truckDate || "9999-12-31";
+          const wk = d === "9999-12-31" ? null : weekOf(d);
+          const key = wk ? wk.toISOString().slice(0, 10) : "none";
+          let g = weeks.find(w => w.key === key);
+          if (!g) { g = { key, label: wk ? "Week of " + wk.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "No date", rows: [] }; weeks.push(g); }
+          g.rows.push(r);
+        });
+        weeks.sort((a, b) => a.key.localeCompare(b.key));
+
+        const chip = (bg, fg, text, title) => <span title={title} style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", padding: "3px 7px", borderRadius: 4, background: bg, color: fg, whiteSpace: "nowrap" }}>{text}</span>;
+
+        return (
+          <div style={{ minHeight: "100vh", background: "#F5F5F4" }}>
+            <div style={{ background: "#1C1C1C", padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 5 }}>
+              <button onClick={() => setView("home")} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 600 }}>← Home</button>
+              <div style={{ color: "#fff", fontWeight: 800, fontSize: 16, letterSpacing: 0.5 }}>🚚 Truck Report</div>
+              <button onClick={() => loadTruck()} disabled={truck.loading} style={{ background: "none", border: "1px solid rgba(255,255,255,0.25)", color: "#fff", fontSize: 12, fontWeight: 700, borderRadius: 6, padding: "6px 12px", cursor: "pointer", opacity: truck.loading ? 0.5 : 1 }}>{truck.loading ? "Loading…" : "Refresh"}</button>
+            </div>
+
+            <div style={{ maxWidth: 820, margin: "0 auto", padding: "16px 14px 40px" }}>
+              <div style={{ fontSize: 13, color: "#666", marginBottom: 12, lineHeight: 1.45 }}>
+                Jobs with product delivered in the last 2 weeks or coming in soon, from the joblist. Print each material list as its product comes in.
+              </div>
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Look ahead</span>
+                {[14, 28, 56].map(n => (
+                  <button key={n} onClick={() => { setTruckAhead(n); loadTruck(n); }} style={{ padding: "6px 12px", borderRadius: 16, border: "1px solid", borderColor: truckAhead === n ? "#6DB344" : "#ccc", background: truckAhead === n ? "rgba(109,179,68,0.12)" : "#fff", color: truckAhead === n ? "#3e7020" : "#777", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{n / 7} weeks</button>
+                ))}
+                <label style={{ marginLeft: "auto", fontSize: 13, color: "#555", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={truckHidePrinted} onChange={e => setTruckHidePrinted(e.target.checked)} style={{ width: 16, height: 16, accentColor: "#6DB344" }} /> Hide printed
+                </label>
+              </div>
+
+              {truck.data && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
+                  {[
+                    ["Coming in", counts.total, "#1a1a1a"],
+                    ["Ready to print", counts.toPrint, "#3e7020"],
+                    ["Draft — not submitted", counts.drafts, "#b8730a"],
+                    ["No material list", counts.missing, "#c0392b"],
+                  ].map(([l, n, c]) => (
+                    <div key={l} style={{ background: "#fff", border: "1px solid #E8E8E8", borderRadius: 8, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 24, fontWeight: 800, color: c }}>{n}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5 }}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {truck.error && (
+                <div style={{ background: "#FDF0E3", border: "1px solid #e67e22", color: "#c0392b", borderRadius: 8, padding: "12px 14px", fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
+                  {truck.error} <button onClick={() => loadTruck()} style={{ marginLeft: 8, background: "none", border: "none", color: "#c0392b", textDecoration: "underline", cursor: "pointer", fontWeight: 700 }}>Try again</button>
+                </div>
+              )}
+              {truck.loading && !truck.data && <div style={{ textAlign: "center", color: "#888", padding: 40 }}>Loading what's coming in…</div>}
+              {truck.data && shown.length === 0 && <div style={{ textAlign: "center", color: "#888", padding: 40 }}>{rows.length ? "Everything here is printed." : "No deliveries in this window."}</div>}
+
+              {weeks.map(w => (
+                <div key={w.key} style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#6DB344", textTransform: "uppercase", letterSpacing: 1.5, margin: "4px 2px 8px" }}>{w.label}</div>
+                  {w.rows.map(({ tj, saved, pKey, printed }) => {
+                    const status = !saved ? "missing" : saved.submitted ? "ready" : "draft";
+                    return (
+                      <div key={tj.id} style={{ background: "#fff", border: "1px solid #E8E8E8", borderLeft: `5px solid ${status === "missing" ? "#c0392b" : status === "draft" ? "#e6a23c" : printed ? "#bbb" : "#6DB344"}`, borderRadius: 8, padding: "12px 14px", marginBottom: 8, opacity: printed ? 0.7 : 1 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 17, fontWeight: 800, color: "#1a1a1a" }}>{tj.customerName || "—"}</div>
+                            <div style={{ fontSize: 12, color: "#888" }}>{[tj.city, tj.poNumber].filter(Boolean).join(" · ")}</div>
+                          </div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            {status === "ready" && chip(printed ? "#eee" : "rgba(109,179,68,0.15)", printed ? "#777" : "#3e7020", printed ? "Printed " + fmtDay(printed) : "List submitted")}
+                            {status === "draft" && chip("rgba(230,162,60,0.18)", "#9a5b00", "Draft — not submitted", "Saved here but never submitted — review it before printing")}
+                            {status === "missing" && chip("rgba(192,57,43,0.12)", "#c0392b", "No material list", "No saved list here matches this job's PO #")}
+                            {tj.unitsHere && chip("#DCE7F5", "#1C1C1C", "Units here")}
+                            {tj.installDate && chip("#1a1a1a", "#fff", "Install " + fmtDay(tj.installDate))}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                          {(tj.deliveries || []).map(d => (
+                            <span key={d.product + d.date} style={{ fontSize: 12, padding: "3px 8px", borderRadius: 4, border: "1px solid #E0E0E0", background: d.date <= today ? "#F2F2F2" : "#fff", color: d.date <= today ? "#888" : "#1a1a1a", fontWeight: 600 }}>
+                              {d.product} · {fmtDay(d.date)}{d.date <= today ? " ✓" : ""}
+                            </span>
+                          ))}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                          {saved ? (
+                            <button onClick={() => { applySavedJob(saved, { goToReport: true }); setReportFrom("truck"); }} style={{ padding: "9px 16px", borderRadius: 6, border: "none", background: "#6DB344", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Open Material List</button>
+                          ) : (
+                            <span style={{ fontSize: 12, color: "#999", alignSelf: "center" }}>Build or import this job's list, then refresh.</span>
+                          )}
+                          {saved && (
+                            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: "#555", cursor: "pointer", marginLeft: "auto" }}>
+                              <input type="checkbox" checked={!!printed} onChange={e => setPrinted(pKey, e.target.checked)} style={{ width: 18, height: 18, accentColor: "#6DB344" }} /> Printed
+                            </label>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
       // ─── REPORT ───
       if (view === "report") {
-        return <ReportView job={job} jobId={jobId} units={units} catalog={catalog} offsets={offsets} globalTrim={globalTrim} reportType={reportType} submitted={submitted} allComplete={allComplete} isResubmit={savedJobs.some(j => j.id === jobId)} savedJobs={savedJobs} onSubmit={() => saveJob(true)} onBack={() => setView(reportFrom === "saved" ? "saved" : "editor")} onEdit={() => setView("editor")} />;
+        return <ReportView job={job} jobId={jobId} units={units} catalog={catalog} offsets={offsets} globalTrim={globalTrim} reportType={reportType} submitted={submitted} allComplete={allComplete} isResubmit={savedJobs.some(j => j.id === jobId)} savedJobs={savedJobs} onSubmit={() => saveJob(true)} onBack={() => setView(reportFrom === "saved" ? "saved" : reportFrom === "truck" ? "truck" : "editor")} onEdit={() => setView("editor")} />;
       }
 
       // ─── EDITOR ───
