@@ -541,7 +541,10 @@
           [/\boak\b/i, "Oak"], [/\bpine\b/i, "Pine"], [/\bmaple\b/i, "Maple"],
           [/\bbasswood\b/i, "Basswood"], [/\bpoplar\b/i, "Poplar"],
         ];
-        for (const [pat, sp] of specPatterns) { if (pat.test(miscNotes)) { jobInfo.species = sp; break; } }
+        const stainNames = [/premium\s*teak/gi, /dark\s*walnut/gi, /golden\s*oak/gi, /provincial/gi, /colonial\s*maple/gi,
+          /clear\s*poly/gi, /golden\s*hickory/gi, /honey\s*maple/gi, /fruitwood/gi, /aged\s*bourbon/gi, /river\s*stream/gi, /honey\s*lite/gi];
+        const speciesText = stainNames.reduce((t, re) => t.replace(re, " "), miscNotes);
+        for (const [pat, sp] of specPatterns) { if (pat.test(speciesText)) { jobInfo.species = sp; break; } }
 
         // Casing profile — expanded patterns for common shorthand
         const casingMap = [
@@ -1074,7 +1077,12 @@
             length: matchIdx >= 0 ? materials[matchIdx].length : (ctp.piece.includes("Side") ? h : w),
             // Custom (typed) profile — width is unknown, so leave it blank rather than guess
             width: ctp.customProfile ? null : (isJamb ? (jambStockOverride?.width ?? materials[matchIdx]?.width ?? profileWidth) : profileWidth),
-            thickness: explicitThickness != null ? explicitThickness : (isJamb ? t : null),
+            // "Auto" thickness follows the board actually picked (a 3/4x10 stool
+            // is 3/4", not the 5/8" extension offset); Basswood stays 5/8".
+            thickness: explicitThickness != null ? explicitThickness
+              : !isJamb ? null
+              : (ctp.species || unit.species) === "Basswood" ? 0.625
+              : (jambStockOverride?.thickness ?? materials[matchIdx]?.thickness ?? t),
             species: ctp.species || unit.species,
             category: isJamb ? "Jamb" : (ctp.piece.includes("Stop") ? "Stop" : "Casing"),
             profile: isJamb ? null : ctp.profile,
@@ -1259,9 +1267,12 @@
       }
     }
 
-    // Jobs whose PDF has already been pushed to the joblist app this session.
-    // Cleared per-job on (re)submit so a resubmit pushes the updated PDF.
-    const joblistPushed = new Set();
+    // Jobs (re)submitted this session whose PDF hasn't reached the joblist yet.
+    // Only a submit adds to it — just OPENING an old submitted job must never
+    // regenerate its PDF (with today's offsets/catalog) and overwrite the copy
+    // the warehouse is working from.
+    const joblistPushDue = new Set();
+    const joblistPushing = new Set();
     // Whether the joblist integration is wired up (JOBLIST_API_URL/KEY env vars).
     // Cached after the first check so we don't generate PDFs when it's a no-op.
     async function isJoblistConfigured() {
@@ -1444,9 +1455,9 @@
           localStorage.setItem("cutlist_lumber_catalog", JSON.stringify(migrated));
           return migrated;
         }
-        return null; // not yet seeded on server
+        return null; // server answered: nothing stored yet
       } catch {
-        return null; // offline — caller uses localStorage
+        return undefined; // request failed — NOT "empty"; never seed from this
       }
     }
     async function saveCatalogToAPI(catalog) {
@@ -1467,9 +1478,9 @@
           localStorage.setItem("cutlist_offsets", JSON.stringify(data));
           return data;
         }
-        return null;
+        return null; // server answered: nothing stored yet
       } catch {
-        return null;
+        return undefined; // request failed — NOT "empty"; never seed from this
       }
     }
     async function saveOffsetsToAPI(offsets) {
@@ -1953,6 +1964,73 @@
         result[k] = groups;
       });
       return result;
+    }
+
+    // ─── NUMBER FIELD (offsets / bending-metal settings) ───
+    // Holds the typed text locally and only commits a real number on blur or
+    // Enter. Committing per keystroke saved half-typed values to the shared
+    // server ("1" on the way to "10"), turned "-" into 0 so negatives were near
+    // impossible to type, and re-rendered the screen so focus dropped after
+    // every key. An unparseable entry reverts instead of saving 0.
+    function NumberField({ value, onCommit, step, style }) {
+      const [text, setText] = useState(String(value ?? ""));
+      const [editing, setEditing] = useState(false);
+      useEffect(() => { if (!editing) setText(String(value ?? "")); }, [value, editing]);
+      const commit = () => {
+        setEditing(false);
+        const n = parseFloat(text);
+        if (!Number.isFinite(n)) { setText(String(value ?? "")); return; }
+        if (n !== Number(value)) onCommit(n);
+      };
+      return (
+        <input type="text" inputMode="decimal" step={step} value={text}
+          onFocus={e => { setEditing(true); e.target.select(); }}
+          onChange={e => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }}
+          style={style} />
+      );
+    }
+
+    // Settings rows live at module scope: defined inside App's render they were
+    // a new component type every render, so React remounted their inputs and
+    // focus jumped out of the box after every commit.
+    function OffsetRow({ label, desc, value, onChange }) {
+      return (
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #E8E8E8", gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#333" }}>{label}</div>
+          <div style={{ fontSize: 11, color: "#888" }}>{desc}</div>
+        </div>
+        <NumberField step="0.0625" value={value} onCommit={onChange}
+          style={{ width: 80, padding: "6px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 15, fontWeight: 700, textAlign: "center" }} />
+      </div>
+    );
+    }
+
+    function OffsetCard({ title, section, fields, offsets, resetSection, updateOffset }) {
+      return (
+      <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase" }}>{title}</div>
+          <button onClick={() => resetSection(section)} style={{ background: "none", border: "none", fontSize: 11, color: "#999", cursor: "pointer", textDecoration: "underline" }}>Reset defaults</button>
+        </div>
+        {fields.map(f => <OffsetRow key={f.key} label={f.label} desc={f.desc} value={offsets[section]?.[f.key] ?? 0} onChange={v => updateOffset(section, f.key, v)} />)}
+      </div>
+    );
+    }
+
+    function BMRow({ label, desc, value, onChange }) {
+      return (
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #E8E8E8", gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#333" }}>{label}</div>
+          <div style={{ fontSize: 11, color: "#888" }}>{desc}</div>
+        </div>
+        <NumberField step="0.25" value={value} onCommit={onChange}
+          style={{ width: 80, padding: "6px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 15, fontWeight: 700, textAlign: "center" }} />
+      </div>
+    );
     }
 
     // ─── DETAILED-LIST DISPLAY FILTER ───
@@ -3016,11 +3094,12 @@
       };
 
       // On (re)submit, push the material-list PDF to the joblist app. Keyed by jobId
-      // so resubmits overwrite the stored PDF. Deduped per session via joblistPushed
-      // (cleared on each submit in saveJob). No-ops gracefully until configured.
+      // so resubmits overwrite the stored PDF. Only jobs saveJob marked due are
+      // pushed; a failed or interrupted push stays due and retries on the next
+      // report view this session. No-ops gracefully until configured.
       useEffect(() => {
-        if (!submitted || !jobId || joblistPushed.has(jobId)) return;
-        joblistPushed.add(jobId);
+        if (!submitted || !jobId || !joblistPushDue.has(jobId) || joblistPushing.has(jobId)) return;
+        joblistPushing.add(jobId);
         let cancelled = false;
         (async () => {
           try {
@@ -3042,11 +3121,11 @@
               // Linear-feet cost data for the joblist Costs tab (not on the PDF).
               materialLf: buildMaterialLf(units, job, catalog, offsets.boardWaste),
             });
-            // If the push didn't go through, allow a retry on the next submit.
-            if (!result || result.pushed === false) joblistPushed.delete(jobId);
+            if (result && result.pushed !== false) joblistPushDue.delete(jobId);
           } catch (err) {
             console.error("Joblist PDF push failed:", err);
-            joblistPushed.delete(jobId);
+          } finally {
+            joblistPushing.delete(jobId);
           }
         })();
         return () => { cancelled = true; };
@@ -3367,6 +3446,13 @@
           const desc = unit.thresholdSpecies;
           if (!desc || desc === "None") return;
           thresholdCounts[desc] = (thresholdCounts[desc] || 0) + 1;
+          // The threshold is picked from a dropdown (8' default) while the calc
+          // knows the length the door actually needs — flag a short pick.
+          const stockFt = (String(desc).match(/x\s*(\d+)\s*'/) || [])[1];
+          const need = (calcMaterials(unit, catalog).find(m => m.category === "Threshold") || {}).length;
+          if (stockFt && need && need > Number(stockFt) * 12) {
+            rows.push({ category: "NOTE", description: `THRESHOLD TOO SHORT — ${unit.label || "?"}${unit.location ? " (" + unit.location + ")" : ""} needs ${toFraction(need)}" but ${desc} is selected`, quantity: "", isNote: true });
+          }
         });
         Object.entries(thresholdCounts).forEach(([desc, qty]) => {
           rows.push({ category: "THRESHOLD", description: desc, quantity: qty });
@@ -4095,10 +4181,12 @@
             if (apiCatalog) {
               setCatalog(apiCatalog);
             } else {
-              // First time — seed server with local defaults
               const def = loadCatalog();
               setCatalog(def);
-              saveCatalogToAPI(def);
+              // Seed the server only when it confirmed it has nothing. A failed
+              // request (spotty LTE, a 502) must never upload this device's
+              // local/default copy over the team's shared Available Material.
+              if (apiCatalog === null) saveCatalogToAPI(def);
             }
 
             // Fetch offsets from API, seed defaults if not yet on server
@@ -4108,7 +4196,7 @@
             } else {
               const def = loadOffsets();
               setOffsetsState(def);
-              saveOffsetsToAPI(def);
+              if (apiOffsets === null) saveOffsetsToAPI(def); // same rule as the catalog
             }
           } catch {}
           setSyncing(false);
@@ -4128,7 +4216,7 @@
       const addUnit = () => {
         let newUnit = emptyUnit(units.length + 1);
         if (sameTrim) {
-          newUnit = { ...newUnit, species: globalTrim.species, casingProfile: globalTrim.casingProfile, stopProfile: globalTrim.stopProfile || "1x4 Stop", finishType: globalTrim.finishType, finish: globalTrim.finish };
+          newUnit = applyGlobalToUnit(newUnit, globalTrim, false);
         }
         // Autofill jamb depth from most common value across existing units (fallback: global)
         const jdCounts = {};
@@ -4149,14 +4237,22 @@
         }
         setUnits(p => [...p, newUnit]);
         setExpandedUnit(units.length);
+        setSubmitted(false);
       };
-      const removeUnit = (idx) => { if (units.length <= 1) return; setUnits(p => p.filter((_, i) => i !== idx)); };
+      const removeUnit = (idx) => {
+        if (units.length <= 1) return;
+        const u = units[idx];
+        if (!window.confirm(`Remove unit ${u.label || idx + 1}${u.location ? " — " + u.location : ""}?`)) return;
+        setUnits(p => p.filter((_, i) => i !== idx));
+        setSubmitted(false);
+      };
       const duplicateUnit = (idx) => {
         // Deep copy — a shallow spread would share nested arrays (manualMaterials,
         // customTrimPieces) by reference between the original and the copy
         const c = { ...structuredClone(units[idx]), id: Date.now() + Math.random(), label: `${units[idx].label} (copy)` };
         setUnits(p => [...p.slice(0, idx + 1), c, ...p.slice(idx + 1)]);
         setExpandedUnit(idx + 1);
+        setSubmitted(false);
       };
       const applyGlobalToUnit = (u, g, force) => {
         const updates = { trimStyle: g.trimStyle || "Picture Frame", species: g.species, jambSpecies: g.jambSpecies || g.species, jambMaterial: g.jambMaterial || "", casingProfile: g.casingProfile, stopProfile: g.stopProfile || "1x4 Stop", stool5_4: g.stool5_4 || false };
@@ -4349,6 +4445,7 @@
           nu.unitType = u.unitType || "Window";
           nu.trimStyle = pdfTrimStyle;
           nu.species = pdfSpecies;
+          nu.jambSpecies = pdfSpecies;
           nu.casingProfile = pdfCasing;
           nu.finishType = pdfFinishType;
           nu.finish = pdfFinish;
@@ -4401,8 +4498,8 @@
         // pending queue and sync on reconnect, so the UI never has to wait.
         setSavedJobs(prev => [data, ...prev.filter(j => j.id !== data.id)]);
         if (isSubmit) {
-          // Allow the (re)submitted PDF to be pushed to the joblist app again.
-          joblistPushed.delete(jobId);
+          // Queue the (re)submitted PDF for the joblist app.
+          joblistPushDue.add(jobId);
           setSubmitted(true);
           // Back button from the report should return to the Submitted Jobs list, not drafts.
           setSavedFilter("submitted");
@@ -4901,25 +4998,6 @@
           setOffsetsState(updated);
           saveOffsetsToAPI(updated);
         };
-        const OffsetRow = ({ label, desc, value, onChange }) => (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #E8E8E8", gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#333" }}>{label}</div>
-              <div style={{ fontSize: 11, color: "#888" }}>{desc}</div>
-            </div>
-            <input type="number" step="0.0625" value={value} onChange={e => onChange(e.target.value)}
-              style={{ width: 80, padding: "6px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 15, fontWeight: 700, textAlign: "center" }} />
-          </div>
-        );
-        const OffsetCard = ({ title, section, fields }) => (
-          <div style={{ background: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 12, border: "1px solid #E8E8E8" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#6DB344", letterSpacing: 1.5, textTransform: "uppercase" }}>{title}</div>
-              <button onClick={() => resetSection(section)} style={{ background: "none", border: "none", fontSize: 11, color: "#999", cursor: "pointer", textDecoration: "underline" }}>Reset defaults</button>
-            </div>
-            {fields.map(f => <OffsetRow key={f.key} label={f.label} desc={f.desc} value={offsets[section]?.[f.key] ?? 0} onChange={v => updateOffset(section, f.key, v)} />)}
-          </div>
-        );
         return (
           <div style={{ minHeight: "100vh", background: "#F5F5F4", padding: "0 0 40px 0" }}>
             <div style={{
@@ -4934,14 +5012,14 @@
             <div style={{ maxWidth: 900, margin: "0 auto", padding: "16px 16px 0" }}>
               <div style={{ fontSize: 13, color: "#888", marginBottom: 16, padding: "0 4px" }}>These values are added to Width (W), Height (H), or Jamb Depth (JD) when calculating cut lengths. Negative = subtract.</div>
 
-              <OffsetCard title="Windows — Picture Frame" section="window_pf" fields={[
+              <OffsetCard offsets={offsets} resetSection={resetSection} updateOffset={updateOffset} title="Windows — Picture Frame" section="window_pf" fields={[
                 { key: "sideJamb_length", label: "Side Jamb Length", desc: "H + value" },
                 { key: "topBottomJamb_length", label: "Top/Bottom Jamb Length", desc: "W + value" },
                 { key: "jamb_width", label: "Jamb Width", desc: "JD + value" },
                 { key: "sideCasing_length", label: "Side Casing Length", desc: "H + 2x casing width + value" },
                 { key: "topBottomCasing_length", label: "Top/Bottom Casing Length", desc: "W + 2x casing width + value" },
               ]} />
-              <OffsetCard title="Windows — Traditional" section="window_trad" fields={[
+              <OffsetCard offsets={offsets} resetSection={resetSection} updateOffset={updateOffset} title="Windows — Traditional" section="window_trad" fields={[
                 { key: "sideJamb_length", label: "Side Jamb Length", desc: "H + value" },
                 { key: "headJamb_length", label: "Head Jamb Length", desc: "W + value" },
                 { key: "jamb_width", label: "Jamb Width", desc: "JD + value" },
@@ -4951,7 +5029,7 @@
                 { key: "headCasing_length", label: "Head Casing Length", desc: "W + 2x casing width + value" },
                 { key: "apron_length", label: "Apron Length", desc: "W + 2x casing width + value" },
               ]} />
-              <OffsetCard title="Entry Doors" section="entry_door" fields={[
+              <OffsetCard offsets={offsets} resetSection={resetSection} updateOffset={updateOffset} title="Entry Doors" section="entry_door" fields={[
                 { key: "sideCasing_length", label: "Side Casing Length", desc: "H + 1x casing width + value" },
                 { key: "headCasing_length", label: "Head Casing Length", desc: "W + 2x casing width + value" },
                 { key: "threshold_length", label: "Threshold Length", desc: "W + value" },
@@ -4959,7 +5037,7 @@
                 { key: "headJamb_length", label: "Head Jamb Length", desc: "W + value (deep-jamb add-on)" },
                 { key: "jamb_width", label: "Jamb Width", desc: "JD + value (deep-jamb add-on)" },
               ]} />
-              <OffsetCard title="Patio Doors" section="patio_door" fields={[
+              <OffsetCard offsets={offsets} resetSection={resetSection} updateOffset={updateOffset} title="Patio Doors" section="patio_door" fields={[
                 { key: "sideJamb_length", label: "Side Jamb Length", desc: "H + value" },
                 { key: "headJamb_length", label: "Head Jamb Length", desc: "W + value" },
                 { key: "sillJamb_length", label: "Sill Jamb Length", desc: "W + value" },
@@ -5208,16 +5286,6 @@
             <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>
               {p.qty} × <span style={{ color: typeColor(p.type) }}>{toFraction(p.length)}"</span>
             </div>
-          </div>
-        );
-        const BMRow = ({ label, desc, value, onChange }) => (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #E8E8E8", gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#333" }}>{label}</div>
-              <div style={{ fontSize: 11, color: "#888" }}>{desc}</div>
-            </div>
-            <input type="number" step="0.25" value={value} onChange={e => onChange(e.target.value)}
-              style={{ width: 80, padding: "6px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 15, fontWeight: 700, textAlign: "center" }} />
           </div>
         );
 
