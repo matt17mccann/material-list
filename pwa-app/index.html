@@ -1966,6 +1966,51 @@
       return result;
     }
 
+    // ─── TRUCK REPORT HELPERS ───
+    // Arrival dates for the top-middle of a printed list: one date when every
+    // product lands together, else one line per product.
+    function arrivalLines(deliveries) {
+      const ds = (deliveries || []).filter(d => d && d.date);
+      if (!ds.length) return [];
+      const fmt = iso => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); };
+      if (ds.every(d => d.date === ds[0].date)) return [fmt(ds[0].date)];
+      return ds.map(d => d.product + "  " + fmt(d.date));
+    }
+    // pdf-lib (merges PDFs for Print All, stamps arrival dates on joblist PDFs).
+    // Loaded on first use only.
+    let pdfLibPromise = null;
+    function loadPdfLib() {
+      if (window.PDFLib) return Promise.resolve(window.PDFLib);
+      if (!pdfLibPromise) pdfLibPromise = new Promise((resolve, reject) => {
+        const sc = document.createElement("script");
+        sc.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js";
+        sc.onload = () => resolve(window.PDFLib);
+        sc.onerror = () => { pdfLibPromise = null; reject(new Error("Couldn't load the PDF merge library — check the connection.")); };
+        document.head.appendChild(sc);
+      });
+      return pdfLibPromise;
+    }
+    // Writes ARRIVAL + dates at the top-middle of page 1 of a PDF that came
+    // from the joblist (an emailed-in materials list we didn't draw).
+    async function stampArrival(PDFLib, bytes, deliveries) {
+      const doc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+      const lines = arrivalLines(deliveries);
+      if (lines.length) {
+        const page = doc.getPages()[0];
+        const { width, height } = page.getSize();
+        const bold = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+        const txt = ["ARRIVAL", ...lines];
+        const w = Math.max(...txt.map((t, i) => bold.widthOfTextAtSize(t, i ? 10 : 7))) + 14;
+        const h = 12 + lines.length * 12;
+        page.drawRectangle({ x: (width - w) / 2, y: height - 8 - h, width: w, height: h, color: PDFLib.rgb(1, 1, 1), borderColor: PDFLib.rgb(0.43, 0.7, 0.27), borderWidth: 1 });
+        txt.forEach((t, i) => {
+          const size = i ? 10 : 7;
+          page.drawText(t, { x: (width - bold.widthOfTextAtSize(t, size)) / 2, y: height - 8 - 9 - (i ? 3 + i * 11 : 0), size, font: bold, color: i ? PDFLib.rgb(0.1, 0.1, 0.1) : PDFLib.rgb(0.43, 0.7, 0.27) });
+        });
+      }
+      return doc;
+    }
+
     // ─── NUMBER FIELD (offsets / bending-metal settings) ───
     // Holds the typed text locally and only commits a real number on blur or
     // Enter. Committing per keystroke saved half-typed values to the shared
@@ -2313,7 +2358,7 @@
       return merged;
     }
 
-    function ReportView({ job, jobId, units: allUnits, catalog, offsets, globalTrim, reportType, submitted, allComplete, isResubmit, savedJobs, onSubmit, onBack, onEdit }) {
+    function ReportView({ job, jobId, units: allUnits, catalog, offsets, globalTrim, reportType, submitted, allComplete, isResubmit, savedJobs, onSubmit, onBack, onEdit, arrival = null, batch = null }) {
       // Storm doors ("101S") get no trim, so they don't belong on the material
       // list at all — not as a row, not in the unit count.
       const units = React.useMemo(() => (allUnits || []).filter(u => !isStormDoor(u)), [allUnits]);
@@ -2330,7 +2375,8 @@
       // Build a text-based PDF with a real text layer (editable, searchable,
       // small file size). Reproduces the Checklist + Prefinish + Bay Material
       // + Board Summary sections using jsPDF's native text/drawing APIs.
-      const generatePDFDoc = async (ovJob, ovUnits, mode = "checklist", ovFilter = null) => {
+      const generatePDFDoc = async (ovJob, ovUnits, mode = "checklist", ovFilter = null, ovArrival) => {
+        const arrivalTxt = arrivalLines(ovArrival !== undefined ? ovArrival : arrival);
         const job = ovJob || propJob;
         const units = ovUnits ? ovUnits.filter(u => !isStormDoor(u)) : propUnits;
         const isDetailed = mode === "detailed";
@@ -2417,6 +2463,17 @@
           pdf.text("PO# " + (job.poNumber || "—"), pageW - margin, y + 13.5, { align: "right" });
           pdf.setFontSize(9);
           pdf.text(`Tech: ${job.techMeasurer || "—"}  |  ${job.date || ""}`, pageW - margin, y + 18, { align: "right" });
+
+          // Arrival (when printed from the Truck Report) — top middle, between
+          // the logo and the customer block.
+          if (arrivalTxt.length) {
+            const cx = pageW / 2;
+            pdf.setFont("Roboto", "bold"); pdf.setFontSize(7.5); pdf.setTextColor(...GREEN);
+            pdf.text("ARRIVAL", cx, y + 3.5, { align: "center" });
+            pdf.setTextColor(...TEXT_DARK);
+            pdf.setFontSize(arrivalTxt.length === 1 ? 12 : 9);
+            arrivalTxt.slice(0, 4).forEach((ln, i) => pdf.text(ln, cx, y + (arrivalTxt.length === 1 ? 9 : 8 + i * 4), { align: "center" }));
+          }
 
           pdf.setFontSize(8);
           pdf.setTextColor(...TEXT_MUTE);
@@ -3202,6 +3259,53 @@
           setExportBusy(null);
         }
       };
+
+      // ── BATCH PRINT (Truck Report "Print All") ──
+      // batch = { items: [{ saved, deliveries } | { url, deliveries }], win, onDone }.
+      // Builds each checklist PDF (or fetches the joblist PDF), merges them into
+      // one document with pdf-lib, and opens it in the window the click opened.
+      useEffect(() => {
+        if (!batch) return;
+        let cancelled = false;
+        (async () => {
+          let ok = 0;
+          try {
+            const PDFLib = await loadPdfLib();
+            const out = await PDFLib.PDFDocument.create();
+            for (const it of batch.items) {
+              if (cancelled) return;
+              let doc;
+              if (it.saved) {
+                const j = mergedJobDefaults(it.saved.job || {});
+                const u = (it.saved.units || []).map(x => ({
+                  ...x,
+                  casingProfile: x.casingProfile ? normalizeCasingProfile(x.casingProfile) : x.casingProfile,
+                  customTrimPieces: (x.customTrimPieces || []).map(ctp => ({ ...ctp, profile: ctp.profile ? normalizeCasingProfile(ctp.profile) : ctp.profile })),
+                }));
+                const pdf = await generatePDFDoc(j, u, "checklist", null, it.deliveries);
+                doc = await PDFLib.PDFDocument.load(pdf.output("arraybuffer"));
+              } else {
+                const res = await fetch(it.url);
+                if (!res.ok) throw new Error("Couldn't download " + (it.name || "a joblist PDF") + " (HTTP " + res.status + ")");
+                doc = await stampArrival(PDFLib, await res.arrayBuffer(), it.deliveries);
+              }
+              const pages = await out.copyPages(doc, doc.getPageIndices());
+              pages.forEach(pg => out.addPage(pg));
+              ok++;
+            }
+            const url = URL.createObjectURL(new Blob([await out.save()], { type: "application/pdf" }));
+            if (batch.win && !batch.win.closed) batch.win.location.href = url;
+            else window.open(url);
+            setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 120000);
+            batch.onDone(ok, null);
+          } catch (err) {
+            console.error("Print all failed:", err);
+            try { if (batch.win && !batch.win.closed) batch.win.close(); } catch (_) {}
+            batch.onDone(ok, err);
+          }
+        })();
+        return () => { cancelled = true; };
+      }, [batch]);
 
       // ── AVERY 5160 CUT LABELS ──
       // One sticker per physical cut piece (plus one per extra board), so nothing
@@ -4117,6 +4221,9 @@
       const [truck, setTruck] = useState({ loading: false, error: "", data: null });
       const [truckAhead, setTruckAhead] = useState(28);
       const [truckHidePrinted, setTruckHidePrinted] = useState(false);
+      const [truckBatch, setTruckBatch] = useState(null);       // Print All in progress
+      const [truckBusy, setTruckBusy] = useState("");           // e.g. fetching an installer package
+      const [reportArrival, setReportArrival] = useState(null); // deliveries for a list opened from the Truck Report
       const [truckPrinted, setTruckPrinted] = useState(() => {
         try { return JSON.parse(localStorage.getItem("cutlist_truck_printed") || "{}"); } catch { return {}; }
       });
@@ -4521,7 +4628,7 @@
       };
 
       const startNewJob = () => {
-        if (!confirmDiscard()) return;
+        if (!confirmDiscard()) return false;
         markCleanRef.current = true;
         setSameTrim(true);
         setJobId(Date.now().toString() + "-" + Math.random().toString(36).slice(2, 8));
@@ -4535,6 +4642,7 @@
         // New, uncompleted job — back button should return to Saved Jobs
         setSavedFilter("drafts");
         setView("editor");
+        return true;
       };
 
       const saveJob = async (isSubmit) => {
@@ -5708,14 +5816,34 @@
         const matchSaved = (tj) =>
           (tj.materialList && byId.get(tj.materialList.cutlistJobId)) || (tj.orderKey && byOrder.get(tj.orderKey)) || null;
 
-        const setPrinted = (key, on) => {
+        const setPrinted = (keys, on) => {
           setTruckPrinted(prev => {
             const next = { ...prev };
             const n = new Date();
-            if (on) next[key] = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; else delete next[key];
+            const stamp = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+            (Array.isArray(keys) ? keys : [keys]).forEach(k => { if (on) next[k] = stamp; else delete next[k]; });
             try { localStorage.setItem("cutlist_truck_printed", JSON.stringify(next)); } catch {}
             return next;
           });
+        };
+
+        // Build a list from the job's installer package on the joblist — the same
+        // import as "Import Job File", just fetched for you.
+        const importFromPackage = async (tj) => {
+          const pkg = tj.installerPackage;
+          if (!pkg || !startNewJob()) return;
+          setTruckBusy("Downloading installer package…");
+          try {
+            const res = await fetch(pkg.url);
+            if (!res.ok) throw new Error("HTTP " + res.status + " — refresh the Truck Report and try again");
+            const blob = await res.blob();
+            const name = /\.pdf$/i.test(pkg.name) ? pkg.name : (pkg.name || "Installer Package") + ".pdf";
+            await handleFileUpload({ target: { files: [new File([blob], name, { type: "application/pdf" })] } });
+          } catch (e) {
+            alert("Couldn't load the installer package: " + (e.message || e));
+          } finally {
+            setTruckBusy("");
+          }
         };
 
         const today = (truck.data && truck.data.today) || new Date().toISOString().slice(0, 10);
@@ -5725,15 +5853,40 @@
         const rows = ((truck.data && truck.data.jobs) || []).map(tj => {
           const saved = matchSaved(tj);
           const pKey = saved ? saved.id : "jl:" + tj.id;
-          return { tj, saved, pKey, printed: truckPrinted[pKey] || null };
+          // A list made here wins; otherwise a materials PDF already on the joblist
+          const status = saved ? (saved.submitted ? "ready" : "draft") : tj.joblistList ? "joblist" : "missing";
+          return { tj, saved, pKey, status, printed: truckPrinted[pKey] || null };
         });
+        const printableRow = r => r.status === "ready" || r.status === "joblist";
         const counts = {
           total: rows.length,
-          toPrint: rows.filter(r => r.saved && r.saved.submitted && !r.printed).length,
-          drafts: rows.filter(r => r.saved && !r.saved.submitted).length,
-          missing: rows.filter(r => !r.saved).length,
+          toPrint: rows.filter(r => printableRow(r) && !r.printed).length,
+          drafts: rows.filter(r => r.status === "draft").length,
+          missing: rows.filter(r => r.status === "missing").length,
         };
         const shown = rows.filter(r => !(truckHidePrinted && r.printed));
+        const toPrint = shown.filter(r => printableRow(r) && !r.printed);
+        const shownPrintable = shown.filter(printableRow);
+        const allShownPrinted = shownPrintable.length > 0 && shownPrintable.every(r => r.printed);
+
+        const runBatch = (rowsToPrint, { askMark }) => {
+          if (!rowsToPrint.length || truckBatch) return;
+          // Open the window inside the tap — iPad Safari blocks pop-ups opened
+          // after the PDFs finish building.
+          const win = window.open("", "_blank");
+          try { if (win) win.document.write("<p style='font:16px -apple-system,sans-serif;padding:24px'>Building " + rowsToPrint.length + " material list" + (rowsToPrint.length === 1 ? "" : "s") + "…</p>"); } catch (_) {}
+          setTruckBatch({
+            items: rowsToPrint.map(r => r.saved
+              ? { saved: r.saved, deliveries: r.tj.deliveries }
+              : { url: r.tj.joblistList.url, name: r.tj.joblistList.name, deliveries: r.tj.deliveries }),
+            win,
+            onDone: (ok, err) => {
+              setTruckBatch(null);
+              if (err) { alert("Print all stopped after " + ok + " of " + rowsToPrint.length + ": " + (err.message || err)); return; }
+              if (askMark && window.confirm(`Mark these ${rowsToPrint.length} as printed?`)) setPrinted(rowsToPrint.map(r => r.pKey), true);
+            },
+          });
+        };
 
         // Group by delivery week (Monday start), past weeks first
         const weeks = [];
@@ -5772,6 +5925,20 @@
                 </label>
               </div>
 
+              {truck.data && shownPrintable.length > 0 && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+                  <button onClick={() => runBatch(toPrint, { askMark: true })} disabled={!toPrint.length || !!truckBatch} style={{
+                    flex: "2 1 220px", padding: "13px 0", border: "none", borderRadius: 8, background: toPrint.length ? "#6DB344" : "#c9d9bf",
+                    color: "#fff", fontSize: 15, fontWeight: 800, cursor: toPrint.length && !truckBatch ? "pointer" : "default"
+                  }}>{truckBatch ? "Building PDFs…" : toPrint.length ? `🖨  Print All (${toPrint.length})` : "Everything shown is printed"}</button>
+                  <button onClick={() => setPrinted(shownPrintable.map(r => r.pKey), !allShownPrinted)} style={{
+                    flex: "1 1 160px", padding: "13px 0", borderRadius: 8, border: "1px solid #bbb", background: "#fff",
+                    color: "#444", fontSize: 14, fontWeight: 700, cursor: "pointer"
+                  }}>{allShownPrinted ? "Uncheck all printed" : `✓ Mark all printed (${shownPrintable.length})`}</button>
+                </div>
+              )}
+              {truckBusy && <div style={{ background: "#fff", border: "1px solid #E8E8E8", borderRadius: 8, padding: "10px 14px", fontSize: 14, fontWeight: 600, color: "#555", marginBottom: 12 }}>{truckBusy}</div>}
+
               {truck.data && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
                   {[
@@ -5799,10 +5966,9 @@
               {weeks.map(w => (
                 <div key={w.key} style={{ marginBottom: 18 }}>
                   <div style={{ fontSize: 12, fontWeight: 800, color: "#6DB344", textTransform: "uppercase", letterSpacing: 1.5, margin: "4px 2px 8px" }}>{w.label}</div>
-                  {w.rows.map(({ tj, saved, pKey, printed }) => {
-                    const status = !saved ? "missing" : saved.submitted ? "ready" : "draft";
+                  {w.rows.map(({ tj, saved, pKey, printed, status }) => {
                     return (
-                      <div key={tj.id} style={{ background: "#fff", border: "1px solid #E8E8E8", borderLeft: `5px solid ${status === "missing" ? "#c0392b" : status === "draft" ? "#e6a23c" : printed ? "#bbb" : "#6DB344"}`, borderRadius: 8, padding: "12px 14px", marginBottom: 8, opacity: printed ? 0.7 : 1 }}>
+                      <div key={tj.id} style={{ background: "#fff", border: "1px solid #E8E8E8", borderLeft: `5px solid ${status === "missing" ? "#c0392b" : status === "draft" ? "#e6a23c" : printed ? "#bbb" : status === "joblist" ? "#3b7dd8" : "#6DB344"}`, borderRadius: 8, padding: "12px 14px", marginBottom: 8, opacity: printed ? 0.7 : 1 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: 17, fontWeight: 800, color: "#1a1a1a" }}>{tj.customerName || "—"}</div>
@@ -5811,6 +5977,7 @@
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
                             {status === "ready" && chip(printed ? "#eee" : "rgba(109,179,68,0.15)", printed ? "#777" : "#3e7020", printed ? "Printed " + fmtDay(printed) : "List submitted")}
                             {status === "draft" && chip("rgba(230,162,60,0.18)", "#9a5b00", "Draft — not submitted", "Saved here but never submitted — review it before printing")}
+                            {status === "joblist" && chip(printed ? "#eee" : "rgba(59,125,216,0.14)", printed ? "#777" : "#1f5fb8", printed ? "Printed " + fmtDay(printed) : "List on joblist", "A materials PDF on the joblist (emailed in) — not built in this app")}
                             {status === "missing" && chip("rgba(192,57,43,0.12)", "#c0392b", "No material list", "No saved list here matches this job's PO #")}
                             {tj.unitsHere && chip("#DCE7F5", "#1C1C1C", "Units here")}
                             {tj.installDate && chip("#1a1a1a", "#fff", "Install " + fmtDay(tj.installDate))}
@@ -5824,12 +5991,19 @@
                           ))}
                         </div>
                         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                          {saved ? (
-                            <button onClick={() => { applySavedJob(saved, { goToReport: true }); setReportFrom("truck"); }} style={{ padding: "9px 16px", borderRadius: 6, border: "none", background: "#6DB344", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Open Material List</button>
-                          ) : (
-                            <span style={{ fontSize: 12, color: "#999", alignSelf: "center" }}>Build or import this job's list, then refresh.</span>
-                          )}
                           {saved && (
+                            <button onClick={() => { applySavedJob(saved, { goToReport: true }); setReportFrom("truck"); setReportArrival(tj.deliveries || null); }} style={{ padding: "9px 16px", borderRadius: 6, border: "none", background: "#6DB344", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Open Material List</button>
+                          )}
+                          {!saved && tj.joblistList && (
+                            <button onClick={() => runBatch([{ tj, saved: null }], { askMark: false })} disabled={!!truckBatch} style={{ padding: "9px 16px", borderRadius: 6, border: "none", background: "#3b7dd8", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Open Joblist PDF</button>
+                          )}
+                          {!saved && tj.installerPackage && (
+                            <button onClick={() => importFromPackage(tj)} disabled={!!truckBusy} title={tj.installerPackage.name} style={{ padding: "9px 14px", borderRadius: 6, border: "1px solid #6DB344", background: "#fff", color: "#3e7020", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Build from Installer Package</button>
+                          )}
+                          {!saved && !tj.joblistList && !tj.installerPackage && (
+                            <span style={{ fontSize: 12, color: "#999", alignSelf: "center" }}>Nothing on the joblist yet — build this job's list here, then refresh.</span>
+                          )}
+                          {(saved || tj.joblistList) && (
                             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: "#555", cursor: "pointer", marginLeft: "auto" }}>
                               <input type="checkbox" checked={!!printed} onChange={e => setPrinted(pKey, e.target.checked)} style={{ width: 18, height: 18, accentColor: "#6DB344" }} /> Printed
                             </label>
@@ -5841,13 +6015,20 @@
                 </div>
               ))}
             </div>
+            {truckBatch && (
+              <div style={{ display: "none" }}>
+                <ReportView job={mergedJobDefaults({})} jobId={null} units={[]} catalog={catalog} offsets={offsets} globalTrim={globalTrim}
+                  reportType="checklist" submitted={false} allComplete={true} isResubmit={false} savedJobs={savedJobs}
+                  onSubmit={() => {}} onBack={() => {}} onEdit={() => {}} batch={truckBatch} />
+              </div>
+            )}
           </div>
         );
       }
 
       // ─── REPORT ───
       if (view === "report") {
-        return <ReportView job={job} jobId={jobId} units={units} catalog={catalog} offsets={offsets} globalTrim={globalTrim} reportType={reportType} submitted={submitted} allComplete={allComplete} isResubmit={savedJobs.some(j => j.id === jobId)} savedJobs={savedJobs} onSubmit={() => saveJob(true)} onBack={() => setView(reportFrom === "saved" ? "saved" : reportFrom === "truck" ? "truck" : "editor")} onEdit={() => setView("editor")} />;
+        return <ReportView job={job} jobId={jobId} units={units} catalog={catalog} offsets={offsets} globalTrim={globalTrim} reportType={reportType} submitted={submitted} allComplete={allComplete} isResubmit={savedJobs.some(j => j.id === jobId)} savedJobs={savedJobs} onSubmit={() => saveJob(true)} onBack={() => setView(reportFrom === "saved" ? "saved" : reportFrom === "truck" ? "truck" : "editor")} onEdit={() => setView("editor")} arrival={reportFrom === "truck" ? reportArrival : null} />;
       }
 
       // ─── EDITOR ───
