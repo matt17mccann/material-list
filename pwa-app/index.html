@@ -4121,6 +4121,30 @@
         try { return JSON.parse(localStorage.getItem("cutlist_truck_printed") || "{}"); } catch { return {}; }
       });
       const [submitted, setSubmitted] = useState(false); // tracks if current job has been submitted
+
+      // ── AUTOSAVE DRAFT ──
+      // The job being edited is written to localStorage on every change, so an
+      // iOS reload / app switch / dead battery can't lose unsaved work. Cleared
+      // when the job is saved or a different job is deliberately started.
+      const cleanSnapRef = useRef(null);   // {job,units,globalTrim} as last loaded/saved
+      const markCleanRef = useRef(false);  // next state commit is a load, not an edit
+      const [draftOffer, setDraftOffer] = useState(() => {
+        try {
+          const d = JSON.parse(localStorage.getItem("cutlist_draft") || "null");
+          return d && d.job && Array.isArray(d.units) ? d : null;
+        } catch { return null; }
+      });
+      const clearDraft = () => { try { localStorage.removeItem("cutlist_draft"); } catch {} };
+      const isDirty = () => !!draftOffer || (!!jobId && cleanSnapRef.current !== null
+        && JSON.stringify({ job, units, globalTrim }) !== cleanSnapRef.current);
+      const confirmDiscard = () => {
+        if (!isDirty()) return true;
+        const name = (draftOffer ? draftOffer.job.customerName : job.customerName) || "this job";
+        if (!window.confirm(`You have unsaved changes to ${name}. Discard them?`)) return false;
+        setDraftOffer(null);
+        clearDraft();
+        return true;
+      };
       const [reportType, setReportType] = useState("checklist"); // "checklist" or "detailed"
       const [metalSearch, setMetalSearch] = useState(""); // type-to-search job finder
       const [metalExporting, setMetalExporting] = useState(false); // export PDF in progress
@@ -4472,7 +4496,33 @@
       // Storm doors need no trim (every calc path skips them) — don't let one block submission
       const allComplete = units.every(u => isStormDoor(u) || isUnitComplete(u));
 
+      useEffect(() => {
+        if (!jobId) return;
+        const snap = JSON.stringify({ job, units, globalTrim });
+        if (markCleanRef.current || cleanSnapRef.current === null) {
+          markCleanRef.current = false;
+          cleanSnapRef.current = snap;
+          return;
+        }
+        if (snap === cleanSnapRef.current) { clearDraft(); return; }
+        try {
+          localStorage.setItem("cutlist_draft", JSON.stringify({ id: jobId, job, units, globalTrim, at: new Date().toISOString() }));
+        } catch {}
+      }, [jobId, job, units, globalTrim]);
+
+      const restoreDraft = () => {
+        const d = draftOffer;
+        if (!d) return;
+        setDraftOffer(null);
+        const saved = savedJobs.find(j => j.id === d.id);
+        applySavedJob({ ...(saved || {}), id: d.id, job: d.job, units: d.units, globalTrim: d.globalTrim }, { restoring: true });
+        cleanSnapRef.current = "\u0000restored"; // stays unsaved until Save/Submit
+        setSubmitted(false);
+      };
+
       const startNewJob = () => {
+        if (!confirmDiscard()) return;
+        markCleanRef.current = true;
         setSameTrim(true);
         setJobId(Date.now().toString() + "-" + Math.random().toString(36).slice(2, 8));
         setJob({ customerName: "", address: "", poNumber: "", techMeasurer: "", date: new Date().toISOString().split("T")[0], prefinishNotes: "", pfWindowsNeeded: false, pfWindowsList: "", extraMaterials: [], extraBoards: [], bayMaterials: [], customTrimMode: false, optimizePerUnit: true, showFinishOnChecklist: false });
@@ -4493,6 +4543,8 @@
         const status = isSubmit ? "submitted" : (existing?.status === "complete" ? "in_progress" : (existing?.status || "in_progress"));
         const submitted = isSubmit ? true : (existing?.submitted || false);
         const data = { id: jobId, job, units, globalTrim, savedAt: new Date().toISOString(), status, submitted, starred: existing?.starred || false };
+        cleanSnapRef.current = JSON.stringify({ job, units, globalTrim });
+        clearDraft();
         // Optimistic: update the local list immediately instead of refetching
         // everything from the server. Failed server writes land in the offline
         // pending queue and sync on reconnect, so the UI never has to wait.
@@ -4541,7 +4593,9 @@
         );
       };
 
-      const applySavedJob = (saved, { goToReport = false } = {}) => {
+      const applySavedJob = (saved, { goToReport = false, restoring = false } = {}) => {
+        if (!restoring && !confirmDiscard()) return;
+        markCleanRef.current = !restoring;
         setJobId(saved.id);
         const mergedJob = mergedJobDefaults(saved.job || {});
         setJob(mergedJob);
@@ -4645,6 +4699,20 @@
                   <span style={{ fontSize: 10, color: isOnline ? "rgba(109,179,68,0.7)" : "rgba(243,156,18,0.7)" }}>{syncing ? "Syncing..." : isOnline ? "Connected" : "Offline"}</span>
                 </div>
               </div>
+
+              {draftOffer && (
+                <div style={{ width: "100%", background: "#FDF0E3", border: "2px solid #e67e22", borderRadius: 8, padding: "12px 14px", marginBottom: 12, boxSizing: "border-box" }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#1a1a1a" }}>Unsaved work found</div>
+                  <div style={{ fontSize: 13, color: "#555", margin: "2px 0 10px" }}>
+                    {draftOffer.job.customerName || "Untitled job"} · {draftOffer.units.length} unit{draftOffer.units.length !== 1 ? "s" : ""}
+                    {draftOffer.at ? " · " + new Date(draftOffer.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={restoreDraft} style={{ flex: 2, padding: "10px 0", border: "none", borderRadius: 6, background: "#e67e22", color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>Restore</button>
+                    <button onClick={() => { if (window.confirm("Throw away this unsaved work?")) { setDraftOffer(null); clearDraft(); } }} style={{ flex: 1, padding: "10px 0", border: "1px solid #ccc", borderRadius: 6, background: "#fff", color: "#777", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Discard</button>
+                  </div>
+                </div>
+              )}
 
               <button onClick={startNewJob} style={{
                 width: "100%", padding: "16px 0", border: "none", borderRadius: 6,
