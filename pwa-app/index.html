@@ -4222,7 +4222,6 @@
       const [truckAhead, setTruckAhead] = useState(28);
       const [truckHidePrinted, setTruckHidePrinted] = useState(false);
       const [truckBatch, setTruckBatch] = useState(null);       // Print All in progress
-      const [truckBusy, setTruckBusy] = useState("");           // e.g. fetching an installer package
       const [reportArrival, setReportArrival] = useState(null); // deliveries for a list opened from the Truck Report
       const [truckPrinted, setTruckPrinted] = useState(() => {
         try { return JSON.parse(localStorage.getItem("cutlist_truck_printed") || "{}"); } catch { return {}; }
@@ -5827,24 +5826,6 @@
           });
         };
 
-        // Build a list from the job's installer package on the joblist — the same
-        // import as "Import Job File", just fetched for you.
-        const importFromPackage = async (tj) => {
-          const pkg = tj.installerPackage;
-          if (!pkg || !startNewJob()) return;
-          setTruckBusy("Downloading installer package…");
-          try {
-            const res = await fetch(pkg.url);
-            if (!res.ok) throw new Error("HTTP " + res.status + " — refresh the Truck Report and try again");
-            const blob = await res.blob();
-            const name = /\.pdf$/i.test(pkg.name) ? pkg.name : (pkg.name || "Installer Package") + ".pdf";
-            await handleFileUpload({ target: { files: [new File([blob], name, { type: "application/pdf" })] } });
-          } catch (e) {
-            alert("Couldn't load the installer package: " + (e.message || e));
-          } finally {
-            setTruckBusy("");
-          }
-        };
 
         const today = (truck.data && truck.data.today) || new Date().toISOString().slice(0, 10);
         const fmtDay = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); };
@@ -5937,7 +5918,12 @@
                   }}>{allShownPrinted ? "Uncheck all printed" : `✓ Mark all printed (${shownPrintable.length})`}</button>
                 </div>
               )}
-              {truckBusy && <div style={{ background: "#fff", border: "1px solid #E8E8E8", borderRadius: 8, padding: "10px 14px", fontSize: 14, fontWeight: 600, color: "#555", marginBottom: 12 }}>{truckBusy}</div>}
+              {truck.data && counts.missing > 0 && (
+                <div style={{ background: "#c0392b", color: "#fff", borderRadius: 8, padding: "12px 16px", marginBottom: 14 }}>
+                  <div style={{ fontSize: 16, fontWeight: 800 }}>⚠ {counts.missing} job{counts.missing === 1 ? "" : "s"} with product coming in and NO material list</div>
+                  <div style={{ fontSize: 13, opacity: 0.9, marginTop: 3 }}>The tech measure's list is missing digitally — and may have been missed on paper too. Track it down before the product lands.</div>
+                </div>
+              )}
 
               {truck.data && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
@@ -5968,7 +5954,7 @@
                   <div style={{ fontSize: 12, fontWeight: 800, color: "#6DB344", textTransform: "uppercase", letterSpacing: 1.5, margin: "4px 2px 8px" }}>{w.label}</div>
                   {w.rows.map(({ tj, saved, pKey, printed, status }) => {
                     return (
-                      <div key={tj.id} style={{ background: "#fff", border: "1px solid #E8E8E8", borderLeft: `5px solid ${status === "missing" ? "#c0392b" : status === "draft" ? "#e6a23c" : printed ? "#bbb" : status === "joblist" ? "#3b7dd8" : "#6DB344"}`, borderRadius: 8, padding: "12px 14px", marginBottom: 8, opacity: printed ? 0.7 : 1 }}>
+                      <div key={tj.id} style={{ background: status === "missing" ? "#FDECEA" : "#fff", border: status === "missing" ? "1px solid #e8a39b" : "1px solid #E8E8E8", borderLeft: `5px solid ${status === "missing" ? "#c0392b" : status === "draft" ? "#e6a23c" : printed ? "#bbb" : status === "joblist" ? "#3b7dd8" : "#6DB344"}`, borderRadius: 8, padding: "12px 14px", marginBottom: 8, opacity: printed ? 0.7 : 1 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: 17, fontWeight: 800, color: "#1a1a1a" }}>{tj.customerName || "—"}</div>
@@ -5978,7 +5964,7 @@
                             {status === "ready" && chip(printed ? "#eee" : "rgba(109,179,68,0.15)", printed ? "#777" : "#3e7020", printed ? "Printed " + fmtDay(printed) : "List submitted")}
                             {status === "draft" && chip("rgba(230,162,60,0.18)", "#9a5b00", "Draft — not submitted", "Saved here but never submitted — review it before printing")}
                             {status === "joblist" && chip(printed ? "#eee" : "rgba(59,125,216,0.14)", printed ? "#777" : "#1f5fb8", printed ? "Printed " + fmtDay(printed) : "List on joblist", "A materials PDF on the joblist (emailed in) — not built in this app")}
-                            {status === "missing" && chip("rgba(192,57,43,0.12)", "#c0392b", "No material list", "No saved list here matches this job's PO #")}
+                            {status === "missing" && chip("#c0392b", "#fff", "⚠ No material list", "No list here or on the joblist matches this job's PO #")}
                             {tj.unitsHere && chip("#DCE7F5", "#1C1C1C", "Units here")}
                             {tj.installDate && chip("#1a1a1a", "#fff", "Install " + fmtDay(tj.installDate))}
                           </div>
@@ -5997,11 +5983,8 @@
                           {!saved && tj.joblistList && (
                             <button onClick={() => runBatch([{ tj, saved: null }], { askMark: false })} disabled={!!truckBatch} style={{ padding: "9px 16px", borderRadius: 6, border: "none", background: "#3b7dd8", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Open Joblist PDF</button>
                           )}
-                          {!saved && tj.installerPackage && (
-                            <button onClick={() => importFromPackage(tj)} disabled={!!truckBusy} title={tj.installerPackage.name} style={{ padding: "9px 14px", borderRadius: 6, border: "1px solid #6DB344", background: "#fff", color: "#3e7020", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Build from Installer Package</button>
-                          )}
-                          {!saved && !tj.joblistList && !tj.installerPackage && (
-                            <span style={{ fontSize: 12, color: "#999", alignSelf: "center" }}>Nothing on the joblist yet — build this job's list here, then refresh.</span>
+                          {status === "missing" && (
+                            <span style={{ fontSize: 13, fontWeight: 700, color: "#c0392b", alignSelf: "center" }}>No material list from the tech measure — find out if it was made on paper or never done.</span>
                           )}
                           {(saved || tj.joblistList) && (
                             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: "#555", cursor: "pointer", marginLeft: "auto" }}>
